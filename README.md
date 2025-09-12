@@ -1,2 +1,2 @@
 # insightsgpt
-Your personal insights analyst providing you with recommendations for your website.
+Your personal ai insights analyst providing you with recommendations for your website.
