@@ -15,9 +15,7 @@ function parseGa4(response) {
     { sessions: 0, users: 0 }
   );
 
-  // Sort by sessions, desc
   rows.sort((a, b) => b.sessions - a.sessions);
-
   return { rows, totals };
 }
 
@@ -147,7 +145,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* Developer view: keep raw JSON for debugging */}
+      {/* Raw JSON (debug) */}
       {result && (
         <details style={{ marginTop: 24 }}>
           <summary>Raw GA4 JSON (debug)</summary>
@@ -156,6 +154,51 @@ export default function Home() {
           </pre>
         </details>
       )}
+
+      {/* AI summary button (works if you created /pages/api/insights/summarise.js and set OPENAI_API_KEY) */}
+      {rows.length > 0 && (
+        <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
+      )}
     </main>
+  );
+}
+
+function AiSummary({ rows, totals, startDate, endDate }) {
+  const [loading, setLoading] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+
+  const run = async () => {
+    setLoading(true); setError(""); setText("");
+    try {
+      const res = await fetch("/api/insights/summarise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows, totals, dateRange: { start: startDate, end: endDate }
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || JSON.stringify(json));
+      setText(json.summary);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <button onClick={run} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading}>
+        {loading ? "Summarising…" : "Summarise with AI"}
+      </button>
+      {error && <p style={{ color: "crimson", marginTop: 12 }}>Error: {error}</p>}
+      {text && (
+        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+          {text}
+        </div>
+      )}
+    </section>
   );
 }
