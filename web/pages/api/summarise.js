@@ -1,14 +1,38 @@
 // /workspaces/insightsgpt/web/pages/api/insights/summarise.js
+function makeFallbackSummary(rows = [], totals = { sessions: 0, users: 0 }, dateRange = {}) {
+  const totalSessions = totals.sessions || rows.reduce((a, r) => a + (r.sessions || 0), 0);
+  const totalUsers = totals.users || rows.reduce((a, r) => a + (r.users || 0), 0);
+  const sorted = [...rows].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+  const top = sorted[0];
+  const pct = top && totalSessions ? Math.round((top.sessions / totalSessions) * 100) : 0;
+
+  const lines = [
+    `Period: ${dateRange.start || "start"} → ${dateRange.end || "end"}.`,
+    `Total sessions: ${totalSessions}. Total users: ${totalUsers}.`,
+  ];
+  if (top) lines.push(`Top channel: ${top.channel} with ${top.sessions} sessions (${pct}% share).`);
+  const actions = [
+    `Ensure all campaigns use UTM tags to reduce “Direct”.`,
+    `Improve SEO basics (titles, meta, internal links, sitemap) to grow Organic Search.`,
+    `Standardise social and partner links with UTMs; review referral sources.`,
+  ];
+  return `${lines.join(" ")}\n\nActions:\n- ${actions.join("\n- ")}`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  // Next.js parses JSON body for us (because we send Content-Type: application/json)
   const { rows = [], totals = { sessions: 0, users: 0 }, dateRange = {} } = req.body || {};
 
+  // If there is no OpenAI key, return a clear fallback summary (still JSON)
   if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).json({ error: "Missing OPENAI_API_KEY env var" });
+    return res.status(200).json({
+      summary: makeFallbackSummary(rows, totals, dateRange),
+      source: "fallback",
+      reason: "Missing OPENAI_API_KEY",
+    });
   }
 
   const prompt = `
@@ -35,24 +59,46 @@ Keep it plain-English, UK style, no fluff, no bullet emojis.`.trim();
       }),
     });
 
-    // Read as text first so we can handle non-JSON responses gracefully
+    // Read as text first so we never crash on empty/HTML responses
     const raw = await oaRes.text();
+
+    // If OpenAI is down or empty response, return a fallback summary (still JSON)
+    if (!raw) {
+      return res.status(200).json({
+        summary: makeFallbackSummary(rows, totals, dateRange),
+        source: "fallback",
+        reason: "OpenAI returned empty body",
+      });
+    }
+
     let json;
     try {
-      json = raw ? JSON.parse(raw) : null;
+      json = JSON.parse(raw);
     } catch {
-      return res
-        .status(oaRes.status || 502)
-        .json({ error: "Upstream response was not JSON", upstream: raw?.slice(0, 1000) || "" });
+      return res.status(200).json({
+        summary: makeFallbackSummary(rows, totals, dateRange),
+        source: "fallback",
+        reason: "OpenAI response was not JSON",
+        upstream: raw.slice(0, 500),
+      });
     }
 
     if (!oaRes.ok) {
-      return res.status(oaRes.status).json(json || { error: "OpenAI error", raw });
+      return res.status(200).json({
+        summary: makeFallbackSummary(rows, totals, dateRange),
+        source: "fallback",
+        reason: `OpenAI error ${oaRes.status}`,
+        upstream: json,
+      });
     }
 
-    const summary = json?.choices?.[0]?.message?.content || "No response";
-    return res.status(200).json({ summary });
+    const summary = json?.choices?.[0]?.message?.content || makeFallbackSummary(rows, totals, dateRange);
+    return res.status(200).json({ summary, source: "openai" });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return res.status(200).json({
+      summary: makeFallbackSummary(rows, totals, dateRange),
+      source: "fallback",
+      reason: String(e),
+    });
   }
 }
