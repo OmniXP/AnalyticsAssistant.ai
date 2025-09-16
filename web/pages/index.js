@@ -85,6 +85,13 @@ export default function Home() {
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
+        <button
+  onClick={() => downloadCsv(rows, totals, startDate, endDate)}
+  style={{ padding: "10px 14px", cursor: "pointer" }}
+  disabled={!rows.length}
+>
+  Download CSV
+</button>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -201,4 +208,25 @@ function AiSummary({ rows, totals, startDate, endDate }) {
       )}
     </section>
   );
+  function downloadCsv(rows, totals, startDate, endDate) {
+  if (!rows?.length) return;
+  const header = ["Channel", "Sessions", "Users", "% of Sessions"];
+  const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
+  const lines = rows.map(r => {
+    const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
+    return [r.channel, r.sessions, r.users, `${pct}%`];
+  });
+  lines.push(["Total", totals.sessions, totals.users, ""]);
+  const csv = [header, ...lines]
+    .map(cols => cols.map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 }
