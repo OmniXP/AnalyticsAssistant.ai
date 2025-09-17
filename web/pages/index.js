@@ -324,6 +324,10 @@ export default function Home() {
       {rows.length > 0 && (
         <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
       )}
+{/* Top pages */}
+{rows.length > 0 && (
+  <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
+)}
 
       {/* Top pages */}
       {rows.length > 0 && (
