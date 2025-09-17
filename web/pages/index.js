@@ -84,7 +84,6 @@ function buildChannelPieUrl(rows) {
     options: { plugins: { legend: { position: "bottom" } } },
   };
   const encoded = encodeURIComponent(JSON.stringify(cfg));
-  // width/height can be tweaked if you like
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
 
@@ -101,7 +100,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load preset once on first load
+  // Load preset on first load
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -111,7 +110,7 @@ export default function Home() {
     } catch {}
   }, []);
 
-  // Save preset whenever these change
+  // Save preset when inputs change
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -243,7 +242,6 @@ export default function Home() {
                 <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
               </li>
             )}
-            {/* Compare vs previous */}
             {prevRows.length > 0 && (
               <>
                 <li style={{ marginTop: 6 }}>
@@ -327,7 +325,10 @@ export default function Home() {
         <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
       )}
 
-      {/* (Priority 2 will go here later: Top pages) */}
+      {/* Top pages */}
+      {rows.length > 0 && (
+        <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
+      )}
     </main>
   );
 }
@@ -358,14 +359,10 @@ function AiSummary({ rows, totals, startDate, endDate }) {
       // Read as text first, then try JSON — avoids "Unexpected end of JSON input"
       const raw = await res.text();
       let data = null;
-      try {
-        data = raw ? JSON.parse(raw) : null;
-      } catch {}
+      try { data = raw ? JSON.parse(raw) : null; } catch {}
 
       if (!res.ok) {
-        throw new Error(
-          (data && (data.error || data.message)) || raw || `HTTP ${res.status}`
-        );
+        throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
       }
 
       const summary = (data && data.summary) || raw || "No response";
@@ -382,7 +379,7 @@ function AiSummary({ rows, totals, startDate, endDate }) {
       await navigator.clipboard.writeText(text || "");
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
+    } catch {
       setError("Could not copy to clipboard");
     }
   };
@@ -415,6 +412,75 @@ function AiSummary({ rows, totals, startDate, endDate }) {
           }}
         >
           {text}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TopPages({ propertyId, startDate, endDate }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const res = await fetch("/api/ga4/top-pages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId, startDate, endDate, limit: 10 }),
+      });
+      const txt = await res.text();
+      let data = null;
+      try { data = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+
+      const parsed = (data.rows || []).map((r) => ({
+        title: r.dimensionValues?.[0]?.value || "(untitled)",
+        path: r.dimensionValues?.[1]?.value || "",
+        views: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+      }));
+      setRows(parsed);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h3 style={{ margin: 0 }}>Top pages (views)</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Top Pages"}
+        </button>
+      </div>
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {rows.length > 0 && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.path}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
