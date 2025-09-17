@@ -422,6 +422,12 @@ function TopPages({ propertyId, startDate, endDate }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
+  // AI summary state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [copied, setCopied] = useState(false);
+
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
@@ -449,15 +455,75 @@ function TopPages({ propertyId, startDate, endDate }) {
     }
   };
 
+  const summarisePages = async () => {
+    setAiLoading(true); setAiError(""); setAiText(""); setCopied(false);
+    try {
+      if (!rows.length) {
+        throw new Error("Load Top Pages first, then summarise.");
+      }
+      const res = await fetch("/api/insights/summarise-top-pages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pages: rows,
+          dateRange: { start: startDate, end: endDate },
+        }),
+      });
+
+      const raw = await res.text();
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
+
+      const summary = (data && data.summary) || raw || "No response";
+      setAiText(summary);
+    } catch (e) {
+      setAiError(String(e.message || e));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(aiText || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setAiError("Could not copy to clipboard");
+    }
+  };
+
   return (
     <section style={{ marginTop: 32 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Top pages (views)</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Top Pages"}
         </button>
+
+        {/* Summarise Top Pages button only enabled when we have rows */}
+        <button
+          onClick={summarisePages}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={aiLoading || rows.length === 0}
+          title={rows.length ? "Summarise with AI" : "Load Top Pages first"}
+        >
+          {aiLoading ? "Summarising…" : "Summarise Top Pages with AI"}
+        </button>
+
+        <button
+          onClick={copy}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!aiText}
+          title={aiText ? "Copy the summary" : "Run summary first"}
+        >
+          {copied ? "Copied!" : "Copy insight"}
+        </button>
       </div>
+
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
       {rows.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -480,6 +546,23 @@ function TopPages({ propertyId, startDate, endDate }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* AI summary output */}
+      {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
+      {aiText && (
+        <div
+          style={{
+            marginTop: 12,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: 12,
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {aiText}
         </div>
       )}
     </section>
