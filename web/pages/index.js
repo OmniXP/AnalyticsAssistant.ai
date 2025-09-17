@@ -328,11 +328,6 @@ export default function Home() {
 {rows.length > 0 && (
   <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
 )}
-
-      {/* Top pages */}
-      {rows.length > 0 && (
-        <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
     </main>
   );
 }
