@@ -46,7 +46,7 @@ function computePreviousRange(startStr, endStr) {
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
 }
 
-/** CSV export */
+/** CSV export for Channels */
 function downloadCsv(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -73,7 +73,7 @@ function downloadCsv(rows, totals, startDate, endDate) {
   URL.revokeObjectURL(url);
 }
 
-/** QuickChart pie chart URL */
+/** QuickChart pie chart URL for Channels */
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
   const labels = rows.map((r) => r.channel);
@@ -100,7 +100,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load preset on first load
+  // Load preset once on first load
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -110,7 +110,7 @@ export default function Home() {
     } catch {}
   }, []);
 
-  // Save preset when inputs change
+  // Save preset whenever these change
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -242,6 +242,7 @@ export default function Home() {
                 <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
               </li>
             )}
+            {/* Compare vs previous */}
             {prevRows.length > 0 && (
               <>
                 <li style={{ marginTop: 6 }}>
@@ -258,7 +259,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* Table */}
+      {/* Table: Channels */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24 }}>
           <h3 style={{ marginTop: 0 }}>Traffic by Default Channel Group</h3>
@@ -320,18 +321,20 @@ export default function Home() {
         </details>
       )}
 
-      {/* AI summary */}
+      {/* AI summary for Channels */}
       {rows.length > 0 && (
         <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
       )}
-{/* Top pages */}
-{rows.length > 0 && (
-  <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
-)}
-{/* Source / Medium */}
-{propertyId && (
-  <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />
-)}
+
+      {/* Top pages */}
+      {rows.length > 0 && (
+        <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
+      )}
+
+      {/* Source / Medium */}
+      {propertyId && (
+        <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />
+      )}
     </main>
   );
 }
@@ -359,13 +362,14 @@ function AiSummary({ rows, totals, startDate, endDate }) {
         }),
       });
 
-      // Read as text first, then try JSON — avoids "Unexpected end of JSON input"
       const raw = await res.text();
       let data = null;
       try { data = raw ? JSON.parse(raw) : null; } catch {}
 
       if (!res.ok) {
-        throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
+        throw new Error(
+          (data && (data.error || data.message)) || raw || `HTTP ${res.status}`
+        );
       }
 
       const summary = (data && data.summary) || raw || "No response";
@@ -462,9 +466,7 @@ function TopPages({ propertyId, startDate, endDate }) {
   const summarisePages = async () => {
     setAiLoading(true); setAiError(""); setAiText(""); setCopied(false);
     try {
-      if (!rows.length) {
-        throw new Error("Load Top Pages first, then summarise.");
-      }
+      if (!rows.length) throw new Error("Load Top Pages first, then summarise.");
       const res = await fetch("/api/insights/summarise-top-pages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -505,8 +507,6 @@ function TopPages({ propertyId, startDate, endDate }) {
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Top Pages"}
         </button>
-
-        {/* Summarise Top Pages button only enabled when we have rows */}
         <button
           onClick={summarisePages}
           style={{ padding: "8px 12px", cursor: "pointer" }}
@@ -515,7 +515,6 @@ function TopPages({ propertyId, startDate, endDate }) {
         >
           {aiLoading ? "Summarising…" : "Summarise Top Pages with AI"}
         </button>
-
         <button
           onClick={copy}
           style={{ padding: "8px 12px", cursor: "pointer" }}
@@ -553,7 +552,6 @@ function TopPages({ propertyId, startDate, endDate }) {
         </div>
       )}
 
-      {/* AI summary output */}
       {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
       {aiText && (
         <div
@@ -571,6 +569,8 @@ function TopPages({ propertyId, startDate, endDate }) {
       )}
     </section>
   );
+}
+
 function SourceMedium({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
