@@ -571,135 +571,26 @@ function TopPages({ propertyId, startDate, endDate }) {
   );
 }
 
-function SourceMedium({ propertyId, startDate, endDate }) {
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
-  const [error, setError] = useState("");
+import { getIronSession } from "iron-session";
 
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiText, setAiText] = useState("");
-  const [aiError, setAiError] = useState("");
-  const [copied, setCopied] = useState(false);
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt",     // must match your other routes
+  cookieOptions: { secure: process.env.NODE_ENV === "production", httpOnly: true, sameSite: "lax", path: "/" },
+};
 
-  const load = async () => {
-    setLoading(true); setError(""); setRows([]);
-    try {
-      const res = await fetch("/api/ga4/source-medium", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate, limit: 20, includeCampaign: false }),
-      });
-      const txt = await res.text();
-      let data=null; try{ data = txt ? JSON.parse(txt) : null; }catch{}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+export default async function handler(req, res) {
+  if (req.method !== "POST") {  // 405 on GET is expected
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
 
-      const parsed = (data.rows || []).map((r)=>({
-        source: r.dimensionValues?.[0]?.value || "(unknown)",
-        medium: r.dimensionValues?.[1]?.value || "(unknown)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-      }));
-      setRows(parsed);
-    } catch(e) { setError(String(e.message || e)); }
-    finally { setLoading(false); }
-  };
+  // ...
+  const session = await getIronSession(req, res, sessionOptions);
+  const token = session?.gaTokens?.access_token; // same as query.js
 
-  const summarise = async () => {
-    setAiLoading(true); setAiError(""); setAiText(""); setCopied(false);
-    try {
-      if (!rows.length) throw new Error("Load Source/Medium first, then summarise.");
-      const res = await fetch("/api/insights/summarise-source-medium", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({ rows, dateRange: { start: startDate, end: endDate } }),
-      });
-      const txt = await res.text();
-      let data=null; try{ data = txt ? JSON.parse(txt) : null; }catch{}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
-      setAiText((data && data.summary) || txt || "No response");
-    } catch(e) { setAiError(String(e.message || e)); }
-    finally { setAiLoading(false); }
-  };
+  if (!token) return res.status(401).json({ error: "Not connected" });
 
-  const downloadCsv = () => {
-    if (!rows.length) return;
-    const header = ["Source","Medium","Sessions","Users"];
-    const lines = rows.map(r => [r.source, r.medium, r.sessions, r.users]);
-    const csv = [header, ...lines].map(cols => cols.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `ga4_source_medium_${startDate}_to_${endDate}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  };
+  // build GA4 runReport request…
 
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(()=>setCopied(false), 1500); }
-    catch { setAiError("Could not copy to clipboard"); }
-  };
-
-  const totalSessions = rows.reduce((a,r)=>a+r.sessions,0);
-  const totalUsers = rows.reduce((a,r)=>a+r.users,0);
-
-  return (
-    <section style={{ marginTop: 32 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-        <h3 style={{ margin:0 }}>Source / Medium</h3>
-        <button onClick={load} style={{ padding:"8px 12px", cursor:"pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load Source/Medium"}
-        </button>
-        <button onClick={downloadCsv} style={{ padding:"8px 12px", cursor:"pointer" }} disabled={!rows.length}>
-          Download CSV
-        </button>
-        <button onClick={summarise} style={{ padding:"8px 12px", cursor:"pointer" }} disabled={aiLoading || !rows.length}>
-          {aiLoading ? "Summarising…" : "Summarise with AI"}
-        </button>
-        <button onClick={copy} style={{ padding:"8px 12px", cursor:"pointer" }} disabled={!aiText}>
-          {copied ? "Copied!" : "Copy insight"}
-        </button>
-      </div>
-
-      {error && <p style={{ color:"crimson", marginTop:12, whiteSpace:"pre-wrap" }}>Error: {error}</p>}
-
-      {rows.length > 0 && (
-        <div style={{ marginTop:12, overflowX:"auto" }}>
-          <table style={{ borderCollapse:"collapse", width:"100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign:"left", borderBottom:"1px solid #ddd", padding:8 }}>Source</th>
-                <th style={{ textAlign:"left", borderBottom:"1px solid #ddd", padding:8 }}>Medium</th>
-                <th style={{ textAlign:"right", borderBottom:"1px solid #ddd", padding:8 }}>Sessions</th>
-                <th style={{ textAlign:"right", borderBottom:"1px solid #ddd", padding:8 }}>Users</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r,i)=>(
-                <tr key={`${r.source}/${r.medium}-${i}`}>
-                  <td style={{ padding:8, borderBottom:"1px solid #eee" }}>{r.source}</td>
-                  <td style={{ padding:8, borderBottom:"1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding:8, textAlign:"right", borderBottom:"1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding:8, textAlign:"right", borderBottom:"1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td style={{ padding:8, borderTop:"2px solid #ccc" }}><b>Total</b></td>
-                <td style={{ padding:8, borderTop:"2px solid #ccc" }} />
-                <td style={{ padding:8, textAlign:"right", borderTop:"2px solid #ccc" }}><b>{totalSessions.toLocaleString()}</b></td>
-                <td style={{ padding:8, textAlign:"right", borderTop:"2px solid #ccc" }}><b>{totalUsers.toLocaleString()}</b></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-
-      {aiError && <p style={{ color:"crimson", marginTop:12, whiteSpace:"pre-wrap" }}>Error: {aiError}</p>}
-      {aiText && (
-        <div style={{ marginTop:12, background:"#fffceb", border:"1px solid #f5e08f", padding:12, borderRadius:6, whiteSpace:"pre-wrap" }}>
-          {aiText}
-        </div>
-      )}
-    </section>
-  );
 }
