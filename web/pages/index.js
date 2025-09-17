@@ -1,5 +1,8 @@
 // /workspaces/insightsgpt/web/pages/index.js
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+/** ---------- helpers ---------- */
+const STORAGE_KEY = "insightgpt_preset_v1";
 
 function parseGa4(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
@@ -19,15 +22,110 @@ function parseGa4(response) {
   return { rows, totals };
 }
 
+function formatPctDelta(curr, prev) {
+  if (prev === 0 && curr === 0) return "0%";
+  if (prev === 0) return "+100%";
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
+function ymd(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function computePreviousRange(startStr, endStr) {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const oneDay = 24 * 60 * 60 * 1000;
+  const days = Math.round((end - start) / oneDay) + 1; // inclusive
+  const prevEnd = new Date(start.getTime() - oneDay);
+  const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
+  return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
+}
+
+/** CSV export */
+function downloadCsv(rows, totals, startDate, endDate) {
+  if (!rows?.length) return;
+  const header = ["Channel", "Sessions", "Users", "% of Sessions"];
+  const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
+  const lines = rows.map((r) => {
+    const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
+    return [r.channel, r.sessions, r.users, `${pct}%`];
+  });
+  lines.push(["Total", totals.sessions, totals.users, ""]);
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** QuickChart pie chart URL */
+function buildChannelPieUrl(rows) {
+  if (!rows?.length) return "";
+  const labels = rows.map((r) => r.channel);
+  const data = rows.map((r) => r.sessions);
+  const cfg = {
+    type: "pie",
+    data: { labels, datasets: [{ data }] },
+    options: { plugins: { legend: { position: "bottom" } } },
+  };
+  const encoded = encodeURIComponent(JSON.stringify(cfg));
+  // width/height can be tweaked if you like
+  return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
+}
+
+/** ---------- page ---------- */
 export default function Home() {
   const [propertyId, setPropertyId] = useState("");
   const [startDate, setStartDate] = useState("2024-09-01");
   const [endDate, setEndDate] = useState("2024-09-30");
+  const [comparePrev, setComparePrev] = useState(false);
+
   const [result, setResult] = useState(null);
+  const [prevResult, setPrevResult] = useState(null);
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Load preset once on first load
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (saved?.propertyId) setPropertyId(saved.propertyId);
+      if (saved?.startDate) setStartDate(saved.startDate);
+      if (saved?.endDate) setEndDate(saved.endDate);
+    } catch {}
+  }, []);
+
+  // Save preset whenever these change
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ propertyId, startDate, endDate })
+      );
+    } catch {}
+  }, [propertyId, startDate, endDate]);
+
   const { rows, totals } = useMemo(() => parseGa4(result), [result]);
+  const { rows: prevRows, totals: prevTotals } = useMemo(
+    () => parseGa4(prevResult),
+    [prevResult]
+  );
 
   const top = rows[0];
   const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
@@ -36,19 +134,37 @@ export default function Home() {
     window.location.href = "/api/auth/google/start";
   };
 
+  async function fetchGa4({ propertyId, startDate, endDate }) {
+    const res = await fetch("/api/ga4/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ propertyId, startDate, endDate }),
+    });
+    const txt = await res.text();
+    let json = null;
+    try { json = txt ? JSON.parse(txt) : null; } catch {}
+    if (!res.ok) {
+      throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
+    }
+    return json;
+  }
+
   const runReport = async () => {
     setError("");
     setResult(null);
+    setPrevResult(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/ga4/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || JSON.stringify(json));
-      setResult(json);
+      // Current period
+      const curr = await fetchGa4({ propertyId, startDate, endDate });
+      setResult(curr);
+
+      // Previous period (optional)
+      if (comparePrev) {
+        const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
+        const prev = await fetchGa4({ propertyId, startDate: prevStart, endDate: prevEnd });
+        setPrevResult(prev);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -56,11 +172,19 @@ export default function Home() {
     }
   };
 
+  const resetPreset = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setPropertyId("");
+    setStartDate("2024-09-01");
+    setEndDate("2024-09-30");
+  };
+
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 900, margin: "0 auto" }}>
+    <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 980, margin: "0 auto" }}>
       <h1 style={{ marginBottom: 4 }}>InsightGPT (MVP)</h1>
       <p style={{ marginTop: 0, color: "#555" }}>Connect GA4, choose a date range, and view traffic by channel.</p>
 
+      {/* Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>
           Connect Google Analytics
@@ -71,7 +195,7 @@ export default function Home() {
             value={propertyId}
             onChange={(e) => setPropertyId(e.target.value)}
             placeholder="e.g. 123456789"
-            style={{ padding: 8 }}
+            style={{ padding: 8, minWidth: 180 }}
           />
         </label>
 
@@ -85,18 +209,29 @@ export default function Home() {
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
+
         <button
-  onClick={() => downloadCsv(rows, totals, startDate, endDate)}
-  style={{ padding: "10px 14px", cursor: "pointer" }}
-  disabled={!rows.length}
->
-  Download CSV
-</button>
+          onClick={() => downloadCsv(rows, totals, startDate, endDate)}
+          style={{ padding: "10px 14px", cursor: "pointer" }}
+          disabled={!rows.length}
+          title={rows.length ? "Download table as CSV" : "Run a report first"}
+        >
+          Download CSV
+        </button>
+
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }}>
+          <input type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
+          Compare vs previous period
+        </label>
+
+        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
+          Reset preset
+        </button>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
 
-      {/* Quick insights (no AI) */}
+      {/* At a glance */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24, background: "#f6f7f8", padding: 16, borderRadius: 8 }}>
           <h2 style={{ marginTop: 0 }}>At a glance</h2>
@@ -108,11 +243,24 @@ export default function Home() {
                 <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
               </li>
             )}
+            {/* Compare vs previous */}
+            {prevRows.length > 0 && (
+              <>
+                <li style={{ marginTop: 6 }}>
+                  <b>Sessions vs previous:</b>{" "}
+                  {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
+                </li>
+                <li>
+                  <b>Users vs previous:</b>{" "}
+                  {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
+                </li>
+              </>
+            )}
           </ul>
         </section>
       )}
 
-      {/* Nice table */}
+      {/* Table */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24 }}>
           <h3 style={{ marginTop: 0 }}>Traffic by Default Channel Group</h3>
@@ -152,6 +300,18 @@ export default function Home() {
         </section>
       )}
 
+      {/* Channel share chart (QuickChart) */}
+      {rows.length > 0 && (
+        <section style={{ marginTop: 24 }}>
+          <h3 style={{ marginTop: 0 }}>Channel share (sessions)</h3>
+          <img
+            src={buildChannelPieUrl(rows)}
+            alt="Channel share chart"
+            style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+          />
+        </section>
+      )}
+
       {/* Raw JSON (debug) */}
       {result && (
         <details style={{ marginTop: 24 }}>
@@ -162,32 +322,54 @@ export default function Home() {
         </details>
       )}
 
-      {/* AI summary button (works if you created /pages/api/insights/summarise.js and set OPENAI_API_KEY) */}
+      {/* AI summary */}
       {rows.length > 0 && (
         <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
       )}
+
+      {/* (Priority 2 will go here later: Top pages) */}
     </main>
   );
 }
 
+/** ---------- components ---------- */
 function AiSummary({ rows, totals, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const run = async () => {
-    setLoading(true); setError(""); setText("");
+    setLoading(true);
+    setError("");
+    setText("");
+    setCopied(false);
     try {
       const res = await fetch("/api/insights/summarise", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          rows, totals, dateRange: { start: startDate, end: endDate }
+          rows,
+          totals,
+          dateRange: { start: startDate, end: endDate },
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || JSON.stringify(json));
-      setText(json.summary);
+
+      // Read as text first, then try JSON — avoids "Unexpected end of JSON input"
+      const raw = await res.text();
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {}
+
+      if (!res.ok) {
+        throw new Error(
+          (data && (data.error || data.message)) || raw || `HTTP ${res.status}`
+        );
+      }
+
+      const summary = (data && data.summary) || raw || "No response";
+      setText(summary);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -195,38 +377,46 @@ function AiSummary({ rows, totals, startDate, endDate }) {
     }
   };
 
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      setError("Could not copy to clipboard");
+    }
+  };
+
   return (
     <section style={{ marginTop: 24 }}>
-      <button onClick={run} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading}>
-        {loading ? "Summarising…" : "Summarise with AI"}
-      </button>
-      {error && <p style={{ color: "crimson", marginTop: 12 }}>Error: {error}</p>}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={run} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading}>
+          {loading ? "Summarising…" : "Summarise with AI"}
+        </button>
+        <button
+          onClick={copy}
+          style={{ padding: "10px 14px", cursor: "pointer" }}
+          disabled={!text}
+          title={text ? "Copy the summary to clipboard" : "Run summary first"}
+        >
+          {copied ? "Copied!" : "Copy insight"}
+        </button>
+      </div>
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
       {text && (
-        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+        <div
+          style={{
+            marginTop: 12,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: 12,
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+          }}
+        >
           {text}
         </div>
       )}
     </section>
   );
-  function downloadCsv(rows, totals, startDate, endDate) {
-  if (!rows?.length) return;
-  const header = ["Channel", "Sessions", "Users", "% of Sessions"];
-  const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
-  const lines = rows.map(r => {
-    const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
-    return [r.channel, r.sessions, r.users, `${pct}%`];
-  });
-  lines.push(["Total", totals.sessions, totals.users, ""]);
-  const csv = [header, ...lines]
-    .map(cols => cols.map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-
-  const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
 }
