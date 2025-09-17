@@ -1,29 +1,84 @@
 // /workspaces/insightsgpt/web/pages/api/ga4/top-pages.js
-// Queries GA4 Top Pages using the Analytics Data API.
-// This looks for an OAuth access token in common cookie names.
-// If your project uses a specific name, set GA_TOKEN_COOKIE in Vercel env.
+// GA4 "Top Pages" API route that uses Iron Session (Fe26.* cookie) to read your Google access token.
+// This is self-contained: it defines `sessionOptions` inline so you don't need to import from elsewhere.
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+import { withIronSessionApiRoute } from "iron-session/next";
+
+// If your project already defines sessionOptions centrally, you can delete this block and import it instead.
+// For now we inline it to avoid path issues.
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt_session",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+  },
+};
+
+async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
 
   const { propertyId, startDate, endDate, limit = 10 } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
     return res.status(400).json({ error: "Missing propertyId, startDate or endDate" });
   }
 
-  // 1) Try a list of likely cookie names (plus GA_TOKEN_COOKIE env)
-  const CANDIDATE_COOKIES = [
-    process.env.GA_TOKEN_COOKIE,                // set this in Vercel if needed
-    "ga_access_token",                          // common in our examples
-    "google_access_token",
-    "access_token",
-    "session_token",
-    "next-auth.session-token"                   // if using NextAuth
-  ].filter(Boolean);
+  // Token locations used in the rest of the app. We try several keys to be safe.
+  const token =
+    (req.session && req.session.google && req.session.google.accessToken) ||
+    (req.session && req.session.tokens && req.session.tokens.access_token) ||
+    req.session?.accessToken ||
+    null;
 
-  let token = null;
-  for (const name of CANDIDATE_COOKIES) {
-    if (req.cookies?.[name]) { token = req.cookies[name]; break; }
+  if (!token) {
+    return res.status(401).json({
+      error: "No access token in session. Click 'Connect Google Analytics' then try again.",
+      sessionKeysPresent: Object.keys(req.session || {}),
+    });
   }
 
-  // 
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+    propertyId
+  )}:runReport`;
+
+  const body = {
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "pageTitle" }, { name: "pagePathPlusQueryString" }],
+    metrics: [{ name: "screenPageViews" }, { name: "totalUsers" }],
+    orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+    limit,
+  };
+
+  try {
+    const gaRes = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    const raw = await gaRes.text();
+    let json = null;
+    try {
+      json = raw ? JSON.parse(raw) : null;
+    } catch {
+      return res
+        .status(gaRes.status || 502)
+        .json({ error: "Upstream response was not JSON", upstream: raw?.slice(0, 1000) || "" });
+    }
+
+    if (!gaRes.ok) {
+      return res.status(gaRes.status).json(json || { error: "GA4 error", raw });
+    }
+
+    return res.status(200).json(json);
+  } catch (e) {
+    return res.status(500).json({ error: String(e) });
+  }
+}
+
+export default withIronSessionApiRoute(handler, sessionOptions);
