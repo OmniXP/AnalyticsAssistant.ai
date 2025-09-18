@@ -1,20 +1,25 @@
-// /workspaces/insightsgpt/web/pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
-/** ---------- helpers ---------- */
+/* =========================
+   Helpers (pure functions)
+   ========================= */
+
 const STORAGE_KEY = "insightgpt_preset_v1";
 
 function parseGa4(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
+
   const rows = response.rows.map((r) => ({
     channel: r.dimensionValues?.[0]?.value || "(unknown)",
     sessions: Number(r.metricValues?.[0]?.value || 0),
     users: Number(r.metricValues?.[1]?.value || 0),
   }));
+
   const totals = rows.reduce(
     (acc, r) => ({ sessions: acc.sessions + r.sessions, users: acc.users + r.users }),
     { sessions: 0, users: 0 }
   );
+
   rows.sort((a, b) => b.sessions - a.sessions);
   return { rows, totals };
 }
@@ -43,6 +48,7 @@ function computePreviousRange(startStr, endStr) {
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
 }
 
+/* CSV export */
 function downloadCsv(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -55,15 +61,21 @@ function downloadCsv(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
+/* QuickChart (pie) */
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
   const labels = rows.map((r) => r.channel);
@@ -77,22 +89,76 @@ function buildChannelPieUrl(rows) {
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
 
-function formatCurrency(amount, currency = "GBP") {
-  const n = Number(amount || 0);
-  try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n); }
-  catch { return `${currency} ${n.toFixed(2)}`; }
-}
+/* =========================
+   Reusable AI block (UI)
+   ========================= */
+function AiBlock({ endpoint, payload, disabled }) {
+  const [loading, setLoading] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
-function KpiCard({ label, value, tooltip }) {
+  const run = async () => {
+    setLoading(true); setError(""); setText("");
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const raw = await res.text();
+      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!res.ok) {
+        const msg = data?.error?.message || data?.error || data?.message || raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      setText(data?.summary || raw || "No response");
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text || ""); setCopied(true); setTimeout(() => setCopied(false), 1200); }
+    catch { setError("Could not copy to clipboard"); }
+  };
+
   return (
-    <div title={tooltip || ""} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, background: "#fff" }}>
-      <div style={{ color: "#666", fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{value}</div>
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={run} disabled={loading || disabled} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {loading ? "Summarising…" : "Summarise with AI"}
+        </button>
+        <button onClick={copy} disabled={!text} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {copied ? "Copied!" : "Copy insight"}
+        </button>
+      </div>
+      {error && <p style={{ color: "crimson", marginTop: 8, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {text && (
+        <div style={{ marginTop: 8, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+          {text}
+        </div>
+      )}
     </div>
   );
 }
 
-/** ---------- page ---------- */
+/* Simple KPI card */
+function KpiCard({ label, value }) {
+  return (
+    <div style={{ background: "#f6f7f8", padding: 14, borderRadius: 8, border: "1px solid #e7e7e7" }}>
+      <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+/* =========================
+   Main page
+   ========================= */
+
 export default function Home() {
   const [propertyId, setPropertyId] = useState("");
   const [startDate, setStartDate] = useState("2024-09-01");
@@ -105,6 +171,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Load preset once
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -114,6 +181,7 @@ export default function Home() {
     } catch {}
   }, []);
 
+  // Save preset
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ propertyId, startDate, endDate }));
@@ -126,7 +194,9 @@ export default function Home() {
   const top = rows[0];
   const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
-  const connect = () => { window.location.href = "/api/auth/google/start"; };
+  const connect = () => {
+    window.location.href = "/api/auth/google/start";
+  };
 
   async function fetchGa4({ propertyId, startDate, endDate }) {
     const res = await fetch("/api/ga4/query", {
@@ -135,16 +205,23 @@ export default function Home() {
       body: JSON.stringify({ propertyId, startDate, endDate }),
     });
     const txt = await res.text();
-    let json = null; try { json = txt ? JSON.parse(txt) : null; } catch {}
-    if (!res.ok) throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
+    let json = null;
+    try { json = txt ? JSON.parse(txt) : null; } catch {}
+    if (!res.ok) {
+      throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
+    }
     return json;
   }
 
   const runReport = async () => {
-    setError(""); setResult(null); setPrevResult(null); setLoading(true);
+    setError("");
+    setResult(null);
+    setPrevResult(null);
+    setLoading(true);
     try {
       const curr = await fetchGa4({ propertyId, startDate, endDate });
       setResult(curr);
+
       if (comparePrev) {
         const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
         const prev = await fetchGa4({ propertyId, startDate: prevStart, endDate: prevEnd });
@@ -159,7 +236,9 @@ export default function Home() {
 
   const resetPreset = () => {
     localStorage.removeItem(STORAGE_KEY);
-    setPropertyId(""); setStartDate("2024-09-01"); setEndDate("2024-09-30");
+    setPropertyId("");
+    setStartDate("2024-09-01");
+    setEndDate("2024-09-30");
   };
 
   return (
@@ -169,50 +248,80 @@ export default function Home() {
 
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>Connect Google Analytics</button>
+        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>
+          Connect Google Analytics
+        </button>
+
         <label>GA4 Property ID&nbsp;
-          <input value={propertyId} onChange={(e) => setPropertyId(e.target.value)} placeholder="e.g. 123456789" style={{ padding: 8, minWidth: 180 }} />
+          <input
+            value={propertyId}
+            onChange={(e) => setPropertyId(e.target.value)}
+            placeholder="e.g. 123456789"
+            style={{ padding: 8, minWidth: 180 }}
+          />
         </label>
+
         <label>Start date&nbsp;
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8 }} />
         </label>
         <label>End date&nbsp;
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8 }} />
         </label>
+
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
-        <button onClick={() => downloadCsv(rows, totals, startDate, endDate)} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={!rows.length}>
+
+        <button
+          onClick={() => downloadCsv(rows, totals, startDate, endDate)}
+          style={{ padding: "10px 14px", cursor: "pointer" }}
+          disabled={!rows.length}
+          title={rows.length ? "Download table as CSV" : "Run a report first"}
+        >
           Download CSV
         </button>
+
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }}>
           <input type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
           Compare vs previous period
         </label>
-        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>Reset preset</button>
+
+        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
+          Reset preset
+        </button>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
 
-      {/* At a glance */}
+      {/* At a glance (Channels) */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24, background: "#f6f7f8", padding: 16, borderRadius: 8 }}>
           <h2 style={{ marginTop: 0 }}>At a glance</h2>
           <ul>
             <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
             <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
-            {top && <li><b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)</li>}
+            {top && (
+              <li>
+                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
+              </li>
+            )}
             {prevRows.length > 0 && (
               <>
-                <li style={{ marginTop: 6 }}><b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})</li>
-                <li><b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})</li>
+                <li style={{ marginTop: 6 }}>
+                  <b>Sessions vs previous:</b>{" "}
+                  {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
+                </li>
+                <li>
+                  <b>Users vs previous:</b>{" "}
+                  {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
+                </li>
               </>
             )}
           </ul>
         </section>
       )}
 
-      {/* Table */}
+      {/* Table: Default Channel Group */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24 }}>
           <h3 style={{ marginTop: 0 }}>Traffic by Default Channel Group</h3>
@@ -256,7 +365,12 @@ export default function Home() {
       {rows.length > 0 && (
         <section style={{ marginTop: 24 }}>
           <h3 style={{ marginTop: 0 }}>Channel share (sessions)</h3>
-          <img src={buildChannelPieUrl(rows)} alt="Channel share chart" style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }} />
+          {/* Using <img> keeps things simple; Next/Image would need a loader for QuickChart */}
+          <img
+            src={buildChannelPieUrl(rows)}
+            alt="Channel share chart"
+            style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+          />
         </section>
       )}
 
@@ -270,74 +384,17 @@ export default function Home() {
         </details>
       )}
 
-      {/* AI summary */}
-      {rows.length > 0 && (
-        <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
-      )}
-
-      {/* Top pages */}
-      {propertyId && (
-        <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
-      {/* Source / Medium */}
-      {propertyId && (
-       <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />
-     )}
-
-      {/* E-commerce KPIs */}
-      {propertyId && (
-        <EcommerceKPIs propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
+      {/* —— Extra sections —— */}
+      {propertyId && <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <EcommerceKPIs propertyId={propertyId} startDate={startDate} endDate={endDate} />}
     </main>
   );
 }
 
-/** ---------- components ---------- */
-function AiSummary({ rows, totals, startDate, endDate }) {
-  const [loading, setLoading] = useState(false);
-  const [text, setText] = useState("");
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
-
-  const run = async () => {
-    setLoading(true); setError(""); setText(""); setCopied(false);
-    try {
-      const res = await fetch("/api/insights/summarise", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, totals, dateRange: { start: startDate, end: endDate } }),
-      });
-      const raw = await res.text();
-      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
-      setText((data && data.summary) || raw || "No response");
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(text || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
-    catch { setError("Could not copy to clipboard"); }
-  };
-
-  return (
-    <section style={{ marginTop: 24 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={run} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading}>{loading ? "Summarising…" : "Summarise with AI"}</button>
-        <button onClick={copy} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={!text}>{copied ? "Copied!" : "Copy insight"}</button>
-      </div>
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {text && (
-        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
-          {text}
-        </div>
-      )}
-    </section>
-  );
-}
+/* =========================
+   Components (Top-level)
+   ========================= */
 
 function TopPages({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
@@ -355,6 +412,7 @@ function TopPages({ propertyId, startDate, endDate }) {
       const txt = await res.text();
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
       if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+
       const parsed = (data.rows || []).map((r) => ({
         title: r.dimensionValues?.[0]?.value || "(untitled)",
         path: r.dimensionValues?.[1]?.value || "",
@@ -379,29 +437,42 @@ function TopPages({ propertyId, startDate, endDate }) {
       </div>
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
       {rows.length > 0 && (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.path}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+        <>
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.path}-${i}`}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* AI summary for Top Pages */}
+          <AiBlock
+            endpoint="/api/insights/summarise-top-pages"
+            disabled={false}
+            payload={{
+              rows, // [{title, path, views, users}]
+              dateRange: { start: startDate, end: endDate },
+            }}
+          />
+        </>
       )}
+      {rows.length === 0 && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>}
     </section>
   );
 }
@@ -447,32 +518,42 @@ function SourceMedium({ propertyId, startDate, endDate }) {
       </div>
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
       {rows.length > 0 && (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.source}-${r.medium}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+        <>
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.source}-${r.medium}-${i}`}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* AI summary for Source/Medium */}
+          <AiBlock
+            endpoint="/api/insights/summarise-source-medium"
+            disabled={false}
+            payload={{
+              rows, // [{source, medium, sessions, users}]
+              dateRange: { start: startDate, end: endDate },
+            }}
+          />
+        </>
       )}
-      {rows.length === 0 && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      {rows.length === 0 && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>}
     </section>
   );
 }
@@ -490,15 +571,17 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const load = async () => {
     setLoading(true); setError(""); setTotals(null);
     try {
-      console.log("[EcommerceKPIs] calling ecommerce-summary with", { propertyId, startDate, endDate });
       const res = await fetch("/api/ga4/ecommerce-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ propertyId, startDate, endDate }),
       });
-      const txt = await res.text();
-      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+      const raw = await res.text();
+      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!res.ok) {
+        const msg = data?.error?.message || data?.error || data?.message || raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
       setTotals(data?.totals || null);
     } catch (e) {
       setError(String(e.message || e));
@@ -515,6 +598,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const clicks = totals?.adClicks ?? 0;
   const imps = totals?.adImpressions ?? 0;
   const currency = totals?.currencyCode ?? "GBP";
+
   const aov = purchases > 0 ? revenue / purchases : 0;
   const cvr = users > 0 ? (purchases / users) * 100 : 0;
   const ctr = imps > 0 ? (clicks / imps) * 100 : null;
@@ -527,16 +611,18 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
         totals: { purchases, revenue, sessions, users, clicks, imps, currency, aov, cvr, ctr },
         dateRange: { start: startDate, end: endDate },
       };
-      console.log("[EcommerceKPIs] summarise payload", payload);
       const res = await fetch("/api/insights/summarise-ecommerce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const txt = await res.text();
-      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
-      setAiText((data && data.summary) || txt || "No response");
+      const raw = await res.text();
+      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!res.ok) {
+        const msg = data?.error?.message || data?.error || data?.message || raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      setAiText(data?.summary || raw || "No response");
     } catch (e) {
       setAiError(String(e.message || e));
     } finally {
@@ -545,8 +631,14 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(() => setCopied(false), 1200); }
     catch { setAiError("Could not copy to clipboard"); }
+  };
+
+  const formatCurrency = (n) => {
+    const v = Number(n || 0);
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(v); }
+    catch { return `${currency} ${v.toFixed(2)}`; }
   };
 
   return (
@@ -568,13 +660,13 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
 
       {totals && (
         <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
-          <KpiCard label="Revenue" value={formatCurrency(revenue, currency)} />
+          <KpiCard label="Revenue" value={formatCurrency(revenue)} />
           <KpiCard label="Purchases" value={purchases.toLocaleString()} />
-          <KpiCard label="AOV" value={formatCurrency(aov, currency)} tooltip="Average Order Value = Revenue / Purchases" />
-          <KpiCard label="CVR" value={`${cvr.toFixed(2)}%`} tooltip="Conversion Rate = Purchases / Active Users" />
+          <KpiCard label="AOV" value={formatCurrency(aov)} />
+          <KpiCard label="CVR" value={`${cvr.toFixed(2)}%`} />
           <KpiCard label="Sessions" value={sessions.toLocaleString()} />
           <KpiCard label="Active Users" value={users.toLocaleString()} />
-          {ctr !== null && <KpiCard label="CTR" value={`${ctr.toFixed(2)}%`} tooltip="CTR = Ad Clicks / Impressions" />}
+          {ctr !== null && <KpiCard label="CTR" value={`${ctr.toFixed(2)}%`} />}
         </div>
       )}
 

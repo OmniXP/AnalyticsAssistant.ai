@@ -1,81 +1,77 @@
 // /workspaces/insightsgpt/web/pages/api/insights/summarise-top-pages.js
-// Summarises GA4 Top Pages with OpenAI and returns { summary: "…" }.
-// Requires OPENAI_API_KEY in your environment (Vercel → Settings → Environment Variables).
+export const config = { runtime: "edge" };
 
-export const config = {
-  api: { bodyParser: { sizeLimit: "1mb" } },
-};
-
-export default async function handler(req, res) {
+export default async function handler(req) {
   if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method Not Allowed" });
+    return new Response("Method Not Allowed", { status: 405 });
   }
-
-  const { pages, dateRange } = req.body || {};
-  if (!Array.isArray(pages) || pages.length === 0) {
-    return res.status(400).json({ error: "Missing or empty 'pages' array" });
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).json({ error: "OPENAI_API_KEY is not set" });
-  }
-
-  // Keep payload small: take top 20 rows max
-  const top = pages.slice(0, 20).map(p => ({
-    title: p.title || "(untitled)",
-    path: p.path || "",
-    views: Number(p.views || 0),
-    users: Number(p.users || 0),
-  }));
-
-  const prompt = `
-You are a web analytics assistant. Write a concise, plain-English insight summary of the website's top pages for the period ${dateRange?.start || "?"} to ${dateRange?.end || "?"}.
-Focus on patterns, winners/underperformers, and simple, actionable recommendations.
-Avoid waffle. Use 3–6 bullet points max.
-
-Data (pageTitle, path, views, users), sorted by views desc:
-${top.map((r, i) => `${i + 1}. ${r.title} | ${r.path} | views=${r.views} | users=${r.users}`).join("\n")}
-
-Return just the summary text. Do not include code fences.
-  `.trim();
 
   try {
-    // Minimal call with fetch to OpenAI completions API (responses API)
-    const resp = await fetch("https://api.openai.com/v1/responses", {
+    const { rows, dateRange } = await req.json();
+    if (!Array.isArray(rows) || !rows.length || !dateRange?.start || !dateRange?.end) {
+      return new Response(JSON.stringify({ error: "Missing rows/dateRange" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_API_KEY) {
+      return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const prompt = `
+You are an analytics assistant. Summarise website performance for the given date range in clear, non-technical language with 3–5 bullets and 2–3 actions.
+
+Date range: ${dateRange.start} to ${dateRange.end}
+
+Top pages (title, path, views, users):
+${rows.map((r, i) => `${i + 1}. ${r.title} | ${r.path} | views=${r.views} | users=${r.users}`).join("\n")}
+
+Write:
+- One-line headline
+- 3–5 key insights (mix of traffic, engagement, obvious anomalies)
+- 2–3 actions (specific, pragmatic)
+Return plain text only.
+`.trim();
+
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        input: prompt,
+        messages: [
+          { role: "system", content: "You turn GA4 data into concise, actionable insights." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
       }),
     });
 
-    const raw = await resp.text();
-    let json = null;
-    try { json = raw ? JSON.parse(raw) : null; } catch {}
-
-    if (!resp.ok) {
-      return res.status(resp.status).json(json || { error: "OpenAI error", raw });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const message = data?.error?.message || data?.message || "OpenAI error";
+      return new Response(JSON.stringify({ error: message }), {
+        status: res.status,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
-    // Extract text safely
-    let text = "";
-    if (json?.output_text) {
-      text = json.output_text;
-    } else if (Array.isArray(json?.output) && json.output[0]?.content?.[0]?.text) {
-      text = json.output[0].content[0].text;
-    } else if (json?.choices?.[0]?.message?.content) {
-      text = json.choices[0].message.content; // fallback for other models
-    } else {
-      text = typeof raw === "string" ? raw : "No response";
-    }
-
-    return res.status(200).json({ summary: text.trim() });
+    const summary = data?.choices?.[0]?.message?.content?.trim() || "No summary";
+    return new Response(JSON.stringify({ summary }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
