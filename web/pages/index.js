@@ -6,18 +6,15 @@ const STORAGE_KEY = "insightgpt_preset_v1";
 
 function parseGa4(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
-
   const rows = response.rows.map((r) => ({
     channel: r.dimensionValues?.[0]?.value || "(unknown)",
     sessions: Number(r.metricValues?.[0]?.value || 0),
     users: Number(r.metricValues?.[1]?.value || 0),
   }));
-
   const totals = rows.reduce(
     (acc, r) => ({ sessions: acc.sessions + r.sessions, users: acc.users + r.users }),
     { sessions: 0, users: 0 }
   );
-
   rows.sort((a, b) => b.sessions - a.sessions);
   return { rows, totals };
 }
@@ -46,7 +43,6 @@ function computePreviousRange(startStr, endStr) {
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
 }
 
-/** CSV export */
 function downloadCsv(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -59,21 +55,15 @@ function downloadCsv(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
-
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-/** QuickChart pie chart URL */
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
   const labels = rows.map((r) => r.channel);
@@ -87,17 +77,12 @@ function buildChannelPieUrl(rows) {
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
 
-/** Currency formatter for KPIs */
 function formatCurrency(amount, currency = "GBP") {
   const n = Number(amount || 0);
-  try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n);
-  } catch {
-    return `${currency} ${n.toFixed(2)}`;
-  }
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n); }
+  catch { return `${currency} ${n.toFixed(2)}`; }
 }
 
-/** Reusable KPI card */
 function KpiCard({ label, value, tooltip }) {
   return (
     <div title={tooltip || ""} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, background: "#fff" }}>
@@ -120,7 +105,6 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load preset once on first load
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -130,28 +114,19 @@ export default function Home() {
     } catch {}
   }, []);
 
-  // Save preset whenever these change
   useEffect(() => {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ propertyId, startDate, endDate })
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ propertyId, startDate, endDate }));
     } catch {}
   }, [propertyId, startDate, endDate]);
 
   const { rows, totals } = useMemo(() => parseGa4(result), [result]);
-  const { rows: prevRows, totals: prevTotals } = useMemo(
-    () => parseGa4(prevResult),
-    [prevResult]
-  );
+  const { rows: prevRows, totals: prevTotals } = useMemo(() => parseGa4(prevResult), [prevResult]);
 
   const top = rows[0];
   const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
-  const connect = () => {
-    window.location.href = "/api/auth/google/start";
-  };
+  const connect = () => { window.location.href = "/api/auth/google/start"; };
 
   async function fetchGa4({ propertyId, startDate, endDate }) {
     const res = await fetch("/api/ga4/query", {
@@ -160,25 +135,16 @@ export default function Home() {
       body: JSON.stringify({ propertyId, startDate, endDate }),
     });
     const txt = await res.text();
-    let json = null;
-    try { json = txt ? JSON.parse(txt) : null; } catch {}
-    if (!res.ok) {
-      throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
-    }
+    let json = null; try { json = txt ? JSON.parse(txt) : null; } catch {}
+    if (!res.ok) throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
     return json;
   }
 
   const runReport = async () => {
-    setError("");
-    setResult(null);
-    setPrevResult(null);
-    setLoading(true);
+    setError(""); setResult(null); setPrevResult(null); setLoading(true);
     try {
-      // Current period
       const curr = await fetchGa4({ propertyId, startDate, endDate });
       setResult(curr);
-
-      // Previous period (optional)
       if (comparePrev) {
         const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
         const prev = await fetchGa4({ propertyId, startDate: prevStart, endDate: prevEnd });
@@ -193,9 +159,7 @@ export default function Home() {
 
   const resetPreset = () => {
     localStorage.removeItem(STORAGE_KEY);
-    setPropertyId("");
-    setStartDate("2024-09-01");
-    setEndDate("2024-09-30");
+    setPropertyId(""); setStartDate("2024-09-01"); setEndDate("2024-09-30");
   };
 
   return (
@@ -205,47 +169,27 @@ export default function Home() {
 
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>
-          Connect Google Analytics
-        </button>
-
+        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>Connect Google Analytics</button>
         <label>GA4 Property ID&nbsp;
-          <input
-            value={propertyId}
-            onChange={(e) => setPropertyId(e.target.value)}
-            placeholder="e.g. 123456789"
-            style={{ padding: 8, minWidth: 180 }}
-          />
+          <input value={propertyId} onChange={(e) => setPropertyId(e.target.value)} placeholder="e.g. 123456789" style={{ padding: 8, minWidth: 180 }} />
         </label>
-
         <label>Start date&nbsp;
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8 }} />
         </label>
         <label>End date&nbsp;
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8 }} />
         </label>
-
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
-
-        <button
-          onClick={() => downloadCsv(rows, totals, startDate, endDate)}
-          style={{ padding: "10px 14px", cursor: "pointer" }}
-          disabled={!rows.length}
-          title={rows.length ? "Download table as CSV" : "Run a report first"}
-        >
+        <button onClick={() => downloadCsv(rows, totals, startDate, endDate)} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={!rows.length}>
           Download CSV
         </button>
-
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }}>
           <input type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
           Compare vs previous period
         </label>
-
-        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
-          Reset preset
-        </button>
+        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>Reset preset</button>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -257,22 +201,11 @@ export default function Home() {
           <ul>
             <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
             <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
-            {top && (
-              <li>
-                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
-              </li>
-            )}
-            {/* Compare vs previous */}
+            {top && <li><b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)</li>}
             {prevRows.length > 0 && (
               <>
-                <li style={{ marginTop: 6 }}>
-                  <b>Sessions vs previous:</b>{" "}
-                  {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
-                </li>
-                <li>
-                  <b>Users vs previous:</b>{" "}
-                  {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
-                </li>
+                <li style={{ marginTop: 6 }}><b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})</li>
+                <li><b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})</li>
               </>
             )}
           </ul>
@@ -319,15 +252,11 @@ export default function Home() {
         </section>
       )}
 
-      {/* Channel share chart (QuickChart) */}
+      {/* Channel share chart */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24 }}>
           <h3 style={{ marginTop: 0 }}>Channel share (sessions)</h3>
-          <img
-            src={buildChannelPieUrl(rows)}
-            alt="Channel share chart"
-            style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
-          />
+          <img src={buildChannelPieUrl(rows)} alt="Channel share chart" style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }} />
         </section>
       )}
 
@@ -367,31 +296,17 @@ function AiSummary({ rows, totals, startDate, endDate }) {
   const [copied, setCopied] = useState(false);
 
   const run = async () => {
-    setLoading(true);
-    setError("");
-    setText("");
-    setCopied(false);
+    setLoading(true); setError(""); setText(""); setCopied(false);
     try {
       const res = await fetch("/api/insights/summarise", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rows,
-          totals,
-          dateRange: { start: startDate, end: endDate },
-        }),
+        body: JSON.stringify({ rows, totals, dateRange: { start: startDate, end: endDate } }),
       });
-
       const raw = await res.text();
-      let data = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch {}
-
-      if (!res.ok) {
-        throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
-      }
-
-      const summary = (data && data.summary) || raw || "No response";
-      setText(summary);
+      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
+      setText((data && data.summary) || raw || "No response");
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -400,42 +315,19 @@ function AiSummary({ rows, totals, startDate, endDate }) {
   };
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text || "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      setError("Could not copy to clipboard");
-    }
+    try { await navigator.clipboard.writeText(text || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { setError("Could not copy to clipboard"); }
   };
 
   return (
     <section style={{ marginTop: 24 }}>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={run} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading}>
-          {loading ? "Summarising…" : "Summarise with AI"}
-        </button>
-        <button
-          onClick={copy}
-          style={{ padding: "10px 14px", cursor: "pointer" }}
-          disabled={!text}
-          title={text ? "Copy the summary to clipboard" : "Run summary first"}
-        >
-          {copied ? "Copied!" : "Copy insight"}
-        </button>
+        <button onClick={run} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading}>{loading ? "Summarising…" : "Summarise with AI"}</button>
+        <button onClick={copy} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={!text}>{copied ? "Copied!" : "Copy insight"}</button>
       </div>
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
       {text && (
-        <div
-          style={{
-            marginTop: 12,
-            background: "#fffceb",
-            border: "1px solid #f5e08f",
-            padding: 12,
-            borderRadius: 6,
-            whiteSpace: "pre-wrap",
-          }}
-        >
+        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
           {text}
         </div>
       )}
@@ -457,10 +349,8 @@ function TopPages({ propertyId, startDate, endDate }) {
         body: JSON.stringify({ propertyId, startDate, endDate, limit: 10 }),
       });
       const txt = await res.text();
-      let data = null;
-      try { data = txt ? JSON.parse(txt) : null; } catch {}
+      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
       if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
-
       const parsed = (data.rows || []).map((r) => ({
         title: r.dimensionValues?.[0]?.value || "(untitled)",
         path: r.dimensionValues?.[1]?.value || "",
@@ -512,7 +402,6 @@ function TopPages({ propertyId, startDate, endDate }) {
   );
 }
 
-// ---------- Ecommerce KPIs (component) ----------
 function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
@@ -543,52 +432,35 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
     }
   };
 
-  // Derived KPIs from totals (once loaded)
+  // Derived KPIs
   const purchases = totals?.purchases ?? 0;
   const revenue = totals?.purchaseRevenue ?? 0;
   const sessions = totals?.sessions ?? 0;
-  const users = totals?.activeUsers ?? 0;         // GA4 best practice for CVR denominator
+  const users = totals?.activeUsers ?? 0;
   const clicks = totals?.adClicks ?? 0;
   const imps = totals?.adImpressions ?? 0;
   const currency = totals?.currencyCode ?? "GBP";
-
-  const aov = purchases > 0 ? revenue / purchases : 0;     // Average Order Value
-  const cvr = users > 0 ? (purchases / users) * 100 : 0;   // Conversion Rate
-  const ctr = imps > 0 ? (clicks / imps) * 100 : null;     // CTR (null if no ads data)
+  const aov = purchases > 0 ? revenue / purchases : 0;
+  const cvr = users > 0 ? (purchases / users) * 100 : 0;
+  const ctr = imps > 0 ? (clicks / imps) * 100 : null;
 
   const summarise = async () => {
     setAiLoading(true); setAiText(""); setAiError(""); setCopied(false);
     try {
       if (!totals) throw new Error("Load the e-commerce KPIs first.");
-
       const payload = {
-        totals: {
-          purchases,
-          revenue,                  // maps to purchaseRevenue
-          sessions,
-          users,                    // maps to activeUsers
-          clicks,                   // adClicks
-          imps,                     // adImpressions
-          currency,                 // currencyCode
-          aov,
-          cvr,
-          ctr,                      // can be null
-        },
+        totals: { purchases, revenue, sessions, users, clicks, imps, currency, aov, cvr, ctr },
         dateRange: { start: startDate, end: endDate },
       };
-
       console.log("[EcommerceKPIs] summarise payload", payload);
-
       const res = await fetch("/api/insights/summarise-ecommerce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       const txt = await res.text();
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
       if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
-
       setAiText((data && data.summary) || txt || "No response");
     } catch (e) {
       setAiError(String(e.message || e));
@@ -598,7 +470,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(()=>setCopied(false), 1500); }
+    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
     catch { setAiError("Could not copy to clipboard"); }
   };
 
@@ -612,4 +484,31 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
         <button onClick={summarise} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={aiLoading || !totals}>
           {aiLoading ? "Summarising…" : "Summarise with AI"}
         </button>
-        <button onClick={copy} style={{ padding: "8px 12px", cursor:
+        <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!aiText}>
+          {copied ? "Copied!" : "Copy insight"}
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {totals && (
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          <KpiCard label="Revenue" value={formatCurrency(revenue, currency)} />
+          <KpiCard label="Purchases" value={purchases.toLocaleString()} />
+          <KpiCard label="AOV" value={formatCurrency(aov, currency)} tooltip="Average Order Value = Revenue / Purchases" />
+          <KpiCard label="CVR" value={`${cvr.toFixed(2)}%`} tooltip="Conversion Rate = Purchases / Active Users" />
+          <KpiCard label="Sessions" value={sessions.toLocaleString()} />
+          <KpiCard label="Active Users" value={users.toLocaleString()} />
+          {ctr !== null && <KpiCard label="CTR" value={`${ctr.toFixed(2)}%`} tooltip="CTR = Ad Clicks / Impressions" />}
+        </div>
+      )}
+
+      {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
+      {aiText && (
+        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+          {aiText}
+        </div>
+      )}
+    </section>
+  );
+}
