@@ -27,9 +27,10 @@ export default async function handler(req, res) {
   const token = session?.gaTokens?.access_token;
   if (!token) return res.status(401).json({ error: "Not connected" });
 
-  const dimensions = [{ name: "source" }, { name: "medium" }];
-  if (includeCampaign) {
-    dimensions.push({ name: "campaignId" }, { name: "campaignName" });
+  const dimensions = [{ name: "sessionSource" }, { name: "sessionMedium" }];
+if (includeCampaign) {
+  dimensions.push({ name: "sessionCampaignId" }, { name: "sessionCampaignName" });
+}
   }
 
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`;
