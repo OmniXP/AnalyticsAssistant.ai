@@ -581,6 +581,7 @@ function SourceMedium({ propertyId, startDate, endDate }) {
 }
 
 // ---------- Ecommerce KPIs (component) ----------
+// ---------- Ecommerce KPIs (component) ----------
 function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
@@ -609,6 +610,105 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
       setLoading(false);
     }
   };
+
+  // Derived KPIs
+  const purchases = totals?.purchases || 0;
+  const revenue = totals?.purchaseRevenue || 0;
+  const sessions = totals?.sessions || 0;
+  const users = totals?.activeUsers || 0; // GA4 best practice for CVR denominator
+  const clicks = totals?.adClicks || 0;
+  const imps = totals?.adImpressions || 0;
+  const currency = totals?.currencyCode || "GBP";
+
+  const aov = purchases > 0 ? revenue / purchases : 0;         // Average Order Value
+  const cvr = users > 0 ? (purchases / users) * 100 : 0;       // Conversion Rate
+  const ctr = imps > 0 ? (clicks / imps) * 100 : null;         // CTR (if ads data present)
+
+  // >>> Replace only this function if you’re editing instead of pasting the whole component <<<
+  const summarise = async () => {
+    setAiLoading(true); setAiText(""); setAiError(""); setCopied(false);
+    try {
+      if (!totals) throw new Error("Load the e-commerce KPIs first.");
+
+      const payload = {
+        totals: {
+          purchases: purchases || 0,
+          revenue: revenue || 0,
+          sessions: sessions || 0,
+          users: users || 0,
+          clicks: clicks || 0,
+          imps: imps || 0,
+          currency: currency || "GBP",
+          aov: aov || 0,
+          cvr: cvr || 0,
+          ctr: ctr === null ? null : ctr || 0,
+        },
+        dateRange: { start: startDate, end: endDate },
+      };
+
+      console.log("[EcommerceKPIs] summarise payload", payload);
+
+      const res = await fetch("/api/insights/summarise-ecommerce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const txt = await res.text();
+      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+
+      setAiText((data && data.summary) || txt || "No response");
+    } catch (e) {
+      setAiError(String(e.message || e));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(()=>setCopied(false), 1500); }
+    catch { setAiError("Could not copy to clipboard"); }
+  };
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>E-commerce KPIs</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load E-commerce KPIs"}
+        </button>
+        <button onClick={summarise} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={aiLoading || !totals}>
+          {aiLoading ? "Summarising…" : "Summarise with AI"}
+        </button>
+        <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!aiText}>
+          {copied ? "Copied!" : "Copy insight"}
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {totals && (
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          <KpiCard label="Revenue" value={formatCurrency(revenue, currency)} />
+          <KpiCard label="Purchases" value={purchases.toLocaleString()} />
+          <KpiCard label="AOV" value={formatCurrency(aov, currency)} tooltip="Average Order Value = Revenue / Purchases" />
+          <KpiCard label="CVR" value={`${cvr.toFixed(2)}%`} tooltip="Conversion Rate = Purchases / Active Users" />
+          <KpiCard label="Sessions" value={sessions.toLocaleString()} />
+          <KpiCard label="Active Users" value={users.toLocaleString()} />
+          {ctr !== null && <KpiCard label="CTR" value={`${ctr.toFixed(2)}%`} tooltip="CTR = Ad Clicks / Impressions (ads-linked data)" />}
+        </div>
+      )}
+
+      {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
+      {aiText && (
+        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+          {aiText}
+        </div>
+      )}
+    </section>
+  );
+}
 
   // Derived KPIs
   const purchases = totals?.purchases || 0;
