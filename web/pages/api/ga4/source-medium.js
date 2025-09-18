@@ -1,9 +1,8 @@
-// /workspaces/insightsgpt/web/pages/api/ga4/source-medium.js
 import { getIronSession } from "iron-session";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt", // must match your other routes
+  cookieName: "insightgpt",
   cookieOptions: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
@@ -13,76 +12,37 @@ const sessionOptions = {
 };
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
-
-  const {
-    propertyId,
-    startDate,
-    endDate,
-    limit = 20,
-    includeCampaign = false,
-  } = req.body || {};
-
-  if (!propertyId || !startDate || !endDate) {
-    return res
-      .status(400)
-      .json({ error: "Missing propertyId/startDate/endDate" });
-  }
+  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   const session = await getIronSession(req, res, sessionOptions);
-  const token = session?.gaTokens?.access_token;
-  if (!token) {
-    return res.status(401).json({ error: "Not connected" });
+  const ga = session.gaTokens;
+  if (!ga?.access_token) return res.status(401).send("No access token in session");
+
+  const { propertyId, startDate, endDate, limit = 25 } = req.body || {};
+  if (!propertyId || !startDate || !endDate) {
+    return res.status(400).send("Missing propertyId/startDate/endDate");
   }
 
-  // Use session-scoped dimensions with 'sessions'
-  const dimensions = [{ name: "sessionSource" }, { name: "sessionMedium" }];
-  if (includeCampaign) {
-    dimensions.push(
-      { name: "sessionCampaignId" },
-      { name: "sessionCampaignName" }
-    );
-  }
-
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
-    propertyId
-  )}:runReport`;
-
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
   const body = {
     dateRanges: [{ startDate, endDate }],
     metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-    dimensions,
+    dimensions: [{ name: "source" }, { name: "medium" }],
     orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-    limit,
+    limit: Number(limit) || 25,
   };
 
-  try {
-    const gaRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+  const apiRes = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ga.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
-    const raw = await gaRes.text();
-    let json = null;
-    try {
-      json = raw ? JSON.parse(raw) : null;
-    } catch {
-      // leave json = null; we’ll return the raw if needed
-    }
+  const data = await apiRes.json().catch(() => null);
+  if (!apiRes.ok) return res.status(apiRes.status).json(data || { error: "GA4 error" });
 
-    if (!gaRes.ok) {
-      return res.status(gaRes.status).json(json || { error: "GA4 error", raw });
-    }
-
-    return res.status(200).json(json || {});
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", message: String(e) });
-  }
+  res.status(200).json(data);
 }

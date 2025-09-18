@@ -1,52 +1,69 @@
-// /workspaces/insightsgpt/web/pages/api/insights/summarise-ecommerce.js
+import { getIronSession } from "iron-session";
+
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  },
+};
+
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method Not Allowed" });
+  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
+
+  const session = await getIronSession(req, res, sessionOptions);
+  const ga = session.gaTokens;
+  if (!ga?.access_token) return res.status(401).send("No access token in session");
+
+  const { propertyId, startDate, endDate } = req.body || {};
+  if (!propertyId || !startDate || !endDate) {
+    return res.status(400).send("Missing propertyId/startDate/endDate");
   }
 
-  try {
-    const { totals, dateRange } = req.body || {};
-    if (!totals || !dateRange) {
-      return res.status(400).json({ error: "Missing totals/dateRange" });
-    }
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+  const body = {
+    dateRanges: [{ startDate, endDate }],
+    // No dimensions -> one aggregated row
+    metrics: [
+      { name: "purchaseRevenue" },
+      { name: "transactions" },   // GA4 “purchases”
+      { name: "sessions" },
+      { name: "activeUsers" },
+      { name: "adImpressions" },
+      { name: "adClicks" },
+    ],
+    // Also fine without metricAggregations since there’s no dimension,
+    // but leaving this here doesn’t hurt if you ever add dimensions later.
+    metricAggregations: ["TOTAL"],
+  };
 
-    const {
-      purchases = 0, revenue = 0, sessions = 0, users = 0,
-      clicks = 0, imps = 0, currency = "GBP", aov = 0, cvr = 0, ctr = null,
-    } = totals;
+  const apiRes = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ga.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
-    // Keep this server-side simple & robust; you can swap to OpenAI like your other endpoints if desired.
-    const lines = [];
-    lines.push(`E-commerce overview for ${dateRange.start} to ${dateRange.end}`);
-    lines.push(`• Revenue: ${currency} ${revenue.toFixed(2)}  |  Purchases: ${purchases.toLocaleString()}`);
-    lines.push(`• AOV: ${currency} ${aov.toFixed(2)}  |  CVR (Purchases/Active Users): ${cvr.toFixed(2)}%`);
-    lines.push(`• Sessions: ${sessions.toLocaleString()}  |  Active Users: ${users.toLocaleString()}`);
-    if (ctr !== null) lines.push(`• CTR (Ads): ${ctr.toFixed(2)}%  |  Clicks: ${clicks.toLocaleString()}  |  Impressions: ${imps.toLocaleString()}`);
+  const data = await apiRes.json().catch(() => null);
+  if (!apiRes.ok) return res.status(apiRes.status).json(data || { error: "GA4 error" });
 
-    // Quick suggestions
-    const suggestions = [];
-    if (aov > 0 && purchases > 0) {
-      suggestions.push("Test order value boosters (bundles, free shipping thresholds, post-purchase upsells).");
-    }
-    if (cvr < 2 && users > 100) {
-      suggestions.push("Review checkout friction (payment options, guest checkout, form length, error messages).");
-    }
-    if (sessions > 0 && purchases === 0) {
-      suggestions.push("Check tracking completeness and funnel (view_item → add_to_cart → begin_checkout → purchase).");
-    }
-    if (ctr !== null && ctr < 1 && imps > 1000) {
-      suggestions.push("Tighten ad targeting/creative and align landing pages to intent to lift CTR.");
-    }
+  const row = data?.rows?.[0];
+  const mv = row?.metricValues || [];
 
-    if (suggestions.length) {
-      lines.push("");
-      lines.push("Suggested next actions:");
-      suggestions.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
-    }
+  const totals = {
+    purchaseRevenue: Number(mv[0]?.value || 0),
+    purchases:       Number(mv[1]?.value || 0), // “transactions” in GA4 API
+    sessions:        Number(mv[2]?.value || 0),
+    activeUsers:     Number(mv[3]?.value || 0),
+    adImpressions:   Number(mv[4]?.value || 0),
+    adClicks:        Number(mv[5]?.value || 0),
+    currencyCode:    data?.metadata?.currencyCode || "GBP",
+  };
 
-    return res.status(200).json({ summary: lines.join("\n") });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", message: String(e) });
-  }
+  return res.status(200).json({ totals });
 }

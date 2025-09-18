@@ -279,6 +279,10 @@ export default function Home() {
       {propertyId && (
         <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
       )}
+      {/* Source / Medium */}
+      {propertyId && (
+       <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />
+     )}
 
       {/* E-commerce KPIs */}
       {propertyId && (
@@ -397,6 +401,77 @@ function TopPages({ propertyId, startDate, endDate }) {
             </tbody>
           </table>
         </div>
+      )}
+    </section>
+  );
+}
+
+function SourceMedium({ propertyId, startDate, endDate }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const res = await fetch("/api/ga4/source-medium", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId, startDate, endDate, limit: 25 }),
+      });
+      const txt = await res.text();
+      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+
+      const parsed = (data.rows || []).map((r) => ({
+        source: r.dimensionValues?.[0]?.value || "(unknown)",
+        medium: r.dimensionValues?.[1]?.value || "(unknown)",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+      }));
+      setRows(parsed);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h3 style={{ margin: 0 }}>Source / Medium</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Source/Medium"}
+        </button>
+      </div>
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {rows.length > 0 && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.source}-${r.medium}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {rows.length === 0 && !error && (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
       )}
     </section>
   );
