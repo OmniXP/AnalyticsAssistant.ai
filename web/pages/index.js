@@ -108,7 +108,7 @@ function buildChannelPieUrl(rows) {
 }
 
 /* ===========================
-   Re-usable AI block
+   Re-usable AI block (inline buttons near titles)
    =========================== */
 function AiBlock({ endpoint, payload, disabled }) {
   const [loading, setLoading] = useState(false);
@@ -150,8 +150,9 @@ function AiBlock({ endpoint, payload, disabled }) {
   };
 
   return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+    <>
+      {/* inline CTA row: put this inside the section header row */}
+      <div style={{ display: "inline-flex", gap: 8, alignItems: "center", marginLeft: 8 }}>
         <button onClick={run} disabled={disabled || loading} style={{ padding: "8px 12px", cursor: "pointer" }}>
           {loading ? "Summarising…" : "Summarise with AI"}
         </button>
@@ -159,22 +160,23 @@ function AiBlock({ endpoint, payload, disabled }) {
           {copied ? "Copied!" : "Copy insight"}
         </button>
       </div>
-      {error && <p style={{ color: "crimson", marginTop: 8, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {text && (
+
+      {/* output area (below the section content) */}
+      {(error || text) && (
         <div
           style={{
             marginTop: 8,
-            background: "#fffceb",
-            border: "1px solid #f5e08f",
+            background: error ? "#ffecec" : "#fffceb",
+            border: `1px solid ${error ? "#f5b5b5" : "#f5e08f"}`,
             padding: 12,
             borderRadius: 6,
             whiteSpace: "pre-wrap",
           }}
         >
-          {text}
+          {error ? `Error: ${error}` : text}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -193,7 +195,6 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  /* Load preset once */
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -203,13 +204,9 @@ export default function Home() {
     } catch {}
   }, []);
 
-  /* Save preset when inputs change */
   useEffect(() => {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ propertyId, startDate, endDate })
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ propertyId, startDate, endDate }));
     } catch {}
   }, [propertyId, startDate, endDate]);
 
@@ -232,9 +229,7 @@ export default function Home() {
     const txt = await res.text();
     let json = null;
     try { json = txt ? JSON.parse(txt) : null; } catch {}
-    if (!res.ok) {
-      throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error((json && (json.error || json.message)) || txt || `HTTP ${res.status}`);
     return json;
   }
 
@@ -246,7 +241,6 @@ export default function Home() {
     try {
       const curr = await fetchGa4({ propertyId, startDate, endDate });
       setResult(curr);
-
       if (comparePrev) {
         const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
         const prev = await fetchGa4({ propertyId, startDate: prevStart, endDate: prevEnd });
@@ -273,47 +267,27 @@ export default function Home() {
 
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>
-          Connect Google Analytics
-        </button>
-
+        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>Connect Google Analytics</button>
         <label>GA4 Property ID&nbsp;
-          <input
-            value={propertyId}
-            onChange={(e) => setPropertyId(e.target.value)}
-            placeholder="e.g. 123456789"
-            style={{ padding: 8, minWidth: 180 }}
-          />
+          <input value={propertyId} onChange={(e) => setPropertyId(e.target.value)} placeholder="e.g. 123456789" style={{ padding: 8, minWidth: 180 }} />
         </label>
-
         <label>Start date&nbsp;
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8 }} />
         </label>
         <label>End date&nbsp;
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8 }} />
         </label>
-
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <input type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
           Compare vs previous
         </label>
-
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
-
-        <button
-          onClick={() => downloadCsv(rows, totals, startDate, endDate)}
-          style={{ padding: "10px 14px", cursor: "pointer" }}
-          disabled={!rows.length}
-          title={rows.length ? "Download table as CSV" : "Run a report first"}
-        >
+        <button onClick={() => downloadCsv(rows, totals, startDate, endDate)} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={!rows.length}>
           Download CSV
         </button>
-
-        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
-          Reset preset
-        </button>
+        <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>Reset preset</button>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -333,12 +307,10 @@ export default function Home() {
             {prevRows.length > 0 && (
               <>
                 <li style={{ marginTop: 6 }}>
-                  <b>Sessions vs previous:</b>{" "}
-                  {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
+                  <b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
                 </li>
                 <li>
-                  <b>Users vs previous:</b>{" "}
-                  {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
+                  <b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
                 </li>
               </>
             )}
@@ -346,16 +318,20 @@ export default function Home() {
         </section>
       )}
 
-      {/* Channel table + chart */}
+      {/* Channel table + chart + AI in header */}
       {rows.length > 0 && (
         <>
           <section style={{ marginTop: 24 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <h3 style={{ margin: 0 }}>Traffic by Default Channel Group</h3>
-              <span style={{ color: "#666", fontSize: 12 }}>
-                Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b>
-              </span>
+              <span style={{ color: "#666", fontSize: 12 }}>Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b></span>
+              <AiBlock
+                endpoint="/api/insights/summarise"
+                payload={{ rows, totals, dateRange: { start: startDate, end: endDate } }}
+                disabled={false}
+              />
             </div>
+
             <div style={{ overflowX: "auto", marginTop: 10 }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead>
@@ -373,7 +349,6 @@ export default function Home() {
                       <tr key={r.channel}>
                         <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
                         <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                        {/* FIXED the quotes on borderBottom below */}
                         <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                         <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
                       </tr>
@@ -390,6 +365,7 @@ export default function Home() {
                 </tfoot>
               </table>
             </div>
+
             <div style={{ marginTop: 16 }}>
               <img
                 src={buildChannelPieUrl(rows)}
@@ -398,40 +374,15 @@ export default function Home() {
               />
             </div>
           </section>
-
-          {/* AI summary for channels */}
-          <AiBlock
-            endpoint="/api/insights/summarise"
-            payload={{ rows, totals, dateRange: { start: startDate, end: endDate } }}
-            disabled={false}
-          />
         </>
       )}
 
-      {/* ---------- Top pages ---------- */}
-      {propertyId && (
-        <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
-
-      {/* ---------- Source / Medium ---------- */}
-      {propertyId && (
-        <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
-
-      {/* ---------- Product performance ---------- */}
-      {propertyId && (
-        <Products propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
-
-      {/* ---------- E-commerce KPIs ---------- */}
-      {propertyId && (
-        <EcommerceKPIs propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
-
-      {/* ---------- Checkout funnel ---------- */}
-      {propertyId && (
-        <CheckoutFunnel propertyId={propertyId} startDate={startDate} endDate={endDate} />
-      )}
+      {/* Sections that fetch on demand */}
+      {propertyId && <TopPages propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <Products propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <EcommerceKPIs propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <CheckoutFunnel propertyId={propertyId} startDate={startDate} endDate={endDate} />}
     </main>
   );
 }
@@ -476,48 +427,43 @@ function TopPages({ propertyId, startDate, endDate }) {
     <section style={{ marginTop: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Top pages (views)</h3>
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b>
-        </span>
+        <span style={{ color: "#666", fontSize: 12 }}>Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b></span>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Top Pages"}
         </button>
+        <AiBlock
+          endpoint="/api/insights/summarise-pages"
+          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
+          disabled={!rows.length}
+        />
       </div>
+
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {rows.length > 0 && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.path}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.path}-${i}`}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <AiBlock
-            endpoint="/api/insights/summarise-pages"
-            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-            disabled={false}
-          />
-        </>
-      )}
-      {rows.length === 0 && !loading && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!loading && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
@@ -560,54 +506,47 @@ function SourceMedium({ propertyId, startDate, endDate }) {
     <section style={{ marginTop: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Source / Medium</h3>
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b>
-        </span>
+        <span style={{ color: "#666", fontSize: 12 }}>Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b></span>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Source/Medium"}
         </button>
+        <AiBlock
+          endpoint="/api/insights/summarise-source-medium"
+          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
+          disabled={!rows.length}
+        />
       </div>
+
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {rows.length > 0 && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Conversions</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Conversions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.source}-${r.medium}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.conversions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(r.revenue)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.source}-${r.medium}-${i}`}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.conversions.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {currency(r.revenue)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <AiBlock
-            endpoint="/api/insights/summarise-source-medium"
-            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-            disabled={false}
-          />
-        </>
-      )}
-      {rows.length === 0 && !loading && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!loading && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
@@ -617,9 +556,10 @@ function Products({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true); setError(""); setRows([]); setNote("");
     try {
       const res = await fetch("/api/ga4/products", {
         method: "POST",
@@ -638,6 +578,12 @@ function Products({ propertyId, startDate, endDate }) {
         itemsPurchased: Number(r.metricValues?.[2]?.value || 0),
         itemRevenue: Number(r.metricValues?.[3]?.value || 0),
       }));
+
+      if (!parsed.length) {
+        setNote(
+          "No product rows returned for this date range. If GA’s E-commerce Purchases report shows items, make sure events include an items[] with item_id / item_name."
+        );
+      }
       setRows(parsed);
     } catch (e) {
       setError(String(e.message || e));
@@ -666,9 +612,7 @@ function Products({ propertyId, startDate, endDate }) {
     <section style={{ marginTop: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Product performance</h3>
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b>
-        </span>
+        <span style={{ color: "#666", fontSize: 12 }}>Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b></span>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Products"}
         </button>
@@ -676,52 +620,48 @@ function Products({ propertyId, startDate, endDate }) {
           onClick={() => downloadCsvProducts(rows, startDate, endDate)}
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!rows.length}
+          title={rows.length ? "Download table as CSV" : "Load products first"}
         >
           Download CSV
         </button>
+        <AiBlock
+          endpoint="/api/insights/summarise-products"
+          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
+          disabled={!rows.length}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {note && !error && <p style={{ color: "#666", marginTop: 8 }}>{note}</p>}
 
-      {rows.length > 0 && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items viewed</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items added to cart</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items purchased</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item revenue</th>
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items viewed</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items added to cart</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items purchased</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.id}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsViewed.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsAddedToCart.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsPurchased.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(r.itemRevenue)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.id}-${i}`}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsViewed.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsAddedToCart.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsPurchased.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(r.itemRevenue)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <AiBlock
-            endpoint="/api/insights/summarise-products"
-            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-            disabled={false}
-          />
-        </>
-      )}
-      {rows.length === 0 && !loading && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!loading && !error && !note && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
@@ -757,61 +697,53 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
     <section style={{ marginTop: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>E-commerce KPIs</h3>
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b>
-        </span>
+        <span style={{ color: "#666", fontSize: 12 }}>Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b></span>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
+        <AiBlock
+          endpoint="/api/insights/summarise-ecommerce"
+          payload={{ totals, dateRange: { start: startDate, end: endDate } }}
+          disabled={!canSummarise}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
-      {totals && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Revenue</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(totals.revenue)}</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Purchases</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(totals.purchases || 0).toLocaleString()}</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>AOV</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(totals.aov)}</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>CTR</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(Number(totals.ctr || 0)).toFixed(2)}%</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>CVR</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(Number(totals.cvr || 0)).toFixed(2)}%</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <AiBlock
-            endpoint="/api/insights/summarise-ecommerce"
-            payload={{ totals, dateRange: { start: startDate, end: endDate } }}
-            disabled={!canSummarise}
-          />
-        </>
-      )}
-      {!totals && !loading && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No KPIs loaded yet.</p>
-      )}
+      {totals ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Revenue</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(totals.revenue)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Purchases</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(totals.purchases || 0).toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>AOV</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{currency(totals.aov)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>CTR</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(Number(totals.ctr || 0)).toFixed(2)}%</td>
+              </tr>
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>CVR</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(Number(totals.cvr || 0)).toFixed(2)}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : (!loading && !error && <p style={{ marginTop: 8, color: "#666" }}>No KPIs loaded yet.</p>)}
     </section>
   );
 }
@@ -845,46 +777,41 @@ function CheckoutFunnel({ propertyId, startDate, endDate }) {
     <section style={{ marginTop: 32, marginBottom: 48 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Checkout funnel</h3>
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b>
-        </span>
+        <span style={{ color: "#666", fontSize: 12 }}>Showing <b>{fmtDate(startDate)}</b> → <b>{fmtDate(endDate)}</b></span>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Funnel"}
         </button>
+        <AiBlock
+          endpoint="/api/insights/summarise-funnel"
+          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
+          disabled={!rows.length}
+        />
       </div>
+
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {rows.length > 0 && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Drop-off %</th>
+
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Drop-off %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.step}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(r.users || 0).toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(Number(r.dropoff || 0)).toFixed(1)}%</td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.step}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(r.users || 0).toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(Number(r.dropoff || 0)).toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <AiBlock
-            endpoint="/api/insights/summarise-funnel"
-            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-            disabled={false}
-          />
-        </>
-      )}
-      {rows.length === 0 && !loading && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!loading && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
