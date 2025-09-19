@@ -1045,10 +1045,15 @@ function Campaigns({ propertyId, startDate, endDate }) {
   );
 }
 
-function Products({ propertyId, startDate, endDate }) {
+// ---------- Product Performance (component) ----------
+function ProductPerformance({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
@@ -1056,20 +1061,19 @@ function Products({ propertyId, startDate, endDate }) {
       const res = await fetch("/api/ga4/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate, limit: 50 }),
+        body: JSON.stringify({ propertyId, startDate, endDate, limit: 10 }),
       });
       const txt = await res.text();
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(data?.error || txt || `HTTP ${res.status}`);
 
       const parsed = (data.rows || []).map((r) => ({
-        name: r.dimensionValues?.[0]?.value || "(unknown)",
-        id: r.dimensionValues?.[1]?.value || "",
+        name: r.dimensionValues?.[0]?.value || "(untitled)",
+        id:   r.dimensionValues?.[1]?.value || "",
         views: Number(r.metricValues?.[0]?.value || 0),
-        addToCarts: Number(r.metricValues?.[1]?.value || 0),
-        cartToViewRate: Number(r.metricValues?.[2]?.value || 0), // already a %
-        purchased: Number(r.metricValues?.[3]?.value || 0),
-        revenue: Number(r.metricValues?.[4]?.value || 0),
+        adds:  Number(r.metricValues?.[1]?.value || 0),
+        purchased: Number(r.metricValues?.[2]?.value || 0),
+        revenue:   Number(r.metricValues?.[3]?.value || 0),
       }));
       setRows(parsed);
     } catch (e) {
@@ -1079,130 +1083,22 @@ function Products({ propertyId, startDate, endDate }) {
     }
   };
 
-  return (
-    <section style={{ marginTop: 32 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Product performance</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load Products"}
-        </button>
-        <button
-          onClick={() => downloadCsvProducts(rows, startDate, endDate)}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!rows.length}
-        >
-          Download CSV
-        </button>
-      </div>
-
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-
-      {rows.length > 0 && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Add-to-Carts</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Cart-to-View %</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items Purchased</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Revenue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.id}-${i}`}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.addToCarts.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cartToViewRate.toFixed(2)}%</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchased.toLocaleString()}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " +
-                      "#eee" }}>{r.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <AiBlock
-            endpoint="/api/insights/summarise-products"
-            disabled={false}
-            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-          />
-        </>
-      )}
-      {rows.length === 0 && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>}
-    </section>
-  );
-}
-
-function CheckoutFunnel({ propertyId, startDate, endDate }) {
-  const [loading, setLoading] = useState(false);
-  const [totals, setTotals] = useState(null);
-  const [error, setError] = useState("");
-
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiText, setAiText] = useState("");
-  const [aiError, setAiError] = useState("");
-  const [copied, setCopied] = useState(false);
-
-  const pct = (num, den) => {
-    if (!den) return 0;
-    return Math.round((num / den) * 10000) / 100; // 2 dp
-  };
-
-  const load = async () => {
-    setLoading(true); setError(""); setTotals(null);
+  const summarise = async () => {
+    setAiLoading(true); setAiError(""); setAiText("");
     try {
-      const res = await fetch("/api/ga4/funnel", {
+      const res = await fetch("/api/insights/summarise", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate }),
+        body: JSON.stringify({
+          kind: "products",
+          dateRange: { start: startDate, end: endDate },
+          rows,
+        }),
       });
       const txt = await res.text();
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
-
-      const mv = (data.rows?.[0]?.metricValues || []).map(m => Number(m.value || 0));
-      const views = mv[0] || 0;
-      const atc = mv[1] || 0;
-      const checkout = mv[2] || 0;
-      const purchases = mv[3] || 0;
-      const revenue = mv[4] || 0;
-
-      const computed = {
-        views, atc, checkout, purchases, revenue,
-        viewToAtcRate: pct(atc, views),
-        atcToCheckoutRate: pct(checkout, atc),
-        checkoutToPurchaseRate: pct(purchases, checkout),
-        viewToPurchaseRate: pct(purchases, views),
-      };
-      setTotals(computed);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const summarise = async () => {
-    if (!totals) return;
-    setAiLoading(true); setAiError(""); setAiText(""); setCopied(false);
-    try {
-      const res = await fetch("/api/insights/summarise-funnel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ totals, dateRange: { start: startDate, end: endDate } }),
-      });
-      const raw = await res.text();
-      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
-      setAiText(data?.summary || raw || "No response");
+      if (!res.ok) throw new Error(data?.error || txt || `HTTP ${res.status}`);
+      setAiText(data?.summary || txt || "No response");
     } catch (e) {
       setAiError(String(e.message || e));
     } finally {
@@ -1211,92 +1107,174 @@ function CheckoutFunnel({ propertyId, startDate, endDate }) {
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(()=>setCopied(false),1500); }
     catch { setAiError("Could not copy to clipboard"); }
   };
 
   return (
     <section style={{ marginTop: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Checkout funnel</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load Funnel"}
+        <h3 style={{ margin: 0, marginRight: "auto" }}>Product performance</h3>
+        <button onClick={load} disabled={loading || !propertyId} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {loading ? "Loading…" : "Load Products"}
         </button>
-        <button
-          onClick={() => totals && downloadCsvFunnel(totals, startDate, endDate)}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!totals}
-        >
-          Download CSV
+        <button onClick={summarise} disabled={aiLoading || rows.length === 0} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {aiLoading ? "Summarising…" : "Summarise with AI"}
+        </button>
+        <button onClick={copy} disabled={!aiText} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {copied ? "Copied!" : "Copy insight"}
         </button>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
-      {totals && (
-        <>
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Product Views</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>—</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Add to Cart</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.atc.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.viewToAtcRate}% of views</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Checkout</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.checkout.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.atcToCheckoutRate}% of ATC</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Purchase</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.purchases.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{totals.checkoutToPurchaseRate}% of checkout</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: 8, borderTop: "2px solid #ccc" }}><b>Revenue</b></td>
-                  <td style={{ padding: 8, textAlign: "right", borderTop: "2px solid #ccc" }}>
-                    <b>{totals.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderTop: "2px solid #ccc" }}><b>Overall CVR: {totals.viewToPurchaseRate}%</b></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-            <button onClick={summarise} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={aiLoading || !totals}>
-              {aiLoading ? "Summarising…" : "Summarise with AI"}
-            </button>
-            <button onClick={async () => { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(()=>setCopied(false),1500); }}
-              style={{ padding: "8px 12px", cursor: "pointer" }}
-              disabled={!aiText}
-            >
-              {copied ? "Copied!" : "Copy insight"}
-            </button>
-          </div>
-          {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
-          {aiText && (
-            <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
-              {aiText}
-            </div>
-          )}
-        </>
+      {rows.length === 0 && !loading && !error && (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
       )}
 
-      {!totals && !error && <p style={{ marginTop: 8, color: "#666" }}>No funnel loaded yet.</p>}
+      {rows.length > 0 && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item views</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Added to cart</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items purchased</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.id}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.adds.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchased.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    £{(r.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
+      {aiText && (
+        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+          {aiText}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------- Checkout Funnel (component) ----------
+function CheckoutFunnel({ propertyId, startDate, endDate }) {
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const load = async () => {
+    setLoading(true); setError(""); setData(null);
+    try {
+      const res = await fetch("/api/ga4/checkout-funnel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId, startDate, endDate }),
+      });
+      const txt = await res.text();
+      let json = null; try { json = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error(json?.error || txt || `HTTP ${res.status}`);
+      setData(json);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const summarise = async () => {
+    setAiLoading(true); setAiError(""); setAiText("");
+    try {
+      const res = await fetch("/api/insights/summarise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "checkout-funnel",
+          dateRange: { start: startDate, end: endDate },
+          funnel: data,
+        }),
+      });
+      const txt = await res.text();
+      let json = null; try { json = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error(json?.error || txt || `HTTP ${res.status}`);
+      setAiText(json?.summary || txt || "No response");
+    } catch (e) {
+      setAiError(String(e.message || e));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(aiText || ""); setCopied(true); setTimeout(()=>setCopied(false),1500); }
+    catch { setAiError("Could not copy to clipboard"); }
+  };
+
+  const steps = data?.steps || {};
+  const rates = data?.rates || {};
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, marginRight: "auto" }}>Checkout funnel</h3>
+        <button onClick={load} disabled={loading || !propertyId} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {loading ? "Loading…" : "Load Funnel"}
+        </button>
+        <button onClick={summarise} disabled={aiLoading || !data} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {aiLoading ? "Summarising…" : "Summarise with AI"}
+        </button>
+        <button onClick={copy} disabled={!aiText} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {copied ? "Copied!" : "Copy insight"}
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {!data && !loading && !error && (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
+
+      {data && (
+        <div style={{ marginTop: 12 }}>
+          <ul>
+            <li><b>Add to cart:</b> {steps.addToCart?.toLocaleString?.() || 0}</li>
+            <li><b>Begin checkout:</b> {steps.beginCheckout?.toLocaleString?.() || 0}</li>
+            <li><b>Purchases:</b> {steps.purchases?.toLocaleString?.() || 0}</li>
+          </ul>
+          <ul style={{ marginTop: 8 }}>
+            <li><b>Cart → Checkout:</b> {rates.cartToCheckoutPct}%</li>
+            <li><b>Checkout → Purchase:</b> {rates.checkoutToPurchasePct}%</li>
+            <li><b>Cart → Purchase:</b> {rates.cartToPurchasePct}%</li>
+          </ul>
+        </div>
+      )}
+
+      {aiError && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {aiError}</p>}
+      {aiText && (
+        <div style={{ marginTop: 12, background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6, whiteSpace: "pre-wrap" }}>
+          {aiText}
+        </div>
+      )}
     </section>
   );
 }
