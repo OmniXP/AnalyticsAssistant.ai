@@ -690,13 +690,14 @@ function Products({ propertyId, startDate, endDate }) {
         throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
       }
 
-      const parsed = (data?.rows || []).map((r, i) => ({
-        name: r.dimensionValues?.[0]?.value || "(unknown)",
-        id: r.dimensionValues?.[1]?.value || `row-${i}`,
-        itemsViewed: Number(r.metricValues?.[0]?.value || 0),
-        itemsAddedToCart: Number(r.metricValues?.[1]?.value || 0),
-        itemsPurchased: Number(r.metricValues?.[2]?.value || 0),
-        itemRevenue: Number(r.metricValues?.[3]?.value || 0),
+      const parsed = (data.rows || []).map((r, i) => ({
+  name: r.dimensionValues?.[0]?.value || "(unknown)",
+  id: `row-${i}`, // optional placeholder if you show an ID column
+  itemsViewed: Number(r.metricValues?.[0]?.value || 0),
+  itemsAddedToCart: Number(r.metricValues?.[1]?.value || 0),
+  itemsPurchased: Number(r.metricValues?.[2]?.value || 0),
+  itemRevenue: Number(r.metricValues?.[3]?.value || 0),
+}));
       }));
 
       setRows(parsed);
