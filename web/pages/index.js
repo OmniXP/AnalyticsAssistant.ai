@@ -1,4 +1,3 @@
-// /workspaces/insightsgpt/web/pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
 /* ===========================
@@ -75,7 +74,7 @@ function downloadCsv(rows, totals, startDate, endDate) {
   const lines = rows.map((r) => {
     const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
     return [r.channel, r.sessions, r.users, `${pct}%`];
-    });
+  });
   lines.push(["Total", totals.sessions, totals.users, ""]);
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
@@ -374,7 +373,8 @@ export default function Home() {
                       <tr key={r.channel}>
                         <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
                         <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{r.users.toLocaleString()}</td>
+                        {/* FIXED the quotes on borderBottom below */}
+                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                         <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
                       </tr>
                     );
@@ -493,7 +493,7 @@ function TopPages({ propertyId, startDate, endDate }) {
                   <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
                   <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
                   <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid "#ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 </tr>
               </thead>
               <tbody>
@@ -540,7 +540,7 @@ function SourceMedium({ propertyId, startDate, endDate }) {
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
       if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
 
-      const parsed = (data.rows || []).map((r) => ({
+      const parsed = (data.rows || []).map((r, i) => ({
         source: r.dimensionValues?.[0]?.value || "(unknown)",
         medium: r.dimensionValues?.[1]?.value || "(unknown)",
         sessions: Number(r.metricValues?.[0]?.value || 0),
@@ -652,7 +652,9 @@ function Products({ propertyId, startDate, endDate }) {
     const lines = rows.map((r) => [
       r.name, r.id, r.itemsViewed, r.itemsAddedToCart, r.itemsPurchased, r.itemRevenue,
     ]);
-    const csv = [header, ...lines].map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = [header, ...lines]
+      .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
     const filename = `ga4_products_${start}_to_${end}.csv`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
