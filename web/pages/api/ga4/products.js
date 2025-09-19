@@ -1,103 +1,100 @@
+// web/pages/api/ga4/products.js
 import { getIronSession } from "iron-session";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
   cookieName: "insightgpt",
-  cookieOptions: { secure: process.env.NODE_ENV === "production", httpOnly: true, sameSite: "lax", path: "/" },
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  },
 };
 
-async function runReport({ accessToken, propertyId, body }) {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await resp.text();
-  let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
-  if (!resp.ok) throw new Error(json?.error?.message || text || `HTTP ${resp.status}`);
-  return json;
-}
-
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
   const session = await getIronSession(req, res, sessionOptions);
   const ga = session.gaTokens;
-  if (!ga?.access_token) return res.status(401).json({ error: "No access token in session. Click 'Connect Google Analytics' then try again." });
+  if (!ga?.access_token) return res.status(401).send("No access token in session");
 
-  const { propertyId, startDate, endDate, limit = 10 } = req.body || {};
+  const { propertyId, startDate, endDate } = req.body || {};
+  const limit = Math.min(Number(req.body?.limit) || 10, 50);
+
   if (!propertyId || !startDate || !endDate) {
     return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
   }
 
-  const accessToken = ga.access_token;
-
-  try {
-    // 1) Try itemName + itemId
-    const baseMetrics = [
+  // --- 1) Try item-level breakdown (prefer itemsViewed so we get rows even with 0 purchases) ---
+  const breakdownBody = {
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "itemName" }, { name: "itemId" }],
+    metrics: [
       { name: "itemsViewed" },
       { name: "itemsAddedToCart" },
       { name: "itemsPurchased" },
       { name: "itemRevenue" },
-    ];
+    ],
+    orderBys: [{ metric: { metricName: "itemsViewed" }, desc: true }],
+    limit,
+  };
 
-    const byName = await runReport({
-      accessToken,
-      propertyId,
-      body: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: "itemName" }, { name: "itemId" }],
-        metrics: baseMetrics,
-        orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
-        limit,
+  const baseUrl = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+
+  const doReport = async (body) => {
+    const r = await fetch(baseUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ga.access_token}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify(body),
     });
+    const text = await r.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch {}
+    if (!r.ok) throw new Error(json?.error?.message || text || `HTTP ${r.status}`);
+    return json || {};
+  };
 
-    if ((byName.rowCount || 0) > 0) {
-      return res.status(200).json({ ...byName, diagnostics: { mode: "itemName+itemId" } });
+  try {
+    const breakdown = await doReport(breakdownBody);
+
+    if (Array.isArray(breakdown.rows) && breakdown.rows.length > 0) {
+      // We succeeded: return item rows
+      return res.status(200).json({
+        rows: breakdown.rows,
+        diagnostics: { mode: "ok", hint: "item breakdown via itemName+itemId" },
+      });
     }
 
-    // 2) Fallback: try by itemId only
-    const byId = await runReport({
-      accessToken,
-      propertyId,
-      body: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: "itemId" }],
-        metrics: baseMetrics,
-        orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
-        limit,
-      },
-    });
+    // --- 2) No rows? Ask for totals (no dimensions) so we can still show context/diagnostics ---
+    const totalsBody = {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [
+        { name: "itemsViewed" },
+        { name: "itemsAddedToCart" },
+        { name: "itemsPurchased" },
+        { name: "itemRevenue" },
+      ],
+    };
 
-    if ((byId.rowCount || 0) > 0) {
-      return res.status(200).json({ ...byId, diagnostics: { mode: "itemId_only" } });
-    }
+    const totals = await doReport(totalsBody);
 
-    // 3) Totals only (no dimension) — tells us if there’s any item activity at all
-    const totalsOnly = await runReport({
-      accessToken,
-      propertyId,
-      body: {
-        dateRanges: [{ startDate, endDate }],
-        metrics: baseMetrics,
-      },
-    });
-
-    const totals = {
-      itemsViewed: Number(totalsOnly?.rows?.[0]?.metricValues?.[0]?.value || 0),
-      itemsAddedToCart: Number(totalsOnly?.rows?.[0]?.metricValues?.[1]?.value || 0),
-      itemsPurchased: Number(totalsOnly?.rows?.[0]?.metricValues?.[2]?.value || 0),
-      itemRevenue: Number(totalsOnly?.rows?.[0]?.metricValues?.[3]?.value || 0),
+    const totalValues = totals?.rows?.[0]?.metricValues || [];
+    const totalsObj = {
+      itemsViewed: Number(totalValues?.[0]?.value || 0),
+      itemsAddedToCart: Number(totalValues?.[1]?.value || 0),
+      itemsPurchased: Number(totalValues?.[2]?.value || 0),
+      itemRevenue: Number(totalValues?.[3]?.value || 0),
     };
 
     return res.status(200).json({
       rows: [],
-      rowCount: 0,
-      diagnostics: { mode: "totals_only", totals },
+      diagnostics: { mode: "totals_only", totals: totalsObj },
     });
   } catch (e) {
-    return res.status(500).json({ error: e?.message || String(e) });
+    return res.status(500).json({ error: String(e.message || e) });
   }
 }
