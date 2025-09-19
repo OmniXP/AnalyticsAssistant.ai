@@ -1,3 +1,4 @@
+// /workspaces/insightsgpt/web/pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
 /* =========================
@@ -49,6 +50,19 @@ function computePreviousRange(startStr, endStr) {
 }
 
 /* CSV helpers */
+function triggerCsvDownload(csv, filename) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function downloadCsvChannels(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -82,19 +96,6 @@ function downloadCsvSourceMedium(rows, startDate, endDate) {
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
   triggerCsvDownload(csv, `ga4_source_medium_${startDate}_to_${endDate}.csv`);
-}
-
-function triggerCsvDownload(csv, filename) {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 /* QuickChart (pie) */
@@ -178,7 +179,7 @@ function KpiCard({ label, value }) {
 }
 
 /* =========================
-   Main page
+   Page component
    ========================= */
 
 export default function Home() {
@@ -472,7 +473,7 @@ function TopPages({ propertyId, startDate, endDate }) {
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid "#ddd", padding: 8 }}>Page Title</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
                   <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
                   <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
                   <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
@@ -655,7 +656,8 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   };
 
   const currency = "GBP";
-  const fmt£ = (n) => (Number.isFinite(n) ? n.toLocaleString(undefined, { style: "currency", currency }) : "—");
+  const fmtGBP = (n) =>
+    Number.isFinite(n) ? n.toLocaleString(undefined, { style: "currency", currency }) : "—";
 
   return (
     <section style={{ marginTop: 32 }}>
@@ -676,9 +678,9 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
 
       {totals && (
         <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
-          <KpiCard label="Revenue" value={fmt£(totals.revenue)} />
+          <KpiCard label="Revenue" value={fmtGBP(totals.revenue)} />
           <KpiCard label="Purchases" value={totals.purchases?.toLocaleString?.() ?? "—"} />
-          <KpiCard label="AOV" value={fmt£(totals.aov)} />
+          <KpiCard label="AOV" value={fmtGBP(totals.aov)} />
           <KpiCard label="Purchase CVR" value={`${Number(totals.purchaserRate ?? 0).toFixed(2)}%`} />
           <KpiCard label="Users" value={totals.users?.toLocaleString?.() ?? "—"} />
           <KpiCard label="Sessions" value={totals.sessions?.toLocaleString?.() ?? "—"} />
