@@ -1,16 +1,23 @@
-// /workspaces/insightsgpt/web/pages/api/ga4/products.js
 import { getIronSession } from "iron-session";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
   cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
+  cookieOptions: { secure: process.env.NODE_ENV === "production", httpOnly: true, sameSite: "lax", path: "/" },
 };
+
+async function runReport({ accessToken, propertyId, body }) {
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
+  if (!resp.ok) throw new Error(json?.error?.message || text || `HTTP ${resp.status}`);
+  return json;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
@@ -24,37 +31,72 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
   }
 
-  try {
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-    const body = {
-      dateRanges: [{ startDate, endDate }],
-      // Use ITEM-SCOPED metrics with an item-scoped dimension (itemName) to avoid compatibility errors
-      dimensions: [{ name: "itemName" }, { name: "itemId" }],
-      metrics: [
-        { name: "itemsViewed" },
-        { name: "itemsAddedToCart" },
-        { name: "itemsPurchased" },
-        { name: "itemRevenue" },
-      ],
-      orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
-      limit,
-    };
+  const accessToken = ga.access_token;
 
-    const apiRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
+  try {
+    // 1) Try itemName + itemId
+    const baseMetrics = [
+      { name: "itemsViewed" },
+      { name: "itemsAddedToCart" },
+      { name: "itemsPurchased" },
+      { name: "itemRevenue" },
+    ];
+
+    const byName = await runReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: "itemName" }, { name: "itemId" }],
+        metrics: baseMetrics,
+        orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
+        limit,
       },
-      body: JSON.stringify(body),
     });
 
-    const text = await apiRes.text();
-    let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json({ error: data?.error?.message || text || `HTTP ${apiRes.status}` });
+    if ((byName.rowCount || 0) > 0) {
+      return res.status(200).json({ ...byName, diagnostics: { mode: "itemName+itemId" } });
     }
-    return res.status(200).json(data);
+
+    // 2) Fallback: try by itemId only
+    const byId = await runReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: "itemId" }],
+        metrics: baseMetrics,
+        orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
+        limit,
+      },
+    });
+
+    if ((byId.rowCount || 0) > 0) {
+      return res.status(200).json({ ...byId, diagnostics: { mode: "itemId_only" } });
+    }
+
+    // 3) Totals only (no dimension) — tells us if there’s any item activity at all
+    const totalsOnly = await runReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        metrics: baseMetrics,
+      },
+    });
+
+    const totals = {
+      itemsViewed: Number(totalsOnly?.rows?.[0]?.metricValues?.[0]?.value || 0),
+      itemsAddedToCart: Number(totalsOnly?.rows?.[0]?.metricValues?.[1]?.value || 0),
+      itemsPurchased: Number(totalsOnly?.rows?.[0]?.metricValues?.[2]?.value || 0),
+      itemRevenue: Number(totalsOnly?.rows?.[0]?.metricValues?.[3]?.value || 0),
+    };
+
+    return res.status(200).json({
+      rows: [],
+      rowCount: 0,
+      diagnostics: { mode: "totals_only", totals },
+    });
   } catch (e) {
     return res.status(500).json({ error: e?.message || String(e) });
   }
