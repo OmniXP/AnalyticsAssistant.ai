@@ -98,6 +98,25 @@ function downloadCsvSourceMedium(rows, startDate, endDate) {
   triggerCsvDownload(csv, `ga4_source_medium_${startDate}_to_${endDate}.csv`);
 }
 
+function downloadCsvLandingPages(rows, startDate, endDate) {
+  if (!rows?.length) return;
+  const header = ["Page Title", "Path", "Views", "Sessions", "Users", "Conversions"];
+  const lines = rows.map((r) => [r.title, r.path, r.views, r.sessions, r.users, r.conversions]);
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ga4_landing_pages_${startDate}_to_${endDate}.csv`;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /* QuickChart (pie) */
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
@@ -411,6 +430,7 @@ export default function Home() {
       {propertyId && <SourceMedium propertyId={propertyId} startDate={startDate} endDate={endDate} />}
       {propertyId && <EcommerceKPIs propertyId={propertyId} startDate={startDate} endDate={endDate} />}
       {propertyId && <GoalsConversions propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <LandingPages propertyId={propertyId} startDate={startDate} endDate={endDate} />}
     </main>
   );
 }
@@ -500,6 +520,99 @@ function TopPages({ propertyId, startDate, endDate }) {
               rows, // [{title, path, views, users}]
               dateRange: { start: startDate, end: endDate },
             }}
+          />
+        </>
+      )}
+      {rows.length === 0 && !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>}
+    </section>
+  );
+}
+
+function LandingPages({ propertyId, startDate, endDate }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const res = await fetch("/api/ga4/landing-pages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId, startDate, endDate, limit: 25 }),
+      });
+      const txt = await res.text();
+      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+
+      const parsed = (data.rows || []).map((r) => ({
+        path: r.dimensionValues?.[0]?.value || "(unknown)",
+        title: r.dimensionValues?.[1]?.value || "(untitled)",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+        views: Number(r.metricValues?.[2]?.value || 0),
+        conversions: Number(r.metricValues?.[3]?.value || 0),
+      }));
+      setRows(parsed);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Landing Pages</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Landing Pages"}
+        </button>
+        <button
+          onClick={() => downloadCsvLandingPages(rows, startDate, endDate)}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!rows.length}
+          title={rows.length ? "Download table as CSV" : "Load Landing Pages first"}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {rows.length > 0 && (
+        <>
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Landing page</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Title</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Conversions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.path}-${i}`}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.conversions.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <AiBlock
+            endpoint="/api/insights/summarise-landing-pages"
+            disabled={false}
+            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
           />
         </>
       )}
