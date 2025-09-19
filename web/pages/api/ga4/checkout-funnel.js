@@ -23,13 +23,12 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "No access token in session. Click 'Connect Google Analytics' then try again." });
   }
 
-  try {
-    const { propertyId, startDate, endDate } = req.body || {};
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
-    }
+  const { propertyId, startDate, endDate } = req.body || {};
+  if (!propertyId || !startDate || !endDate) {
+    return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
+  }
 
-    // Pull event counts for just the steps we care about
+  try {
     const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
     const body = {
       dateRanges: [{ startDate, endDate }],
@@ -42,7 +41,6 @@ export default async function handler(req, res) {
         },
       },
       keepEmptyRows: false,
-      // No ordering guarantee; we’ll order on the server to your preferred sequence
     };
 
     const apiRes = await fetch(url, {
@@ -62,7 +60,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Normalise into your step order, fill missing with 0
     const counts = Object.create(null);
     for (const r of data?.rows || []) {
       const name = r?.dimensionValues?.[0]?.value || "";
@@ -71,7 +68,12 @@ export default async function handler(req, res) {
     }
     const rows = FUNNEL_STEPS.map((step) => ({ step, count: counts[step] || 0 }));
 
-    return res.status(200).json({ rows });
+    // Helpful note when everything is zero
+    const note = rows.every(r => r.count === 0)
+      ? "No counts for the selected steps in this date range. Confirm these events fire in GA4 (Configure ▶ DebugView) or widen your date range."
+      : undefined;
+
+    return res.status(200).json({ rows, note });
   } catch (err) {
     return res.status(500).json({
       error: "Server error (checkout funnel)",

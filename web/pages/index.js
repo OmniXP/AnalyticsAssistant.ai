@@ -683,9 +683,11 @@ function Products({ propertyId, startDate, endDate }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [usedDim, setUsedDim] = useState(""); // itemName or itemId
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]); setNote("");
+    setLoading(true); setError(""); setRows([]); setNote(""); setHasLoaded(true); setUsedDim("");
     try {
       const res = await fetch("/api/ga4/products", {
         method: "POST",
@@ -694,29 +696,17 @@ function Products({ propertyId, startDate, endDate }) {
       });
       const txt = await res.text();
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+
       if (!res.ok) {
-        const msg =
-          (data && (data.error || data.message)) ||
-          (data && typeof data === "object" ? JSON.stringify(data) : "") ||
-          txt || `HTTP ${res.status}`;
-        throw new Error(msg);
+        const serverMsg = data?.error
+          ? `${data.error}${data.details ? ` — ${JSON.stringify(data.details)}` : ""}`
+          : txt || `HTTP ${res.status}`;
+        throw new Error(serverMsg);
       }
 
-      const parsed = (data?.rows || []).map((r, i) => ({
-        name: r.dimensionValues?.[0]?.value || "(unknown)",
-        id: `row-${i}`, // GA4 itemId is not guaranteed in this report; keep a stable key
-        itemsViewed:        Number(r.metricValues?.[0]?.value || 0),
-        itemsAddedToCart:   Number(r.metricValues?.[1]?.value || 0),
-        itemsPurchased:     Number(r.metricValues?.[2]?.value || 0),
-        itemRevenue:        Number(r.metricValues?.[3]?.value || 0),
-      }));
-
-      if (!parsed.length) {
-        setNote(
-          "No product rows returned for this date range. If GA’s E-commerce Purchases report shows items, make sure events include an items[] with item_id / item_name."
-        );
-      }
-      setRows(parsed);
+      setUsedDim(data?.usedDimension || "");
+      setNote(data?.note || "");
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -724,62 +714,73 @@ function Products({ propertyId, startDate, endDate }) {
     }
   };
 
+  const hasRows = rows.length > 0;
+
   return (
     <section style={{ marginTop: 32 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Product performance</h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load Products"}
-          </button>
-          <button
-            onClick={() => downloadCsvProducts(rows, startDate, endDate)}
-            style={{ padding: "8px 12px", cursor: "pointer" }}
-            disabled={!rows.length}
-          >
-            Download CSV
-          </button>
-          <AiBlock
-            endpoint="/api/insights/summarise-products"
-            payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-            disabled={!rows.length}
-          />
-        </div>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Products"}
+        </button>
+        <button
+          onClick={() => downloadCsvProducts(rows, startDate, endDate)}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!hasRows}
+          title={hasRows ? "Download table as CSV" : "Load products first"}
+        >
+          Download CSV
+        </button>
+        <AiInline
+          endpoint="/api/insights/summarise-products"
+          disabled={!hasRows}
+          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {note && !error && <p style={{ marginTop: 12, color: "#555", whiteSpace: "pre-wrap" }}>{note}</p>}
-
-      {rows.length > 0 && (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items Viewed</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Add-to-Carts</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items Purchased</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Revenue</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsViewed.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsAddedToCart.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsPurchased.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    £{r.itemRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {note && !hasRows && <p style={{ marginTop: 8, color: "#666", whiteSpace: "pre-wrap" }}>{note}</p>}
+      {!hasRows && !error && hasLoaded && !note && (
+        <p style={{ marginTop: 8, color: "#666" }}>No product rows returned for this date range.</p>
       )}
-      {rows.length === 0 && !loading && !error && !note && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+
+      {hasRows && (
+        <>
+          {usedDim && (
+            <p style={{ marginTop: 8, color: "#666" }}>
+              Using <code>{usedDim}</code> as product dimension.
+            </p>
+          )}
+
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid " + "#ddd", padding: 8 }}>Views</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid " + "#ddd", padding: 8 }}>Add-to-Carts</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid " + "#ddd", padding: 8 }}>Items Purchased</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid " + "#ddd", padding: 8 }}>Item Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.id || r.name}-${i}`}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsViewed.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsAddedToCart.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsPurchased.toLocaleString()}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                      {r.itemRevenue.toLocaleString(undefined, { style: "currency", currency: "GBP" })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </section>
   );
@@ -788,11 +789,13 @@ function Products({ propertyId, startDate, endDate }) {
 /* Checkout funnel */
 function CheckoutFunnel({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]); // [{ step, count }]
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true); setError(""); setRows([]); setNote(""); setHasLoaded(true);
     try {
       const res = await fetch("/api/ga4/checkout-funnel", {
         method: "POST",
@@ -801,14 +804,16 @@ function CheckoutFunnel({ propertyId, startDate, endDate }) {
       });
       const txt = await res.text();
       let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+
       if (!res.ok) {
-        const msg =
-          (data && (data.error || data.message)) ||
-          (data && typeof data === "object" ? JSON.stringify(data) : "") ||
-          txt || `HTTP ${res.status}`;
-        throw new Error(msg);
+        const serverMsg = data?.error
+          ? `${data.error}${data.details ? ` — ${JSON.stringify(data.details)}` : ""}`
+          : txt || `HTTP ${res.status}`;
+        throw new Error(serverMsg);
       }
-      setRows(data?.rows || []);
+
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
+      setNote(data?.note || "");
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -816,55 +821,47 @@ function CheckoutFunnel({ propertyId, startDate, endDate }) {
     }
   };
 
-  const steps = rows.length
-    ? rows
-    : [
-        { step: "view_item", count: 0 },
-        { step: "add_to_cart", count: 0 },
-        { step: "begin_checkout", count: 0 },
-        { step: "add_payment_info", count: 0 },
-        { step: "purchase", count: 0 },
-      ];
+  const hasRows = rows.length > 0;
 
   return (
     <section style={{ marginTop: 32 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Checkout funnel (event counts)</h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load Checkout"}
-          </button>
-          <AiBlock
-            endpoint="/api/insights/summarise-funnel"
-            payload={{ rows: steps, dateRange: { start: startDate, end: endDate } }}
-            disabled={!rows.length}
-          />
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Checkout funnel</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Checkout"}
+        </button>
+        <AiInline
+          endpoint="/api/insights/summarise-checkout"
+          disabled={!hasRows}
+          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {note && !hasRows && <p style={{ marginTop: 8, color: "#666", whiteSpace: "pre-wrap" }}>{note}</p>}
+      {!hasRows && !error && hasLoaded && !note && (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows for the selected date range.</p>
+      )}
 
-      <div style={{ marginTop: 12, overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
-              <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Event count</th>
-            </tr>
-          </thead>
-          <tbody>
-            {steps.map((s, i) => (
-              <tr key={`${s.step}-${i}`}>
-                <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{s.step}</td>
-                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(s.count || 0).toLocaleString()}</td>
+      {hasRows && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {rows.length === 0 && !loading && !error && (
-        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.step}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.step}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.count.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
