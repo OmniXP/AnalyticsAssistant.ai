@@ -677,6 +677,94 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   );
 }
 
+/** ---------- small helper: inline AI summary (button + copy) ---------- */
+function AiInline({ endpoint, payload, disabled }) {
+  const [loading, setLoading] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    setError("");
+    setText("");
+    setCopied(false);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+
+      // Read text first; try JSON; fall back to raw
+      const raw = await res.text();
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch {}
+
+      if (!res.ok) {
+        const msg = data?.error
+          ? `${data.error}${data.details ? ` — ${typeof data.details === "string" ? data.details : JSON.stringify(data.details)}` : ""}`
+          : raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      const summary = (data && (data.summary || data.text)) || raw || "No response";
+      setText(summary);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setError("Could not copy to clipboard");
+    }
+  };
+
+  return (
+    <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button
+        onClick={run}
+        style={{ padding: "8px 12px", cursor: disabled ? "not-allowed" : "pointer" }}
+        disabled={disabled || loading}
+        title={disabled ? "Load data first" : "Generate quick AI insight"}
+      >
+        {loading ? "Summarising…" : "Summarise with AI"}
+      </button>
+      <button
+        onClick={copy}
+        style={{ padding: "8px 12px", cursor: text ? "pointer" : "not-allowed" }}
+        disabled={!text}
+        title={text ? "Copy the AI insight" : "Summarise first"}
+      >
+        {copied ? "Copied!" : "Copy insight"}
+      </button>
+      {error && <span style={{ color: "crimson", marginLeft: 6, whiteSpace: "pre-wrap" }}>Error: {error}</span>}
+      {text && (
+        <span
+          style={{
+            marginLeft: 6,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: "6px 8px",
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+            maxWidth: 700,
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* Product performance */
 function Products({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
@@ -783,6 +871,94 @@ function Products({ propertyId, startDate, endDate }) {
         </>
       )}
     </section>
+  );
+}
+
+/** ---------- small helper: inline AI summary (button + copy) ---------- */
+function AiInline({ endpoint, payload, disabled }) {
+  const [loading, setLoading] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    setError("");
+    setText("");
+    setCopied(false);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+
+      // Read text first; try JSON; fall back to raw
+      const raw = await res.text();
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch {}
+
+      if (!res.ok) {
+        const msg = data?.error
+          ? `${data.error}${data.details ? ` — ${typeof data.details === "string" ? data.details : JSON.stringify(data.details)}` : ""}`
+          : raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      const summary = (data && (data.summary || data.text)) || raw || "No response";
+      setText(summary);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setError("Could not copy to clipboard");
+    }
+  };
+
+  return (
+    <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button
+        onClick={run}
+        style={{ padding: "8px 12px", cursor: disabled ? "not-allowed" : "pointer" }}
+        disabled={disabled || loading}
+        title={disabled ? "Load data first" : "Generate quick AI insight"}
+      >
+        {loading ? "Summarising…" : "Summarise with AI"}
+      </button>
+      <button
+        onClick={copy}
+        style={{ padding: "8px 12px", cursor: text ? "pointer" : "not-allowed" }}
+        disabled={!text}
+        title={text ? "Copy the AI insight" : "Summarise first"}
+      >
+        {copied ? "Copied!" : "Copy insight"}
+      </button>
+      {error && <span style={{ color: "crimson", marginLeft: 6, whiteSpace: "pre-wrap" }}>Error: {error}</span>}
+      {text && (
+        <span
+          style={{
+            marginLeft: 6,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: "6px 8px",
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+            maxWidth: 700,
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </div>
   );
 }
 
