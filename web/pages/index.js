@@ -559,37 +559,52 @@ function Products({ propertyId, startDate, endDate }) {
   const [note, setNote] = useState("");
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]); setNote("");
-    try {
-      const res = await fetch("/api/ga4/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate, limit: 50 }),
-      });
-      const txt = await res.text();
-      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
+  setLoading(true);
+  setError("");
+  setRows([]);
+  setNote("");
 
-      const parsed = (data.rows || []).map((r, i) => ({
-        name: r.dimensionValues?.[0]?.value || "(unknown)",
-        id: r.dimensionValues?.[1]?.value || `row-${i}`,
-        itemsViewed: Number(r.metricValues?.[0]?.value || 0),
-        itemsAddedToCart: Number(r.metricValues?.[1]?.value || 0),
-        itemsPurchased: Number(r.metricValues?.[2]?.value || 0),
-        itemRevenue: Number(r.metricValues?.[3]?.value || 0),
-      }));
+  try {
+    const res = await fetch("/api/ga4/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ propertyId, startDate, endDate, limit: 50 }),
+    });
 
-      if (!parsed.length) {
-        setNote(
-          "No product rows returned for this date range. If GA’s E-commerce Purchases report shows items, make sure events include an items[] with item_id / item_name."
-        );
-      }
-      setRows(parsed);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
+    // Read as text first; then try JSON — avoids "Unexpected end of JSON input"
+    const txt = await res.text();
+    let data = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch {}
+
+    if (!res.ok) {
+      throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
     }
+
+    // Parse GA4 rows -> match the API metrics order:
+    // [itemsViewed, itemsAddedToCart, itemsPurchased, itemRevenue]
+    const parsed = (data?.rows || []).map((r, i) => ({
+      name: r.dimensionValues?.[0]?.value || "(unknown)",
+      id: r.dimensionValues?.[1]?.value || `row-${i}`,
+      itemsViewed: Number(r.metricValues?.[0]?.value || 0),
+      itemsAddedToCart: Number(r.metricValues?.[1]?.value || 0),
+      itemsPurchased: Number(r.metricValues?.[2]?.value || 0),
+      itemRevenue: Number(r.metricValues?.[3]?.value || 0),
+    }));
+
+    setRows(parsed);
+
+    if (parsed.length === 0) {
+      setNote(
+        "No product rows returned for this date range. If GA’s E-commerce Purchases report shows items, make sure events include an items[] with item_id / item_name."
+      );
+    }
+  } catch (e) {
+    const msg = typeof e === "string" ? e : (e?.message || e?.error || JSON.stringify(e));
+    setError(msg);
+  } finally {
+    setLoading(false);
+  }
+};
   };
 
   const downloadCsvProducts = (rows, start, end) => {

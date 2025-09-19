@@ -1,4 +1,3 @@
-// /workspaces/insightsgpt/web/pages/api/ga4/products.js
 import { getIronSession } from "iron-session";
 
 const sessionOptions = {
@@ -34,9 +33,7 @@ export default async function handler(req, res) {
       { name: "itemsPurchased" },
       { name: "itemRevenue" },
     ],
-    orderBys: [
-      { metric: { metricName: "itemRevenue" }, desc: true }
-    ],
+    orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
     limit: String(limit),
   };
 
@@ -49,8 +46,13 @@ export default async function handler(req, res) {
     body: JSON.stringify(body),
   });
 
-  const data = await apiRes.json().catch(() => ({}));
-  if (!apiRes.ok) return res.status(apiRes.status).json(data);
+  const raw = await apiRes.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch {}
 
-  return res.status(200).json(data);
+  if (!apiRes.ok) {
+    return res.status(apiRes.status).json({ error: data?.error?.message || raw || `HTTP ${apiRes.status}` });
+  }
+
+  return res.status(200).json(data || { rows: [] });
 }

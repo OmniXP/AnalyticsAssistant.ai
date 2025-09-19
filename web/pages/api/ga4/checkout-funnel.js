@@ -1,4 +1,3 @@
-// /workspaces/insightsgpt/web/pages/api/ga4/checkout-funnel.js
 import { getIronSession } from "iron-session";
 
 const sessionOptions = {
@@ -38,12 +37,13 @@ export default async function handler(req, res) {
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "eventName" }],
     metrics: [{ name: "totalUsers" }],
+    // ✅ Correct filter shape: fieldName is a sibling of inListFilter, not inside it
     dimensionFilter: {
       filter: {
+        fieldName: "eventName",
         inListFilter: {
-          caseSensitive: false,
           values: steps.map((s) => s.event),
-          fieldName: "eventName",
+          caseSensitive: false,
         },
       },
     },
@@ -59,20 +59,25 @@ export default async function handler(req, res) {
     body: JSON.stringify(body),
   });
 
-  const data = await apiRes.json().catch(() => ({}));
-  if (!apiRes.ok) return res.status(apiRes.status).json(data);
+  // Try to parse JSON safely, but if GA returns HTML/text, keep it as string
+  const raw = await apiRes.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch {}
 
-  // Map back to ordered funnel with drop-off
+  if (!apiRes.ok) {
+    return res.status(apiRes.status).json({ error: data?.error?.message || raw || `HTTP ${apiRes.status}` });
+  }
+
   const byEvent = Object.create(null);
-  (data.rows || []).forEach((r) => {
+  (data?.rows || []).forEach((r) => {
     const ev = r.dimensionValues?.[0]?.value || "";
     const users = Number(r.metricValues?.[0]?.value || 0);
     byEvent[ev] = users;
   });
 
   const rows = steps.map((s, i) => {
-    const users = byEvent[s.event] || 0;
-    const prevUsers = i === 0 ? users : (byEvent[steps[i - 1].event] || 0);
+    const users = byEvent[s.event] ?? 0;
+    const prevUsers = i === 0 ? users : (byEvent[steps[i - 1].event] ?? 0);
     const drop = prevUsers > 0 ? ((prevUsers - users) / prevUsers) * 100 : 0;
     return { step: s.label, users, dropoff: Math.max(0, drop) };
   });
