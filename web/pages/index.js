@@ -471,7 +471,7 @@ export default function Home() {
       {propertyId && <GoalsConversions propertyId={propertyId} startDate={startDate} endDate={endDate} />}
       {propertyId && <LandingPages propertyId={propertyId} startDate={startDate} endDate={endDate} />}
       {propertyId && <Campaigns propertyId={propertyId} startDate={startDate} endDate={endDate} />}
-      {propertyId && <Products propertyId={propertyId} startDate={startDate} endDate={endDate} />}
+      {propertyId && <ProductPerformance propertyId={propertyId} startDate={startDate} endDate={endDate} />}
       {propertyId && <CheckoutFunnel propertyId={propertyId} startDate={startDate} endDate={endDate} />}
     </main>
   );
