@@ -629,7 +629,7 @@ function TopPages({ propertyId, startDate, endDate }) {
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid "#ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
               </tr>
             </thead>
             <tbody>
