@@ -32,12 +32,12 @@ async function runReport(accessToken, propertyId, body) {
   return data;
 }
 
-// views via eventCount filtered to view_item
+// ---- Views via eventCount filtered to view_item (dimension: itemName only)
 async function fetchViews(accessToken, propertyId, startDate, endDate, limit) {
   const body = {
     dateRanges: [{ startDate, endDate }],
     metrics: [{ name: "eventCount" }],
-    dimensions: [{ name: "itemName" }, { name: "eventName" }],
+    dimensions: [{ name: "itemName" }], // <- return only itemName
     dimensionFilter: {
       filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: "view_item" } },
     },
@@ -55,12 +55,12 @@ async function fetchViews(accessToken, propertyId, startDate, endDate, limit) {
   return map; // itemName -> views
 }
 
-// add_to_cart via eventCount
+// ---- Add-to-carts via eventCount filtered to add_to_cart (dimension: itemName only)
 async function fetchAddToCarts(accessToken, propertyId, startDate, endDate, limit) {
   const body = {
     dateRanges: [{ startDate, endDate }],
     metrics: [{ name: "eventCount" }],
-    dimensions: [{ name: "itemName" }, { name: "eventName" }],
+    dimensions: [{ name: "itemName" }], // <- return only itemName
     dimensionFilter: {
       filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: "add_to_cart" } },
     },
@@ -78,14 +78,15 @@ async function fetchAddToCarts(accessToken, propertyId, startDate, endDate, limi
   return map; // itemName -> add_to_carts
 }
 
-// purchases via itemPurchaseQuantity (item-scoped)
+// ---- Purchases via itemPurchaseQuantity (item-scoped, dimension: itemName)
 async function fetchPurchases(accessToken, propertyId, startDate, endDate, limit) {
   const body = {
     dateRanges: [{ startDate, endDate }],
     metrics: [{ name: "itemPurchaseQuantity" }],
     dimensions: [{ name: "itemName" }],
-    limit,
+  // order by purchase qty, limit helps keep payload small
     orderBys: [{ metric: { metricName: "itemPurchaseQuantity" }, desc: true }],
+    limit,
   };
   const r = await runReport(accessToken, propertyId, body);
   const map = new Map();
@@ -98,14 +99,14 @@ async function fetchPurchases(accessToken, propertyId, startDate, endDate, limit
   return map; // itemName -> itemPurchaseQuantity
 }
 
-// revenue via itemRevenue (item-scoped)
+// ---- Revenue via itemRevenue (item-scoped, dimension: itemName)
 async function fetchRevenue(accessToken, propertyId, startDate, endDate, limit) {
   const body = {
     dateRanges: [{ startDate, endDate }],
     metrics: [{ name: "itemRevenue" }],
     dimensions: [{ name: "itemName" }],
-    limit,
     orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
+    limit,
   };
   const r = await runReport(accessToken, propertyId, body);
   const map = new Map();
@@ -125,12 +126,13 @@ export default async function handler(req, res) {
   const ga = session.gaTokens;
   if (!ga?.access_token) return res.status(401).json({ error: "No access token in session" });
 
-  const { propertyId, startDate, endDate, limit = 50 } = req.body || {};
+  const { propertyId, startDate, endDate, limit = 100 } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
     return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
   }
 
   try {
+    // Run 4 independent, compatible reports
     const [viewsMap, cartsMap, purchasesMap, revenueMap] = await Promise.all([
       fetchViews(ga.access_token, propertyId, startDate, endDate, limit),
       fetchAddToCarts(ga.access_token, propertyId, startDate, endDate, limit),
@@ -138,7 +140,7 @@ export default async function handler(req, res) {
       fetchRevenue(ga.access_token, propertyId, startDate, endDate, limit),
     ]);
 
-    // Merge keys (itemName) from all maps
+    // Merge all keys (item names)
     const keys = new Set([
       ...viewsMap.keys(),
       ...cartsMap.keys(),
@@ -155,8 +157,12 @@ export default async function handler(req, res) {
       itemRevenue: Number(revenueMap.get(name) || 0),
     }));
 
-    // Sort by revenue, then views
-    rows.sort((a, b) => (b.itemRevenue || 0) - (a.itemRevenue || 0) || (b.itemsViewed || 0) - (a.itemsViewed || 0));
+    // Sort by revenue desc, then by views desc
+    rows.sort(
+      (a, b) =>
+        (b.itemRevenue || 0) - (a.itemRevenue || 0) ||
+        (b.itemsViewed || 0) - (a.itemsViewed || 0)
+    );
 
     let note = "";
     if (rows.length === 0) {
