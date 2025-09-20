@@ -731,115 +731,56 @@ function SourceMedium({ propertyId, startDate, endDate }) {
 
 /** ---------- Product performance ---------- */
 function Products({ propertyId, startDate, endDate }) {
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
-  const [usedDim, setUsedDim] = useState(""); // itemName or itemId
-  const [hasLoaded, setHasLoaded] = useState(false);
-
-  const load = async () => {
-    setLoading(true); setError(""); setRows([]); setNote(""); setHasLoaded(true); setUsedDim("");
-    try {
-      const res = await fetch("/api/ga4/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate, limit: 50 }),
-      });
-      const txt = await res.text();
-      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-
-      if (!res.ok) {
-        const serverMsg = data?.error
-          ? `${data.error}${data.details ? ` — ${JSON.stringify(data.details)}` : ""}`
-          : txt || `HTTP ${res.status}`;
-        throw new Error(serverMsg);
-      }
-
-      setUsedDim(data?.usedDimension || "");
-      setNote(data?.note || "");
-      const parsedRows = Array.isArray(data?.rows) ? data.rows : [];
-      setRows(parsedRows);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const hasRows = rows.length > 0;
+  // Placeholder component while the GA4 query is reworked.
+  // Keeps your page layout identical (title + CTAs in the same place),
+  // but prevents API calls and shows a clear note to the user.
 
   return (
     <section style={{ marginTop: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Product performance</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load Products"}
-        </button>
+
+        {/* Primary CTA disabled intentionally */}
         <button
-          onClick={() => downloadCsvProducts(rows, startDate, endDate)}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!hasRows}
-          title={hasRows ? "Download table as CSV" : "Load products first"}
+          style={{ padding: "8px 12px", cursor: "not-allowed", opacity: 0.6 }}
+          title="Temporarily disabled while we improve compatibility"
+          disabled
+        >
+          Load Products
+        </button>
+
+        {/* CSV CTA disabled to match */}
+        <button
+          style={{ padding: "8px 12px", cursor: "not-allowed", opacity: 0.6 }}
+          title="Temporarily disabled while we improve compatibility"
+          disabled
         >
           Download CSV
         </button>
-        <AiInline
-          endpoint="/api/insights/summarise-products"
-          disabled={!hasRows}
-          payload={{ rows, dateRange: { start: startDate, end: endDate } }}
-        />
+
+        {/* Optional: keep a 'Summarise with AI' CTA visible but disabled to preserve layout symmetry */}
+        <button
+          style={{ padding: "8px 12px", cursor: "not-allowed", opacity: 0.6, marginLeft: "auto" }}
+          title="Temporarily disabled while we improve compatibility"
+          disabled
+        >
+          Summarise with AI
+        </button>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {note && !hasRows && <p style={{ marginTop: 8, color: "#666", whiteSpace: "pre-wrap" }}>{note}</p>}
-      {!hasRows && !error && hasLoaded && !note && (
-        <p style={{ marginTop: 8, color: "#666" }}>No product rows returned for this date range.</p>
-      )}
-
-      {hasRows && (
-        <>
-          {usedDim && (
-            <p style={{ marginTop: 8, color: "#666" }}>
-              Using <code>{usedDim}</code> as product dimension.
-            </p>
-          )}
-          <div style={{ marginTop: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Add-to-Carts</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items Purchased</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Revenue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.id || r.name}-${i}`}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id || ""}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {(r.itemsViewed ?? 0).toLocaleString()}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {(r.itemsAddedToCart ?? 0).toLocaleString()}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {(r.itemsPurchased ?? 0).toLocaleString()}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {(r.itemRevenue ?? 0).toLocaleString(undefined, { style: "currency", currency: "GBP" })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+      <div
+        style={{
+          marginTop: 12,
+          background: "#fffceb",
+          border: "1px solid #f5e08f",
+          padding: 12,
+          borderRadius: 6,
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        Product Performance is temporarily disabled while we update the GA4 query to be compatible with your property.
+        Your other sections will continue to work normally (Channels, Top Pages, Source/Medium, Checkout Funnel, E-commerce KPIs).
+      </div>
     </section>
   );
 }
