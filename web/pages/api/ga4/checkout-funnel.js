@@ -12,72 +12,93 @@ const sessionOptions = {
   },
 };
 
-const FUNNEL_STEPS = ["view_item", "add_to_cart", "begin_checkout", "add_payment_info", "purchase"];
+async function runReport(accessToken, propertyId, { startDate, endDate, metrics, dimensions, dimensionFilter }) {
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+  const body = {
+    dateRanges: [{ startDate, endDate }],
+    metrics: metrics.map((m) => ({ name: m })),
+    dimensions: dimensions.map((d) => ({ name: d })),
+    dimensionFilter,
+    limit: 1000,
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    const err = new Error(`GA4 API error — ${JSON.stringify(data)}`);
+    err.status = res.status;
+    err.details = data;
+    throw err;
+  }
+  return data;
+}
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   const session = await getIronSession(req, res, sessionOptions);
   const ga = session.gaTokens;
-  if (!ga?.access_token) {
-    return res.status(401).json({ error: "No access token in session. Click 'Connect Google Analytics' then try again." });
-  }
+  if (!ga?.access_token) return res.status(401).json({ error: "No access token in session" });
 
   const { propertyId, startDate, endDate } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
     return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
   }
 
+  // Events representing the funnel (adjust labels if you use different steps)
+  const steps = [
+    { event: "add_to_cart", label: "Add to cart" },
+    { event: "begin_checkout", label: "Begin checkout" },
+    { event: "add_shipping_info", label: "Add shipping" },
+    { event: "add_payment_info", label: "Add payment" },
+    { event: "purchase", label: "Purchase" },
+  ];
+
   try {
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-    const body = {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "eventName" }],
-      metrics: [{ name: "eventCount" }],
+    // Single report: eventName + eventCount; filter to only these events
+    const data = await runReport(ga.access_token, propertyId, {
+      startDate,
+      endDate,
+      metrics: ["eventCount"],
+      dimensions: ["eventName"],
       dimensionFilter: {
         filter: {
           fieldName: "eventName",
-          inListFilter: { values: FUNNEL_STEPS },
+          inListFilter: { values: steps.map((s) => s.event) },
         },
       },
-      keepEmptyRows: false,
-    };
-
-    const apiRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
     });
-
-    const data = await apiRes.json().catch(() => null);
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json({
-        error: "GA4 API error (checkout funnel)",
-        details: data || null,
-      });
-    }
 
     const counts = Object.create(null);
-    for (const r of data?.rows || []) {
-      const name = r?.dimensionValues?.[0]?.value || "";
-      const val = Number(r?.metricValues?.[0]?.value || 0);
-      if (name) counts[name] = (counts[name] || 0) + val;
+    for (const row of data.rows || []) {
+      const name = row.dimensionValues?.[0]?.value || "";
+      const count = Number(row.metricValues?.[0]?.value || 0);
+      counts[name] = (counts[name] || 0) + count;
     }
-    const rows = FUNNEL_STEPS.map((step) => ({ step, count: counts[step] || 0 }));
 
-    // Helpful note when everything is zero
-    const note = rows.every(r => r.count === 0)
-      ? "No counts for the selected steps in this date range. Confirm these events fire in GA4 (Configure ▶ DebugView) or widen your date range."
-      : undefined;
+    const rows = steps.map((s) => ({
+      step: s.label,
+      count: counts[s.event] ? Number(counts[s.event]) : 0,
+    }));
+
+    // Optional hint if everything is zero
+    let note = "";
+    if (rows.every((r) => r.count === 0)) {
+      note =
+        "No checkout-step events counted in this date range. Confirm your GA4 events use the standard names (add_to_cart, begin_checkout, add_shipping_info, add_payment_info, purchase) and are sent for the selected dates.";
+    }
 
     return res.status(200).json({ rows, note });
-  } catch (err) {
-    return res.status(500).json({
-      error: "Server error (checkout funnel)",
-      details: String(err?.message || err),
-    });
+  } catch (e) {
+    const msg = e?.message || "Unknown error";
+    return res.status(500).json({ error: `GA4 API error (checkout-funnel) — ${msg}`, details: e?.details || null });
   }
 }
