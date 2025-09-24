@@ -277,9 +277,15 @@ export default function Home() {
                   return (
                     <tr key={r.channel}>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{r.users.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
+<td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+  {r.sessions.toLocaleString()}
+</td>
+<td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+  {r.users.toLocaleString()}
+</td>
+<td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+  {pct}%
+</td>
                     </tr>
                   );
                 })}
