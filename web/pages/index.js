@@ -556,17 +556,32 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const [copied, setCopied] = useState(false);
 
   const load = async () => {
-    setLoading(true); setError(""); setTotals(null);
-    try {
-      const data = await fetchJsonSafe("/api/ga4/ecommerce-summary", { propertyId, startDate, endDate });
-      if (!data?.totals || !data?.dateRange) throw new Error("Missing totals/dateRange");
-      setTotals(data.totals);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
+  setLoading(true); setError(""); setTotals(null);
+  try {
+    const res = await fetch("/api/ga4/ecommerce-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ propertyId, startDate, endDate }),
+    });
+
+    const txt = await res.text();
+    let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+
+    if (!res.ok) {
+      throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
     }
-  };
+
+    if (!data?.totals || !data?.dateRange) {
+      throw new Error("Missing totals/dateRange");
+    }
+
+    setTotals(data.totals);
+  } catch (e) {
+    setError(String(e.message || e));
+  } finally {
+    setLoading(false);
+  }
+};
 
   const summarise = async () => {
     setAiLoading(true); setAiError(""); setAiText("");
@@ -680,18 +695,32 @@ function CheckoutFunnel({ propertyId, startDate, endDate }) {
   const [copied, setCopied] = useState(false);
 
   const load = async () => {
-    setLoading(true); setError(""); setSteps(null);
-    try {
-      const data = await fetchJsonSafe("/api/ga4/checkout-funnel", { propertyId, startDate, endDate });
-      // Expected: { steps: { addToCart, beginCheckout, addShipping, addPayment, purchase } }
-      if (!data?.steps) throw new Error("Missing steps");
-      setSteps(data.steps);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
+  setLoading(true); setError(""); setSteps(null);
+  try {
+    const res = await fetch("/api/ga4/checkout-funnel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ propertyId, startDate, endDate }),
+    });
+
+    const txt = await res.text();
+    let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+
+    if (!res.ok) {
+      throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
     }
-  };
+
+    if (!data?.steps) {
+      throw new Error("Missing steps");
+    }
+
+    setSteps(data.steps);
+  } catch (e) {
+    setError(String(e.message || e));
+  } finally {
+    setLoading(false);
+  }
+};
 
   const summarise = async () => {
     setAiLoading(true); setAiError(""); setAiText("");
