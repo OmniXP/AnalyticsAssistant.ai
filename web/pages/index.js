@@ -555,7 +555,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const [aiError, setAiError] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const load = async () => {
+ const load = async () => {
   setLoading(true); setError(""); setTotals(null);
   try {
     const res = await fetch("/api/ga4/ecommerce-summary", {
