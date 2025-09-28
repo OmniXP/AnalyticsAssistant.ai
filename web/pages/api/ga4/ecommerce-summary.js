@@ -16,8 +16,9 @@ async function runReport({ accessToken, propertyId, startDate, endDate, metrics 
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
   const body = {
     dateRanges: [{ startDate, endDate }],
-    // totals only: no dimensions (reduces incompatibility errors)
+    // totals only (no dimensions) to reduce compatibility issues
     metrics: metrics.map((name) => ({ name })),
+    limit: 1,
   };
 
   const res = await fetch(url, {
@@ -29,7 +30,8 @@ async function runReport({ accessToken, propertyId, startDate, endDate, metrics 
     body: JSON.stringify(body),
   });
 
-  const data = await res.json().catch(() => null);
+  let data = null;
+  try { data = await res.json(); } catch {}
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -44,55 +46,68 @@ export default async function handler(req, res) {
 
   const { propertyId, startDate, endDate } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
-    return res
-      .status(400)
-      .json({ error: "Missing propertyId/startDate/endDate", got: req.body || null });
+    return res.status(400).json({
+      error: "Missing propertyId/startDate/endDate",
+      got: req.body || null,
+    });
   }
 
-  // Set A (common)
-  const METRICS_A = ["itemViewEvents", "addToCarts", "purchases", "itemRevenue"];
-  // Set B (fallback on some properties)
-  const METRICS_B = ["itemViewEvents", "addToCarts", "purchases", "purchaseRevenue"];
+  // Try several metric sets (some properties don’t support all)
+  const METRIC_SETS = [
+    // Preferred: transactions + revenue (GA4 supports "transactions")
+    ["itemViewEvents", "addToCarts", "transactions", "purchaseRevenue"],
+    // Fallback: itemPurchaseQuantity (quantity of items purchased) + revenue
+    ["itemViewEvents", "addToCarts", "itemPurchaseQuantity", "purchaseRevenue"],
+    // Fallback: purchaserRate + revenue (rate of users who purchased)
+    ["itemViewEvents", "addToCarts", "purchaserRate", "purchaseRevenue"],
+    // Minimal fallback: revenue only
+    ["purchaseRevenue"],
+  ];
 
-  // Attempt 1
-  let attempt = await runReport({
-    accessToken: ga.access_token,
-    propertyId,
-    startDate,
-    endDate,
-    metrics: METRICS_A,
-  });
+  let attempt = null;
+  for (const set of METRIC_SETS) {
+    attempt = await runReport({
+      accessToken: ga.access_token,
+      propertyId,
+      startDate,
+      endDate,
+      metrics: set,
+    });
 
-  // If incompatible, retry with Set B
-  if (!attempt.ok && attempt.status === 400) {
-    const msg = attempt?.data?.error?.message || "";
-    const shouldRetry = /itemRevenue|dimensions & metrics are incompatible|invalid/i.test(msg);
-    if (shouldRetry) {
-      attempt = await runReport({
-        accessToken: ga.access_token,
-        propertyId,
-        startDate,
-        endDate,
-        metrics: METRICS_B,
-      });
-    }
+    // Accept 200s only; if 400 (invalid combo), try next set; else stop.
+    if (attempt.ok) break;
+    if (attempt.status !== 400) break;
   }
 
-  if (!attempt.ok) {
-    return res.status(attempt.status).json({
+  if (!attempt?.ok) {
+    return res.status(attempt?.status || 500).json({
       error: "GA4 API error (ecommerce-summary)",
-      details: attempt.data || null,
+      details: attempt?.data || null,
     });
   }
 
   const mv = attempt?.data?.rows?.[0]?.metricValues || [];
-  const [viewedRaw, addToCartRaw, purchasesRaw, revenueRaw] = mv;
+  // Build a map metricName -> value string, based on the header order
+  const headers = (attempt?.data?.metricHeaders || []).map((h) => h.name);
+  const metricMap = {};
+  headers.forEach((name, i) => {
+    metricMap[name] = Number(mv?.[i]?.value || 0);
+  });
 
+  // Normalize into a single totals object; fields may be 0 if not returned
   const totals = {
-    itemsViewed: Number(viewedRaw?.value || 0),
-    addToCarts: Number(addToCartRaw?.value || 0),
-    purchases: Number(purchasesRaw?.value || 0),
-    revenue: Number(revenueRaw?.value || 0),
+    itemsViewed: metricMap.itemViewEvents ?? 0,
+    addToCarts: metricMap.addToCarts ?? 0,
+
+    // One of these may exist (priority order):
+    transactions: metricMap.transactions ?? 0,                // count of orders
+    itemPurchaseQuantity: metricMap.itemPurchaseQuantity ?? 0, // total items purchased
+
+    // Purchaser rate (percent of users who purchased in period) if present
+    purchaserRate: metricMap.purchaserRate ?? null,
+
+    // Revenue (always numeric, defaults 0)
+    revenue: metricMap.purchaseRevenue ?? 0,
   };
 
   return res.status(200).json({

@@ -444,7 +444,7 @@ export default function Home() {
 
 /** ---------- components ---------- */
 
-// E-commerce KPIs (totals only)
+// ---------- E-commerce KPIs (totals-only) ----------
 function EcommerceKPIs({ propertyId, startDate, endDate }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
@@ -463,14 +463,10 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
 
       const txt = await res.text();
       let data = null;
-      try {
-        data = txt ? JSON.parse(txt) : null;
-      } catch {}
+      try { data = txt ? JSON.parse(txt) : null; } catch {}
 
       if (!res.ok) {
-        throw new Error(
-          (data && (data.error || data.message)) || txt || `HTTP ${res.status}`
-        );
+        throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
       }
 
       if (!data?.totals || !data?.dateRange) {
@@ -485,12 +481,26 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
     }
   };
 
-  const aov =
-    totals?.purchases > 0 ? totals.revenue / totals.purchases : 0;
-  const purchaseRateFromViews =
-    totals?.itemsViewed > 0 ? (totals.purchases / totals.itemsViewed) * 100 : 0;
+  // Derived KPIs: prefer transactions; otherwise fall back to itemPurchaseQuantity
+  const orders =
+    totals?.transactions && totals.transactions > 0
+      ? totals.transactions
+      : totals?.itemPurchaseQuantity && totals.itemPurchaseQuantity > 0
+      ? totals.itemPurchaseQuantity
+      : 0;
+
+  const aov = orders > 0 ? totals.revenue / orders : 0;
+
+  // Purchase rate: if GA returned purchaserRate, use it directly; otherwise estimate from views if possible
+  const purchaseRate =
+    typeof totals?.purchaserRate === "number"
+      ? totals.purchaserRate
+      : totals?.itemsViewed > 0 && orders > 0
+      ? (orders / totals.itemsViewed) * 100
+      : 0;
+
   const cartToPurchaseRate =
-    totals?.addToCarts > 0 ? (totals.purchases / totals.addToCarts) * 100 : 0;
+    totals?.addToCarts > 0 && orders > 0 ? (orders / totals.addToCarts) * 100 : 0;
 
   return (
     <section style={{ marginTop: 32 }}>
@@ -500,6 +510,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
           onClick={load}
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={loading || !propertyId || !startDate || !endDate}
+          title={!propertyId ? "Enter GA4 Property ID and dates first" : ""}
         >
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
@@ -525,25 +536,27 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
             <div>
               <div style={{ color: "#666", fontSize: 12 }}>Items viewed</div>
               <div style={{ fontSize: 20, fontWeight: 600 }}>
-                {totals.itemsViewed.toLocaleString()}
+                {(totals.itemsViewed ?? 0).toLocaleString()}
               </div>
             </div>
             <div>
               <div style={{ color: "#666", fontSize: 12 }}>Add-to-carts</div>
               <div style={{ fontSize: 20, fontWeight: 600 }}>
-                {totals.addToCarts.toLocaleString()}
+                {(totals.addToCarts ?? 0).toLocaleString()}
               </div>
             </div>
             <div>
-              <div style={{ color: "#666", fontSize: 12 }}>Purchases</div>
+              <div style={{ color: "#666", fontSize: 12 }}>
+                {totals?.transactions ? "Orders" : totals?.itemPurchaseQuantity ? "Items purchased" : "Purchases"}
+              </div>
               <div style={{ fontSize: 20, fontWeight: 600 }}>
-                {totals.purchases.toLocaleString()}
+                {orders.toLocaleString()}
               </div>
             </div>
             <div>
               <div style={{ color: "#666", fontSize: 12 }}>Revenue</div>
               <div style={{ fontSize: 20, fontWeight: 600 }}>
-                {gbp.format(totals.revenue)}
+                {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)}
               </div>
             </div>
           </div>
@@ -551,12 +564,16 @@ function EcommerceKPIs({ propertyId, startDate, endDate }) {
           <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
             <div>
               <div style={{ color: "#666", fontSize: 12 }}>AOV</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>{gbp.format(aov)}</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(aov)}
+              </div>
             </div>
             <div>
-              <div style={{ color: "#666", fontSize: 12 }}>Purchase rate (views→purchase)</div>
+              <div style={{ color: "#666", fontSize: 12 }}>
+                {typeof totals?.purchaserRate === "number" ? "Purchaser rate" : "Purchase rate (views→order)"}
+              </div>
               <div style={{ fontSize: 18, fontWeight: 600 }}>
-                {purchaseRateFromViews.toFixed(2)}%
+                {purchaseRate.toFixed(2)}%
               </div>
             </div>
             <div>
