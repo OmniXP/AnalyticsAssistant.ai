@@ -12,41 +12,32 @@ const sessionOptions = {
   },
 };
 
-const FUNNEL_EVENTS = [
-  "add_to_cart",
-  "begin_checkout",
-  "add_shipping_info",
-  "add_payment_info",
-  "purchase",
-];
-
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   const session = await getIronSession(req, res, sessionOptions);
   const ga = session.gaTokens;
-  if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
+  if (!ga?.access_token) {
+    return res.status(401).json({ error: "Not connected" });
+  }
 
   const { propertyId, startDate, endDate } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
-    return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
+    return res
+      .status(400)
+      .json({ error: "Missing propertyId/startDate/endDate", got: req.body || null });
   }
 
+  // One query: count events grouped by eventName, then map to the steps we care about
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
   const body = {
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "eventName" }],
     metrics: [{ name: "eventCount" }],
-    dimensionFilter: {
-      filter: {
-        fieldName: "eventName",
-        inListFilter: { values: FUNNEL_EVENTS },
-      },
-    },
-    limit: 50,
+    limit: 1000,
   };
 
-  const apiRes = await fetch(url, {
+  const gaRes = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ga.access_token}`,
@@ -55,22 +46,28 @@ export default async function handler(req, res) {
     body: JSON.stringify(body),
   });
 
-  const data = await apiRes.json().catch(() => null);
-  if (!apiRes.ok) {
-    return res
-      .status(apiRes.status)
-      .json({ error: "GA4 API error (checkout-funnel)", details: data });
+  const data = await gaRes.json().catch(() => null);
+  if (!gaRes.ok) {
+    return res.status(gaRes.status).json({
+      error: "GA4 API error (checkout-funnel)",
+      details: data || null,
+    });
   }
 
   const rows = data?.rows || [];
-  const m = new Map(rows.map(r => [r?.dimensionValues?.[0]?.value || "", Number(r?.metricValues?.[0]?.value || 0)]));
+  const lookup = {};
+  for (const r of rows) {
+    const name = r?.dimensionValues?.[0]?.value || "";
+    const count = Number(r?.metricValues?.[0]?.value || 0);
+    if (name) lookup[name] = count;
+  }
 
   const steps = {
-    add_to_cart: m.get("add_to_cart") || 0,
-    begin_checkout: m.get("begin_checkout") || 0,
-    add_shipping_info: m.get("add_shipping_info") || 0,
-    add_payment_info: m.get("add_payment_info") || 0,
-    purchase: m.get("purchase") || 0,
+    addToCart: lookup["add_to_cart"] || 0,
+    beginCheckout: lookup["begin_checkout"] || 0,
+    addShipping: lookup["add_shipping_info"] || 0,
+    addPayment: lookup["add_payment_info"] || 0,
+    purchase: lookup["purchase"] || 0,
   };
 
   return res.status(200).json({

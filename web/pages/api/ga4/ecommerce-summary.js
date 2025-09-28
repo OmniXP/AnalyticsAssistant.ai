@@ -12,12 +12,11 @@ const sessionOptions = {
   },
 };
 
-// Small helper: call GA4 Data API runReport
 async function runReport({ accessToken, propertyId, startDate, endDate, metrics }) {
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
   const body = {
     dateRanges: [{ startDate, endDate }],
-    // IMPORTANT: no dimensions for totals-only
+    // totals only: no dimensions (reduces incompatibility errors)
     metrics: metrics.map((name) => ({ name })),
   };
 
@@ -45,15 +44,17 @@ export default async function handler(req, res) {
 
   const { propertyId, startDate, endDate } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
-    return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
+    return res
+      .status(400)
+      .json({ error: "Missing propertyId/startDate/endDate", got: req.body || null });
   }
 
-  // Try set A (most common on GA4 properties)
+  // Set A (common)
   const METRICS_A = ["itemViewEvents", "addToCarts", "purchases", "itemRevenue"];
-  // Fallback set B (some properties prefer purchaseRevenue over itemRevenue)
+  // Set B (fallback on some properties)
   const METRICS_B = ["itemViewEvents", "addToCarts", "purchases", "purchaseRevenue"];
 
-  // First attempt
+  // Attempt 1
   let attempt = await runReport({
     accessToken: ga.access_token,
     propertyId,
@@ -62,11 +63,10 @@ export default async function handler(req, res) {
     metrics: METRICS_A,
   });
 
-  // If GA says incompatible/invalid, try the fallback set
+  // If incompatible, retry with Set B
   if (!attempt.ok && attempt.status === 400) {
-    const message = attempt?.data?.error?.message || "";
-    const shouldRetry =
-      /itemRevenue|dimensions & metrics are incompatible|invalid/i.test(message);
+    const msg = attempt?.data?.error?.message || "";
+    const shouldRetry = /itemRevenue|dimensions & metrics are incompatible|invalid/i.test(msg);
     if (shouldRetry) {
       attempt = await runReport({
         accessToken: ga.access_token,
