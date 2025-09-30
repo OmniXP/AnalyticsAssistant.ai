@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 /** ===================== helpers ===================== */
-const STORAGE_KEY = "insightgpt_preset_v2";
+const STORAGE_KEY = "insightgpt_preset_v3";
 
-// parse GA4 channel-group response -> rows/totals
+// Parse GA4 channel group response
 function parseGa4Channels(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
   const rows = response.rows.map((r) => ({
@@ -120,7 +120,7 @@ export default function Home() {
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
 
-  // Global filters (free-text “All” clears)
+  // Global filters
   const [country, setCountry] = useState("All");
   const [channelGroup, setChannelGroup] = useState("All");
 
@@ -164,7 +164,6 @@ export default function Home() {
     window.location.href = "/api/auth/google/start";
   };
 
-  // GA4 query with filters
   async function fetchGa4Channels({ propertyId, startDate, endDate, country, channelGroup }) {
     return await postJson("/api/ga4/query", {
       propertyId,
@@ -232,8 +231,10 @@ export default function Home() {
           </button>
         </div>
 
-        <label>GA4 Property ID
+        <label htmlFor="propId">GA4 Property ID
           <input
+            id="propId"
+            name="propId"
             value={propertyId}
             onChange={(e) => setPropertyId(e.target.value)}
             placeholder="e.g. 123456789"
@@ -241,19 +242,19 @@ export default function Home() {
           />
         </label>
 
-        <label>Start date
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8, width: "100%" }} />
+        <label htmlFor="startDate">Start date
+          <input id="startDate" name="startDate" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8, width: "100%" }} />
         </label>
-        <label>End date
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8, width: "100%" }} />
-        </label>
-
-        <label>Country (type “All” to clear)
-          <input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="All" style={{ padding: 8, width: "100%" }} />
+        <label htmlFor="endDate">End date
+          <input id="endDate" name="endDate" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8, width: "100%" }} />
         </label>
 
-        <label>Channel Group (type “All” to clear)
-          <input value={channelGroup} onChange={(e) => setChannelGroup(e.target.value)} placeholder="All" style={{ padding: 8, width: "100%" }} />
+        <label htmlFor="country">Country (type “All” to clear)
+          <input id="country" name="country" value={country} onChange={(e) => setCountry(e.target.value)} placeholder="All" style={{ padding: 8, width: "100%" }} />
+        </label>
+
+        <label htmlFor="channelGroup">Channel Group (type “All” to clear)
+          <input id="channelGroup" name="channelGroup" value={channelGroup} onChange={(e) => setChannelGroup(e.target.value)} placeholder="All" style={{ padding: 8, width: "100%" }} />
         </label>
 
         <div style={{ display: "flex", gap: 8 }}>
@@ -332,7 +333,7 @@ export default function Home() {
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{pct}%</td>
                     </tr>
                   );
                 })}
@@ -418,6 +419,7 @@ function TopPages({ propertyId, startDate, endDate, country, channel }) {
   const [aiLoading, setAiLoading] = useState(false);
 
   const load = async () => {
+    if (!propertyId) return;
     setLoading(true); setError(""); setRows([]);
     try {
       const data = await postJson("/api/ga4/top-pages", {
@@ -442,6 +444,7 @@ function TopPages({ propertyId, startDate, endDate, country, channel }) {
   };
 
   const summarise = async () => {
+    if (!rows.length) return;
     setAiLoading(true); setAiText("");
     try {
       const res = await fetch("/api/insights/summarise-top-pages", {
@@ -574,6 +577,7 @@ function SourceMedium({ propertyId, startDate, endDate, country, channel }) {
   };
 
   const summarise = async () => {
+    if (!rows.length) return;
     setAiLoading(true); setAiText("");
     try {
       const res = await fetch("/api/insights/summarise", {
@@ -655,7 +659,7 @@ function SourceMedium({ propertyId, startDate, endDate, country, channel }) {
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{r.users.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -689,6 +693,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, country, channel }) {
   const [ai, setAi] = useState({ loading: false, text: "", error: "" });
 
   const load = async () => {
+    if (!propertyId) return;
     setLoading(true); setError(""); setTotals(null);
     try {
       const data = await postJson("/api/ga4/ecommerce-summary", {
@@ -725,7 +730,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, country, channel }) {
     }
   };
 
-  const currency = "£"; // UI only; GA returns totals in metadata.currencyCode if needed
+  const currency = "\u00A3"; // GBP
 
   return (
     <section style={{ marginTop: 32 }}>
@@ -757,7 +762,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, country, channel }) {
               </tr>
               <tr>
                 <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Total users</td>
-                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(totals.users || 0).toLocaleString()}</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{(totals.users || 0).toLocaleString()}</td>
               </tr>
               <tr>
                 <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Purchases</td>
@@ -776,8 +781,8 @@ function EcommerceKPIs({ propertyId, startDate, endDate, country, channel }) {
                 </td>
               </tr>
               <tr>
-                <td style={{ padding: 8, borderBottom: "1px solid " }}>CVR (purchase/session)</td>
-                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " }}>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>CVR (purchase/session)</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                   {Number(totals.cvr || 0).toFixed(2)}%
                 </td>
               </tr>
@@ -811,8 +816,10 @@ function CheckoutFunnel({ propertyId, startDate, endDate, country, channel }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
   const [error, setError] = useState("");
+  const [ai, setAi] = useState({ loading: false, text: "", error: "" });
 
   const load = async () => {
+    if (!propertyId) return;
     setLoading(true); setError(""); setSteps(null);
     try {
       const data = await postJson("/api/ga4/checkout-funnel", {
@@ -828,12 +835,43 @@ function CheckoutFunnel({ propertyId, startDate, endDate, country, channel }) {
     }
   };
 
+  const summarise = async () => {
+    if (!steps) return;
+    setAi({ loading: true, text: "", error: "" });
+    try {
+      // Re-use the generic summariser; model sees a rows-like structure
+      const rows = [
+        { channel: "Add to cart", sessions: steps.add_to_cart || 0, users: 0 },
+        { channel: "Begin checkout", sessions: steps.begin_checkout || 0, users: 0 },
+        { channel: "Add shipping", sessions: steps.add_shipping_info || 0, users: 0 },
+        { channel: "Add payment", sessions: steps.add_payment_info || 0, users: 0 },
+        { channel: "Purchase", sessions: steps.purchase || 0, users: 0 },
+      ];
+      const totals = { sessions: rows.reduce((a, r) => a + r.sessions, 0), users: 0 };
+
+      const res = await fetch("/api/insights/summarise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows, totals, dateRange: { start: startDate, end: endDate } }),
+      });
+      const txt = await res.text();
+      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+      if (!res.ok) throw new Error((data?.error || data?.message || txt || `HTTP ${res.status}`));
+      setAi({ loading: false, text: data?.summary || txt || "No response", error: "" });
+    } catch (e) {
+      setAi({ loading: false, text: "", error: String(e.message || e) });
+    }
+  };
+
   return (
     <section style={{ marginTop: 32, marginBottom: 56 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Checkout funnel (event counts)</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Checkout Funnel"}
+        </button>
+        <button onClick={summarise} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!steps || ai.loading}>
+          {ai.loading ? "Summarising…" : "Summarise with AI"}
         </button>
       </div>
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
@@ -864,6 +902,21 @@ function CheckoutFunnel({ propertyId, startDate, endDate, country, channel }) {
         </div>
       )}
       {!loading && !error && !steps && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>}
+      {ai.error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>AI: {ai.error}</p>}
+      {ai.text && (
+        <div
+          style={{
+            marginTop: 12,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: 12,
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {ai.text}
+        </div>
+      )}
     </section>
   );
 }
