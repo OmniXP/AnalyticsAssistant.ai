@@ -1,4 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
+// Normalise optional filters: treat "All", "", null, undefined as "no filter"
+function safe(v) {
+  if (!v) return null;
+  const s = String(v).trim().toLowerCase();
+  return s === "all" ? null : v;
+}
+
+// Unified fetch helper: always read text -> try JSON -> show real error message
+async function fetchJson(url, payload) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const msg =
+      data?.error ||
+      data?.message ||
+      data?.details?.error?.message ||
+      text ||
+      `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data || {};
+}
 
 /** ---------- helpers ---------- */
 const STORAGE_KEY = "insightgpt_preset_v3";
