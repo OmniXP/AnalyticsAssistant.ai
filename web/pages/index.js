@@ -488,12 +488,12 @@ export default function Home() {
         </details>
       )}
 
-      {/* Source/Medium */}
-      <SourceMedium
+         <SourceMedium
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
-        filters={currentFilters}
+        country={country}          
+        channel={channelGroup}     
       />
 
       {/* Top pages */}
@@ -581,30 +581,63 @@ function AiInline({ title = "Summarise with AI", payload }) {
 }
 
 /** ---------- Source / Medium ---------- */
-function SourceMedium({ propertyId, startDate, endDate, filters }) {
+function SourceMedium({ propertyId, startDate, endDate, country, channel }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
+
+  // Local fetch helper (reads text first, then tries JSON so errors aren’t [object Object])
+  async function fetchJson(url, payload) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+    const txt = await res.text();
+    let data = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch {}
+    if (!res.ok) {
+      const msg =
+        data?.error ||
+        data?.message ||
+        data?.details?.error?.message ||
+        txt ||
+        `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data || {};
+  }
+
+  function safe(v) {
+    if (v == null) return null;
+    const s = String(v).trim().toLowerCase();
+    return s === "" || s === "all" ? null : v;
+  }
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    if (!propertyId) return;
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
-      const res = await fetch("/api/ga4/source-medium", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId, startDate, endDate, limit: 25, filters }),
+      const data = await fetchJson("/api/ga4/source-medium", {
+        propertyId,
+        startDate,
+        endDate,
+        country: safe(country),
+        channel: safe(channel),
+        limit: 30,
       });
-      const txt = await res.text();
-      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || txt || `HTTP ${res.status}`);
 
       const parsed = (data.rows || []).map((r, i) => ({
-        source: r.dimensionValues?.[0]?.value || "(unknown)",
-        medium: r.dimensionValues?.[1]?.value || "(unknown)",
+        source: r.dimensionValues?.[0]?.value || "(none)",
+        medium: r.dimensionValues?.[1]?.value || "(none)",
         sessions: Number(r.metricValues?.[0]?.value || 0),
         users: Number(r.metricValues?.[1]?.value || 0),
-        key: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}`,
+        key: `row-${i}`,
       }));
+
       setRows(parsed);
     } catch (e) {
       setError(String(e.message || e));
@@ -612,6 +645,149 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
       setLoading(false);
     }
   };
+
+  const downloadCsv = () => {
+    if (!rows.length) return;
+    const header = ["Source", "Medium", "Sessions", "Users"];
+    const lines = rows.map((r) => [r.source, r.medium, r.sessions, r.users]);
+    const csv = [header, ...lines]
+      .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ga4_source_medium_${startDate}_to_${endDate}.csv`;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Lightweight inline AI summary (optional). Remove if you don’t use it.
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const summarise = async () => {
+    setAiLoading(true);
+    setAiText("");
+    setAiError("");
+    try {
+      const res = await fetch("/api/insights/summarise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: rows.map((r) => ({
+            channel: `${r.source} / ${r.medium}`,
+            sessions: r.sessions,
+            users: r.users,
+          })),
+          totals: {
+            sessions: rows.reduce((a, r) => a + r.sessions, 0),
+            users: rows.reduce((a, r) => a + r.users, 0),
+          },
+          dateRange: { start: startDate, end: endDate },
+        }),
+      });
+      const raw = await res.text();
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!res.ok) throw new Error((data?.error || data?.message || raw || `HTTP ${res.status}`));
+      setAiText(data?.summary || raw || "No response");
+      setAiOpen(true);
+    } catch (e) {
+      setAiError(String(e.message || e));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const copyAi = async () => {
+    try {
+      await navigator.clipboard.writeText(aiText || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setAiError("Could not copy to clipboard");
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Source / Medium</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Source / Medium"}
+        </button>
+        <button onClick={downloadCsv} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!rows.length}>
+          Download CSV
+        </button>
+        <button onClick={summarise} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!rows.length || aiLoading}>
+          {aiLoading ? "Summarising…" : "Summarise with AI"}
+        </button>
+        {aiText && (
+          <button onClick={copyAi} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!aiText}>
+            {copied ? "Copied!" : "Copy insight"}
+          </button>
+        )}
+      </div>
+
+      {/* errors */}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {aiError && <p style={{ color: "crimson", marginTop: 8, whiteSpace: "pre-wrap" }}>AI: {aiError}</p>}
+
+      {/* table */}
+      {rows.length > 0 && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* AI insight panel */}
+      {aiOpen && aiText && (
+        <div
+          style={{
+            marginTop: 12,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: 12,
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {aiText}
+        </div>
+      )}
+
+      {/* empty state */}
+      {!loading && !error && rows.length === 0 && (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
+    </section>
+  );
+}
 
   const download = () => {
     if (!rows.length) return;
