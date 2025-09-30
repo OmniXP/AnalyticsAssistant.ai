@@ -1,8 +1,34 @@
-// /workspaces/insightsgpt/web/pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
 /** ---------- helpers ---------- */
-const STORAGE_KEY = "insightgpt_preset_v2";
+const STORAGE_KEY = "insightgpt_preset_v3";
+
+const CHANNEL_GROUP_OPTIONS = [
+  "Direct",
+  "Organic Search",
+  "Organic Social",
+  "Paid Search",
+  "Paid Social",
+  "Email",
+  "Referral",
+  "Display",
+  "Organic Shopping",
+  "Paid Shopping",
+  "Unassigned",
+];
+
+const COUNTRY_OPTIONS = [
+  "United Kingdom",
+  "United States",
+  "Ireland",
+  "Germany",
+  "France",
+  "Spain",
+  "Italy",
+  "Canada",
+  "Australia",
+  "India",
+];
 
 function parseGa4(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
@@ -22,13 +48,6 @@ function parseGa4(response) {
   return { rows, totals };
 }
 
-function formatPctDelta(curr, prev) {
-  if (prev === 0 && curr === 0) return "0%";
-  if (prev === 0) return "+100%";
-  const pct = Math.round(((curr - prev) / prev) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}%`;
-}
-
 function ymd(d) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -46,7 +65,14 @@ function computePreviousRange(startStr, endStr) {
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
 }
 
-/** CSV export for channels */
+function formatPctDelta(curr, prev) {
+  if (prev === 0 && curr === 0) return "0%";
+  if (prev === 0) return "+100%";
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
+/** CSV (channels) */
 function downloadCsv(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -73,7 +99,7 @@ function downloadCsv(rows, totals, startDate, endDate) {
   URL.revokeObjectURL(url);
 }
 
-/** QuickChart pie chart URL */
+/** QuickChart pie */
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
   const labels = rows.map((r) => r.channel);
@@ -87,6 +113,14 @@ function buildChannelPieUrl(rows) {
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
 
+/** Helpers: multi-select <select> to array and back */
+function arrFromSelect(selectEl) {
+  return Array.from(selectEl.selectedOptions).map((o) => o.value);
+}
+function commaList(arr) {
+  return (arr || []).length ? arr.join(", ") : "All";
+}
+
 /** ---------- page ---------- */
 export default function Home() {
   // Core inputs
@@ -95,10 +129,10 @@ export default function Home() {
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
 
-  // Global filters
-  const [device, setDevice] = useState("");                 // "", "desktop" | "mobile" | "tablet"
-  const [countriesInput, setCountriesInput] = useState(""); // "United Kingdom, United States"
-  const [channelInput, setChannelInput] = useState("");     // "Organic Search, Direct"
+  // Filters
+  const [device, setDevice] = useState(""); // "", "desktop" | "mobile" | "tablet"
+  const [countries, setCountries] = useState([]); // array of strings
+  const [channelGroups, setChannelGroups] = useState([]); // array of strings
 
   // Results & UI state
   const [result, setResult] = useState(null);
@@ -106,43 +140,39 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load preset on first load
+  // Load preset
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (saved?.propertyId) setPropertyId(saved.propertyId);
-      if (saved?.startDate) setStartDate(saved.startDate);
-      if (saved?.endDate) setEndDate(saved.endDate);
-      if (saved?.device !== undefined) setDevice(saved.device || "");
-      if (saved?.countriesInput !== undefined) setCountriesInput(saved.countriesInput || "");
-      if (saved?.channelInput !== undefined) setChannelInput(saved.channelInput || "");
+      if (!saved) return;
+      if (saved.propertyId) setPropertyId(saved.propertyId);
+      if (saved.startDate) setStartDate(saved.startDate);
+      if (saved.endDate) setEndDate(saved.endDate);
+      if (typeof saved.device === "string") setDevice(saved.device);
+      if (Array.isArray(saved.countries)) setCountries(saved.countries);
+      if (Array.isArray(saved.channelGroups)) setChannelGroups(saved.channelGroups);
     } catch {}
   }, []);
 
-  // Save preset when inputs change
+  // Save preset
   useEffect(() => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ propertyId, startDate, endDate, device, countriesInput, channelInput })
+        JSON.stringify({ propertyId, startDate, endDate, device, countries, channelGroups })
       );
     } catch {}
-  }, [propertyId, startDate, endDate, device, countriesInput, channelInput]);
+  }, [propertyId, startDate, endDate, device, countries, channelGroups]);
 
-  // Prepare filters object for API calls
-  const currentFilters = useMemo(() => {
-    const toList = (s) =>
-      String(s || "")
-        .split(",")
-        .map((v) => v.trim())
-        .filter(Boolean);
-
-    return {
+  // Filters object passed to APIs
+  const currentFilters = useMemo(
+    () => ({
       device: device || undefined,
-      countries: countriesInput ? toList(countriesInput) : undefined,
-      channelGroups: channelInput ? toList(channelInput) : undefined,
-    };
-  }, [device, countriesInput, channelInput]);
+      countries: countries.length ? countries : undefined,
+      channelGroups: channelGroups.length ? channelGroups : undefined,
+    }),
+    [device, countries, channelGroups]
+  );
 
   const { rows, totals } = useMemo(() => parseGa4(result), [result]);
   const { rows: prevRows, totals: prevTotals } = useMemo(
@@ -157,6 +187,7 @@ export default function Home() {
     window.location.href = "/api/auth/google/start";
   };
 
+  // Base fetch for channel table
   async function fetchGa4({ propertyId, startDate, endDate, filters }) {
     const res = await fetch("/api/ga4/query", {
       method: "POST",
@@ -178,11 +209,9 @@ export default function Home() {
     setPrevResult(null);
     setLoading(true);
     try {
-      // Current period
       const curr = await fetchGa4({ propertyId, startDate, endDate, filters: currentFilters });
       setResult(curr);
 
-      // Previous period (optional)
       if (comparePrev) {
         const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
         const prev = await fetchGa4({
@@ -206,9 +235,12 @@ export default function Home() {
     setStartDate("2024-09-01");
     setEndDate("2024-09-30");
     setDevice("");
-    setCountriesInput("");
-    setChannelInput("");
+    setCountries([]);
+    setChannelGroups([]);
   };
+
+  const filtersActive =
+    (device && device !== "") || (countries && countries.length) || (channelGroups && channelGroups.length);
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 980, margin: "0 auto" }}>
@@ -277,7 +309,7 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Filters */}
+      {/* Filters row */}
       <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontWeight: 600 }}>Filters:</span>
 
@@ -291,28 +323,43 @@ export default function Home() {
         </label>
 
         <label>Countries&nbsp;
-          <input
-            value={countriesInput}
-            onChange={(e) => setCountriesInput(e.target.value)}
-            placeholder="e.g. United Kingdom, United States"
-            style={{ padding: 8, minWidth: 260 }}
-            name="countries-filter"
-            id="countries-filter"
-            autoComplete="off"
-          />
+          <select
+            multiple
+            value={countries}
+            onChange={(e) => setCountries(arrFromSelect(e.target))}
+            style={{ padding: 8, minWidth: 240, height: 92 }}
+          >
+            {COUNTRY_OPTIONS.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
         </label>
 
         <label>Channel group(s)&nbsp;
-          <input
-            value={channelInput}
-            onChange={(e) => setChannelInput(e.target.value)}
-            placeholder="e.g. Organic Search, Direct"
-            style={{ padding: 8, minWidth: 260 }}
-            name="channel-filter"
-            id="channel-filter"
-            autoComplete="off"
-          />
+          <select
+            multiple
+            value={channelGroups}
+            onChange={(e) => setChannelGroups(arrFromSelect(e.target))}
+            style={{ padding: 8, minWidth: 240, height: 92 }}
+          >
+            {CHANNEL_GROUP_OPTIONS.map((g) => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </select>
         </label>
+
+        {filtersActive && (
+          <span style={{
+            background: "#eef7ff",
+            border: "1px solid #cfe6ff",
+            color: "#074b8a",
+            padding: "4px 8px",
+            borderRadius: 999,
+            fontSize: 12
+          }}>
+            Filters active — Device: {device || "All"} · Countries: {commaList(countries)} · Channels: {commaList(channelGroups)}
+          </span>
+        )}
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -322,14 +369,17 @@ export default function Home() {
         <section style={{ marginTop: 24, background: "#f6f7f8", padding: 16, borderRadius: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>At a glance</h2>
-            <AiSummary rows={rows} totals={totals} startDate={startDate} endDate={endDate} />
+            <AiInline
+              title="Summarise with AI"
+              payload={{ topic: "channels", rows, totals, dateRange: { start: startDate, end: endDate } }}
+            />
           </div>
           <ul style={{ marginTop: 12 }}>
             <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
             <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
-            {top && (
+            {rows[0] && (
               <li>
-                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
+                <b>Top channel:</b> {rows[0].channel} with {rows[0].sessions.toLocaleString()} sessions ({topShare}% of total)
               </li>
             )}
             {prevRows.length > 0 && (
@@ -369,7 +419,7 @@ export default function Home() {
                     <tr key={r.channel}>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{r.users.toLocaleString()}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
                     </tr>
                   );
@@ -388,11 +438,10 @@ export default function Home() {
         </section>
       )}
 
-      {/* Channel share chart (QuickChart) */}
+      {/* Channel share chart */}
       {rows.length > 0 && (
         <section style={{ marginTop: 24 }}>
           <h3 style={{ marginTop: 0 }}>Channel share (sessions)</h3>
-          {/* Using <img> keeps it simple; Next/Image warning in build logs is safe to ignore for MVP */}
           <img
             src={buildChannelPieUrl(rows)}
             alt="Channel share chart"
@@ -446,41 +495,27 @@ export default function Home() {
   );
 }
 
-/** ---------- components ---------- */
-
-// Re-usable AI summary (channels)
-function AiSummary({ rows, totals, startDate, endDate }) {
+/** ---------- Re-usable AI button ---------- */
+function AiInline({ title = "Summarise with AI", payload }) {
   const [loading, setLoading] = useState(false);
-  const [text, setText] = useState("");
-  const [error, setError] = useState("");
+  const [txt, setTxt] = useState("");
+  const [err, setErr] = useState("");
   const [copied, setCopied] = useState(false);
 
   const run = async () => {
-    setLoading(true);
-    setError("");
-    setText("");
-    setCopied(false);
+    setLoading(true); setErr(""); setTxt(""); setCopied(false);
     try {
       const res = await fetch("/api/insights/summarise", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rows,
-          totals,
-          dateRange: { start: startDate, end: endDate },
-        }),
+        body: JSON.stringify(payload || {}),
       });
-
       const raw = await res.text();
-      let data = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch {}
-
+      let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
       if (!res.ok) throw new Error((data && (data.error || data.message)) || raw || `HTTP ${res.status}`);
-
-      const summary = (data && data.summary) || raw || "No response";
-      setText(summary);
+      setTxt((data && data.summary) || raw || "No response");
     } catch (e) {
-      setError(String(e.message || e));
+      setErr(String(e.message || e));
     } finally {
       setLoading(false);
     }
@@ -488,28 +523,31 @@ function AiSummary({ rows, totals, startDate, endDate }) {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text || "");
+      await navigator.clipboard.writeText(txt || "");
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), 1200);
     } catch {
-      setError("Could not copy to clipboard");
+      setErr("Could not copy to clipboard");
     }
   };
 
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-      <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
-        {loading ? "Summarising…" : "Summarise with AI"}
+      <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }}>
+        {loading ? "Summarising…" : title}
       </button>
-      <button
-        onClick={copy}
-        style={{ padding: "8px 12px", cursor: "pointer" }}
-        disabled={!text}
-        title={text ? "Copy the summary to clipboard" : "Run summary first"}
-      >
+      <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!txt}>
         {copied ? "Copied!" : "Copy insight"}
       </button>
-      {error && <span style={{ color: "crimson", marginLeft: 8 }}>Error: {error}</span>}
+      {err && <span style={{ color: "crimson" }}>Error: {err}</span>}
+      {txt && (
+        <details style={{ marginLeft: 8 }}>
+          <summary>View</summary>
+          <pre style={{ whiteSpace: "pre-wrap", background: "#fffceb", border: "1px solid #f5e08f", padding: 12, borderRadius: 6 }}>
+            {txt}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -573,6 +611,10 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
         <button onClick={download} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!rows.length}>
           Download CSV
         </button>
+        <AiInline
+          title="Summarise with AI"
+          payload={{ topic: "source_medium", rows, dateRange: { start: startDate, end: endDate } }}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
@@ -665,6 +707,10 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
         <button onClick={download} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!rows.length}>
           Download CSV
         </button>
+        <AiInline
+          title="Summarise with AI"
+          payload={{ topic: "top_pages", rows, dateRange: { start: startDate, end: endDate } }}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
@@ -698,7 +744,7 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/** ---------- E-commerce KPIs (totals) ---------- */
+/** ---------- E-commerce KPIs ---------- */
 function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
@@ -737,6 +783,10 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
+        <AiInline
+          title="Summarise with AI"
+          payload={{ topic: "ecommerce_kpis", totals, dateRange: { start: startDate, end: endDate } }}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
@@ -801,6 +851,10 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Checkout Funnel"}
         </button>
+        <AiInline
+          title="Summarise with AI"
+          payload={{ topic: "checkout_funnel", steps, dateRange: { start: startDate, end: endDate } }}
+        />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
