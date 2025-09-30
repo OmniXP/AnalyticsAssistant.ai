@@ -1,5 +1,6 @@
 // /workspaces/insightsgpt/web/pages/api/ga4/source-medium.js
 import { getIronSession } from "iron-session";
+import { buildDimensionFilter } from "../../../lib/ga4";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
@@ -19,21 +20,22 @@ export default async function handler(req, res) {
   const ga = session.gaTokens;
   if (!ga?.access_token) return res.status(401).send("Not connected");
 
-  const { propertyId, startDate, endDate, limit = 25 } = req.body || {};
+  const { propertyId, startDate, endDate, filters, limit = 25 } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
     return res.status(400).send("Missing propertyId/startDate/endDate");
   }
 
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+
   const body = {
     dateRanges: [{ startDate, endDate }],
-    dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
+    dimensions: [{ name: "source" }, { name: "medium" }],
     metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-    orderBys: [
-      { metric: { metricName: "sessions" }, desc: true }
-    ],
-    limit: String(limit),
+    limit,
   };
+
+  const df = buildDimensionFilter(filters);
+  if (df) body.dimensionFilter = df;
 
   const apiRes = await fetch(url, {
     method: "POST",
@@ -44,8 +46,7 @@ export default async function handler(req, res) {
     body: JSON.stringify(body),
   });
 
-  const text = await apiRes.text();
-  let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
-  if (!apiRes.ok) return res.status(apiRes.status).send(text || "Error");
-  return res.status(200).json(data || { rows: [] });
+  const data = await apiRes.json().catch(() => null);
+  if (!apiRes.ok) return res.status(apiRes.status).json(data || { error: "GA4 API error (source-medium)" });
+  res.status(200).json(data);
 }

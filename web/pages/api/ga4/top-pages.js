@@ -1,11 +1,10 @@
 // /workspaces/insightsgpt/web/pages/api/ga4/top-pages.js
-// Uses the SAME iron-session config and token path as /api/ga4/query
-
 import { getIronSession } from "iron-session";
+import { buildDimensionFilter } from "../../../lib/ga4";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt", // <<< must match query.js
+  cookieName: "insightgpt",
   cookieOptions: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
@@ -15,66 +14,39 @@ const sessionOptions = {
 };
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
-  const { propertyId, startDate, endDate, limit = 10 } = req.body || {};
-  if (!propertyId || !startDate || !endDate) {
-    return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
-  }
-
-  // Read the same session as /api/ga4/query
   const session = await getIronSession(req, res, sessionOptions);
-  const ga = session.gaTokens; // <<< same as query.js
-  const token = ga?.access_token;
+  const ga = session.gaTokens;
+  if (!ga?.access_token) return res.status(401).send("Not connected");
 
-  if (!token) {
-    return res.status(401).json({
-      error: "No access token in session. Click 'Connect Google Analytics' then try again.",
-      sessionKeysPresent: Object.keys(session || {}),
-    });
+  const { propertyId, startDate, endDate, filters, limit = 10 } = req.body || {};
+  if (!propertyId || !startDate || !endDate) {
+    return res.status(400).send("Missing propertyId/startDate/endDate");
   }
 
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
-    propertyId
-  )}:runReport`;
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
 
   const body = {
     dateRanges: [{ startDate, endDate }],
-    dimensions: [{ name: "pageTitle" }, { name: "pagePathPlusQueryString" }],
+    dimensions: [{ name: "pageTitle" }, { name: "pagePath" }],
     metrics: [{ name: "screenPageViews" }, { name: "totalUsers" }],
-    orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
     limit,
   };
 
-  try {
-    const gaRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+  const df = buildDimensionFilter(filters);
+  if (df) body.dimensionFilter = df;
 
-    const raw = await gaRes.text();
-    let json = null;
-    try {
-      json = raw ? JSON.parse(raw) : null;
-    } catch {
-      return res
-        .status(gaRes.status || 502)
-        .json({ error: "Upstream response was not JSON", upstream: raw?.slice(0, 1000) || "" });
-    }
+  const apiRes = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ga.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
-    if (!gaRes.ok) {
-      return res.status(gaRes.status).json(json || { error: "GA4 error", raw });
-    }
-
-    return res.status(200).json(json);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
+  const data = await apiRes.json().catch(() => null);
+  if (!apiRes.ok) return res.status(apiRes.status).json(data || { error: "GA4 API error (top-pages)" });
+  res.status(200).json(data);
 }

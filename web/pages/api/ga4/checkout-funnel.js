@@ -1,5 +1,6 @@
 // /workspaces/insightsgpt/web/pages/api/ga4/checkout-funnel.js
 import { getIronSession } from "iron-session";
+import { buildDimensionFilter } from "../../../lib/ga4";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
@@ -12,32 +13,38 @@ const sessionOptions = {
   },
 };
 
+const STEP_EVENTS = [
+  "add_to_cart",
+  "begin_checkout",
+  "add_shipping_info",
+  "add_payment_info",
+  "purchase",
+];
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   const session = await getIronSession(req, res, sessionOptions);
   const ga = session.gaTokens;
-  if (!ga?.access_token) {
-    return res.status(401).json({ error: "Not connected" });
-  }
+  if (!ga?.access_token) return res.status(401).send("Not connected");
 
-  const { propertyId, startDate, endDate } = req.body || {};
+  const { propertyId, startDate, endDate, filters } = req.body || {};
   if (!propertyId || !startDate || !endDate) {
-    return res
-      .status(400)
-      .json({ error: "Missing propertyId/startDate/endDate", got: req.body || null });
+    return res.status(400).send("Missing propertyId/startDate/endDate");
   }
 
-  // One query: count events grouped by eventName, then map to the steps we care about
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+
   const body = {
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "eventName" }],
     metrics: [{ name: "eventCount" }],
-    limit: 1000,
   };
 
-  const gaRes = await fetch(url, {
+  const df = buildDimensionFilter(filters);
+  if (df) body.dimensionFilter = df;
+
+  const apiRes = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ga.access_token}`,
@@ -46,32 +53,20 @@ export default async function handler(req, res) {
     body: JSON.stringify(body),
   });
 
-  const data = await gaRes.json().catch(() => null);
-  if (!gaRes.ok) {
-    return res.status(gaRes.status).json({
+  const data = await apiRes.json().catch(() => null);
+  if (!apiRes.ok) {
+    return res.status(apiRes.status).json({
       error: "GA4 API error (checkout-funnel)",
       details: data || null,
     });
   }
 
-  const rows = data?.rows || [];
-  const lookup = {};
-  for (const r of rows) {
-    const name = r?.dimensionValues?.[0]?.value || "";
-    const count = Number(r?.metricValues?.[0]?.value || 0);
-    if (name) lookup[name] = count;
+  const steps = Object.fromEntries(STEP_EVENTS.map((e) => [e, 0]));
+  for (const row of data?.rows || []) {
+    const name = row?.dimensionValues?.[0]?.value;
+    const count = Number(row?.metricValues?.[0]?.value || 0);
+    if (name && steps.hasOwnProperty(name)) steps[name] = count;
   }
 
-  const steps = {
-    addToCart: lookup["add_to_cart"] || 0,
-    beginCheckout: lookup["begin_checkout"] || 0,
-    addShipping: lookup["add_shipping_info"] || 0,
-    addPayment: lookup["add_payment_info"] || 0,
-    purchase: lookup["purchase"] || 0,
-  };
-
-  return res.status(200).json({
-    steps,
-    dateRange: { start: startDate, end: endDate },
-  });
+  return res.status(200).json({ steps, dateRange: { start: startDate, end: endDate } });
 }
