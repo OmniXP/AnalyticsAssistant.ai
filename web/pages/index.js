@@ -333,7 +333,7 @@ export default function Home() {
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{pct}%</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
                     </tr>
                   );
                 })}
@@ -659,7 +659,7 @@ function SourceMedium({ propertyId, startDate, endDate, country, channel }) {
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -762,7 +762,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, country, channel }) {
               </tr>
               <tr>
                 <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Total users</td>
-                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid "#eee" }}>{(totals.users || 0).toLocaleString()}</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(totals.users || 0).toLocaleString()}</td>
               </tr>
               <tr>
                 <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Purchases</td>
