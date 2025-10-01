@@ -12,10 +12,11 @@ const sessionOptions = {
   },
 };
 
-// Build a GA4 FilterExpression AND-group for optional Country + Channel Group
+// Build GA4 FilterExpression (AND) for optional Country + Channel Group
 function buildDimensionFilter(filters) {
   const exprs = [];
 
+  // Country filter (exact match)
   if (filters?.country && filters.country !== "All") {
     exprs.push({
       filter: {
@@ -25,6 +26,7 @@ function buildDimensionFilter(filters) {
     });
   }
 
+  // Channel Group filter (exact match)
   if (filters?.channelGroup && filters.channelGroup !== "All") {
     exprs.push({
       filter: {
@@ -56,17 +58,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
   }
 
-  // GA4 request
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-  const body = {
+  // Use session-scoped dimensions for session metrics
+  const requestBody = {
     dateRanges: [{ startDate, endDate }],
-    dimensions: [{ name: "source" }, { name: "medium" }],
+    dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
     metrics: [{ name: "sessions" }, { name: "totalUsers" }],
     limit: Math.min(Number(limit) || 50, 1000),
+    orderBys: [
+      { desc: true, metric: { metricName: "sessions" } },
+      { desc: true, metric: { metricName: "totalUsers" } },
+    ],
   };
 
   const dimensionFilter = buildDimensionFilter(filters);
-  if (dimensionFilter) body.dimensionFilter = dimensionFilter;
+  if (dimensionFilter) requestBody.dimensionFilter = dimensionFilter;
+
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
 
   try {
     const apiRes = await fetch(url, {
@@ -75,7 +82,7 @@ export default async function handler(req, res) {
         Authorization: `Bearer ${ga.access_token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     });
 
     const text = await apiRes.text();
@@ -87,7 +94,8 @@ export default async function handler(req, res) {
       return res.status(apiRes.status).json({ error: msg, details: data || null });
     }
 
-    return res.status(200).json(data || {});
+    // If no rows, return 200 with empty rows so UI can show “No rows loaded yet.”
+    return res.status(200).json(data || { rows: [] });
   } catch (err) {
     return res.status(500).json({
       error: "GA4 API request failed (source-medium)",
