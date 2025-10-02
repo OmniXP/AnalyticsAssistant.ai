@@ -375,11 +375,17 @@ export default function Home() {
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
             <AiBlock
-              asButton
-              buttonLabel="Summarise with AI"
-              endpoint="/api/insights/summarise"
-              payload={{ rows, totals, dateRange: { start: startDate, end: endDate }, filters: appliedFilters }}
-            />
+             asButton
+             buttonLabel="Summarise with AI"
+             endpoint="/api/insights/summarise-pro"
+             payload={{
+             topic: "channels",
+             rows,
+             totals,
+             dateRange: { start: startDate, end: endDate },
+             filters: appliedFilters,
+            }}
+           />
           </div>
 
           <ul style={{ marginTop: 12 }}>
@@ -578,11 +584,17 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
           {loading ? "Loading…" : "Load Source / Medium"}
         </button>
         <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-source-medium"
-          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+         asButton
+         buttonLabel="Summarise with AI"
+         endpoint="/api/insights/summarise-pro"
+         payload={{
+         topic: "source_medium",
+         rows,
+         dateRange: { start: startDate, end: endDate },
+         filters: appliedFilters,
+         }}
         />
+
         <button
           onClick={() =>
             downloadCsvGeneric(
@@ -667,11 +679,17 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
           {loading ? "Loading…" : "Load Top Pages"}
         </button>
         <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pages"
-          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+         asButton
+         buttonLabel="Summarise with AI"
+         endpoint="/api/insights/summarise-pro"
+         payload={{
+         topic: "pages",
+         rows,
+         dateRange: { start: startDate, end: endDate },
+         filters: appliedFilters,
+         }}
         />
+
         <button
           onClick={() =>
             downloadCsvGeneric(
@@ -752,11 +770,18 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
         <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-ecom"
-          payload={{ totals, dateRange: { start: startDate, end: endDate }, filters }}
-        />
+         asButton
+         buttonLabel="Summarise with AI"
+         endpoint="/api/insights/summarise-pro"
+         payload={{
+         topic: "ecom_kpis",
+         totals,
+         dateRange: { start: startDate, end: endDate },
+         filters: appliedFilters,
+         currency: "GBP", // change if you want a different currency symbol/format
+         }}
+         />
+
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
