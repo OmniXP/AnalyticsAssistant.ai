@@ -74,7 +74,7 @@ function computePreviousRange(startStr, endStr) {
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
 }
 
-/** CSV (channels) */
+/** CSV exports */
 function downloadCsvChannels(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -87,16 +87,20 @@ function downloadCsvChannels(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-/** CSV (generic) */
 function downloadCsvGeneric(filenamePrefix, rows, columns) {
   if (!rows?.length) return;
   const header = columns.map((c) => c.header);
@@ -104,12 +108,17 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `${filenamePrefix}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -127,7 +136,7 @@ function buildChannelPieUrl(rows) {
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
 
-/** Unified fetch helper */
+/** Unified fetch helper: read text -> try JSON -> show real error */
 async function fetchJson(url, payload) {
   const res = await fetch(url, {
     method: "POST",
@@ -171,6 +180,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Force-reset key for remounting child sections
+  const [resetKey, setResetKey] = useState(0);
+
   // Load preset once
   useEffect(() => {
     try {
@@ -201,6 +213,7 @@ export default function Home() {
   );
 
   const top = rows[0];
+  const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
   const connect = () => {
     window.location.href = "/api/auth/google/start";
@@ -252,8 +265,8 @@ export default function Home() {
     }
   };
 
+  // Reset dashboard: keep propertyId, clear everything else and force remount of sections
   const resetPreset = () => {
-    // Keep propertyId, clear everything else
     setStartDate("2024-09-01");
     setEndDate("2024-09-30");
     setComparePrev(false);
@@ -263,6 +276,7 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setError("");
+    setResetKey((k) => k + 1); // Force re-mount of sections to clear their local state
   };
 
   return (
@@ -334,14 +348,23 @@ export default function Home() {
             </select>
           </label>
           <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>Apply filters</button>
+
           {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
             <span style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
-              Filters active: {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
-              {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
-              {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
+              Filters active: {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}{appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}{appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
+            </span>
+          )}
+
+          {(countrySel !== appliedFilters.country || channelSel !== appliedFilters.channelGroup) && (
+            <span style={{ background: "#fff3cd", color: "#7a5b00", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
+              Changes not applied yet
             </span>
           )}
         </div>
+        <p style={{ margin: 8, color: "#666", fontSize: 13 }}>
+          <b>Tip:</b> Filters update when you click <i>Apply filters</i>. They affect the main report
+          (<i>Run GA4 Report</i>) and all “Load …” buttons below.
+        </p>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -421,6 +444,7 @@ export default function Home() {
 
       {/* Source / Medium */}
       <SourceMedium
+        key={`src-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -429,6 +453,7 @@ export default function Home() {
 
       {/* Top pages */}
       <TopPages
+        key={`pages-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -437,6 +462,7 @@ export default function Home() {
 
       {/* E-commerce KPIs */}
       <EcommerceKPIs
+        key={`ecom-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -445,6 +471,7 @@ export default function Home() {
 
       {/* Checkout funnel */}
       <CheckoutFunnel
+        key={`funnel-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -761,14 +788,16 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
 }
 
 function Tr({ label, value }) {
-  const val =
-    typeof value === "number" && Number.isFinite(value) && !Number.isInteger(value)
-      ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : (value?.toLocaleString?.() ?? value ?? 0);
+  const formatted =
+    typeof value === "string"
+      ? value
+      : (value ?? 0)?.toLocaleString
+      ? value.toLocaleString()
+      : value;
   return (
     <tr>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{val}</td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{formatted}</td>
     </tr>
   );
 }
@@ -793,6 +822,15 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
     }
   };
 
+  const safeDiv = (a, b) => (b > 0 ? +(100 * (a / b)).toFixed(2) : 0);
+  const rates = steps
+    ? {
+        cart_to_checkout_pct: safeDiv(steps.begin_checkout || 0, steps.add_to_cart || 0),
+        checkout_to_purchase_pct: safeDiv(steps.purchase || 0, steps.begin_checkout || 0),
+        cart_to_purchase_pct: safeDiv(steps.purchase || 0, steps.add_to_cart || 0),
+      }
+    : null;
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -803,38 +841,63 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-funnel"
-          payload={{ steps, dateRange: { start: startDate, end: endDate }, filters }}
+          endpoint="/api/insights/summarise-pro"
+          payload={{
+            topic: "checkout_funnel",
+            steps: steps || {
+              add_to_cart: 0,
+              begin_checkout: 0,
+              add_shipping_info: 0,
+              add_payment_info: 0,
+              purchase: 0,
+            },
+            rates: rates || {
+              cart_to_checkout_pct: 0,
+              checkout_to_purchase_pct: 0,
+              cart_to_purchase_pct: 0,
+            },
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            targets: { cart_to_checkout_pct: 40, checkout_to_purchase_pct: 25, cart_to_purchase_pct: 10 },
+          }}
         />
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
       {steps ? (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: 520 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ["Add to cart", steps.add_to_cart],
-                ["Begin checkout", steps.begin_checkout],
-                ["Add shipping", steps.add_shipping_info],
-                ["Add payment", steps.add_payment_info],
-                ["Purchase", steps.purchase],
-              ].map(([label, val]) => (
-                <tr key={label}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(val || 0).toLocaleString()}</td>
+        <>
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: 520 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {[
+                  ["Add to cart", steps.add_to_cart],
+                  ["Begin checkout", steps.begin_checkout],
+                  ["Add shipping", steps.add_shipping_info],
+                  ["Add payment", steps.add_payment_info],
+                  ["Purchase", steps.purchase],
+                ].map(([label, val]) => (
+                  <tr key={label}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(val || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* derived quick rates */}
+          <div style={{ marginTop: 8, fontSize: 14, color: "#333" }}>
+            <b>Derived rates:</b>{" "}
+            Cart → Checkout: {rates.cart_to_checkout_pct}% · Checkout → Purchase: {rates.checkout_to_purchase_pct}% · Cart → Purchase: {rates.cart_to_purchase_pct}%
+          </div>
+        </>
       ) : (
         !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
       )}
