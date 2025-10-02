@@ -4,6 +4,21 @@ import { useEffect, useMemo, useState } from "react";
 /* ============================== Helpers ============================== */
 const STORAGE_KEY = "insightgpt_preset_v2";
 
+// Tiny client-side cache (90s TTL) to cut repeated network calls
+const __cache = new Map();
+function cacheKey(url, payload) {
+  return `${url}::${JSON.stringify(payload || {})}`;
+}
+async function cachedFetchJson(url, payload, ttlSec = 90) {
+  const key = cacheKey(url, payload);
+  const hit = __cache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.t < ttlSec * 1000) return hit.v;
+  const v = await fetchJson(url, payload);
+  __cache.set(key, { t: now, v });
+  return v;
+}
+
 const COUNTRY_OPTIONS = [
   "All",
   "United Kingdom",
@@ -210,7 +225,6 @@ export default function Home() {
   );
 
   const top = rows[0];
-  const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
   const connect = () => {
     window.location.href = "/api/auth/google/start";
@@ -226,7 +240,7 @@ export default function Home() {
 
   // Channel report (uses filters)
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
-    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
+    return cachedFetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
   }
 
   const runReport = async () => {
@@ -341,7 +355,7 @@ export default function Home() {
             </select>
           </label>
           <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>Apply filters</button>
-          { (appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
+          {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
             <span style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
               Filters active: {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}{appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}{appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
             </span>
@@ -469,19 +483,23 @@ export default function Home() {
   );
 }
 
-/* ============================== Reusable AI block ============================== */
+/* ============================== Reusable AI block (PRO-aware) ============================== */
 function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
+  const [tests, setTests] = useState([]);
+  const [upgradeHint, setUpgradeHint] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const run = async () => {
-    setLoading(true); setError(""); setText(""); setCopied(false);
+    setLoading(true); setError(""); setText(""); setTests([]); setUpgradeHint(""); setCopied(false);
     try {
       const data = await fetchJson(endpoint, payload);
       const summary = data?.summary || (typeof data === "string" ? data : "");
       setText(summary || "No response");
+      if (Array.isArray(data?.tests)) setTests(data.tests);
+      if (data?.upgradeHint) setUpgradeHint(data.upgradeHint);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -490,26 +508,25 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(text || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
-    catch { setError("Could not copy to clipboard"); }
+    try {
+      const toCopy = [text, ...(tests?.length ? ["", "Recommended tests & hypotheses:", ...tests.map(t => `• ${t.title} — ${t.hypothesis} (metric: ${t.success_metric}, impact: ${t.impact})`)] : [])].join("\n");
+      await navigator.clipboard.writeText(toCopy || "");
+      setCopied(true); setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("Could not copy to clipboard");
+    }
   };
 
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      {asButton ? (
-        <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
-          {loading ? "Summarising…" : buttonLabel}
-        </button>
-      ) : (
-        <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
-          {loading ? "Summarising…" : "Summarise with AI"}
-        </button>
-      )}
-      <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text}>
+      <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
+        {loading ? "Summarising…" : (asButton ? buttonLabel : "Summarise with AI")}
+      </button>
+      <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text && !tests.length}>
         {copied ? "Copied!" : "Copy insight"}
       </button>
       {error && <span style={{ color: "crimson" }}>Error: {error}</span>}
-      {text && (
+      {(text || tests.length || upgradeHint) && (
         <div
           style={{
             marginTop: 8,
@@ -521,7 +538,24 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
             width: "100%",
           }}
         >
-          {text}
+          {text && <p style={{ margin: 0 }}>{text}</p>}
+          {tests.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <b>Recommended tests & hypotheses (PRO)</b>
+              <ul>
+                {tests.map((t, i) => (
+                  <li key={i}>
+                    <b>{t.title}</b> — {t.hypothesis} <i>(metric: {t.success_metric}, impact: {t.impact})</i>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {upgradeHint && (
+            <p style={{ marginTop: 8, color: "#555" }}>
+              {upgradeHint}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -537,7 +571,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/source-medium", {
+      const data = await cachedFetchJson("/api/ga4/source-medium", {
         propertyId, startDate, endDate, filters, limit: 25,
       });
       const parsed = (data.rows || []).map((r, i) => ({
@@ -628,7 +662,7 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
+      const data = await cachedFetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
       const parsed = (data.rows || []).map((r, i) => ({
         title: r.dimensionValues?.[0]?.value || "(untitled)",
         path: r.dimensionValues?.[1]?.value || "",
@@ -717,7 +751,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setTotals(null);
     try {
-      const data = await fetchJson("/api/ga4/ecommerce-summary", {
+      const data = await cachedFetchJson("/api/ga4/ecommerce-summary", {
         propertyId, startDate, endDate, filters,
       });
       setTotals(data?.totals || null);
@@ -772,10 +806,11 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
 }
 
 function Tr({ label, value }) {
+  const out = typeof value === "number" && value.toLocaleString ? value.toLocaleString() : String(value ?? "");
   return (
     <tr>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(value ?? 0).toLocaleString?.() ?? value}</td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{out}</td>
     </tr>
   );
 }
@@ -789,7 +824,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setSteps(null);
     try {
-      const data = await fetchJson("/api/ga4/checkout-funnel", {
+      const data = await cachedFetchJson("/api/ga4/checkout-funnel", {
         propertyId, startDate, endDate, filters,
       });
       setSteps(data?.steps || null);
