@@ -175,6 +175,9 @@ async function fetchJson(url, payload) {
 
 /* ============================== Page ============================== */
 export default function Home() {
+  // add with other useState lines
+  const [resetKey, setResetKey] = useState(0);
+
   // Base controls
   const [propertyId, setPropertyId] = useState("");
   const [startDate, setStartDate] = useState("2024-09-01");
@@ -277,14 +280,37 @@ export default function Home() {
   };
 
   const resetPreset = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setPropertyId("");
-    setStartDate("2024-09-01");
-    setEndDate("2024-09-30");
-    setCountrySel("All");
-    setChannelSel("All");
-    setAppliedFilters({ country: "All", channelGroup: "All" });
-  };
+    const resetPreset = () => {
+  // Keep propertyId as-is
+  // Clear app state
+  setStartDate("2024-09-01");
+  setEndDate("2024-09-30");
+  setCountrySel("All");
+  setChannelSel("All");
+  setAppliedFilters({ country: "All", channelGroup: "All" });
+
+  setResult(null);
+  setPrevResult(null);
+  setError("");
+
+  // bump key so child sections remount (closing accordions / clearing local state)
+  setResetKey((k) => k + 1);
+
+  // Update localStorage (keep propertyId)
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        propertyId,
+        startDate: "2024-09-01",
+        endDate: "2024-09-30",
+        appliedFilters: { country: "All", channelGroup: "All" },
+        countrySel: "All",
+        channelSel: "All",
+      })
+    );
+  } catch {}
+};
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
@@ -336,7 +362,7 @@ export default function Home() {
         </label>
 
         <button onClick={resetPreset} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
-          Reset preset
+          Reset Dashboard
         </button>
       </div>
 
@@ -440,6 +466,7 @@ export default function Home() {
 
       {/* Source / Medium */}
       <SourceMedium
+        key={`sm-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -448,6 +475,7 @@ export default function Home() {
 
       {/* Top pages */}
       <TopPages
+        key={`tp-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -456,6 +484,7 @@ export default function Home() {
 
       {/* E-commerce KPIs */}
       <EcommerceKPIs
+        key={`ek-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
@@ -464,6 +493,7 @@ export default function Home() {
 
       {/* Checkout funnel */}
       <CheckoutFunnel
+        key={`cf-${resetKey}`}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}

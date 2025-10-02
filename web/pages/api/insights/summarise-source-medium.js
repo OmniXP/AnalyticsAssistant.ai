@@ -1,66 +1,104 @@
-// /workspaces/insightsgpt/web/pages/api/insights/summarise-source-medium.js
+// web/pages/api/insights/summarise-source-medium.js
+import { getIronSession } from "iron-session";
+
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  },
+};
+
+async function callOpenAI({ system, user }) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return { ok: false, text: "Missing OPENAI_API_KEY" };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.5,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    }),
+  });
+
+  const text = await res.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const msg = data?.error?.message || text || `HTTP ${res.status}`;
+    return { ok: false, text: msg };
+  }
+
+  const content = data?.choices?.[0]?.message?.content?.trim?.() || "";
+  return { ok: true, text: content };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
-  const { rows = [], dateRange = {}, filters = {} } = req.body || {};
-  try {
-    const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
-    const top = rows[0];
-    const summary = [
-      `Source/Medium ${dateRange.start || ""} → ${dateRange.end || ""}${filters?.country && filters.country !== "All" ? ` · Country: ${filters.country}` : ""}${filters?.channelGroup && filters.channelGroup !== "All" ? ` · Channel: ${filters.channelGroup}` : ""}.`,
-      `Total sessions across listed source/medium pairs: ${totalSessions.toLocaleString?.() || totalSessions}.`,
-      top ? `Top pair: ${top.source} / ${top.medium} (${(top.sessions || 0).toLocaleString?.() || top.sessions} sessions).` : "No rows returned.",
-    ].join(" ");
+  const session = await getIronSession(req, res, sessionOptions);
+  const ga = session.gaTokens;
+  if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
 
-    const pro = isPro(req);
-    const resp = { summary };
-
-    if (pro) {
-      const tests = [];
-      const emailRow = rows.find(r => (r.medium || "").toLowerCase() === "email");
-      if (emailRow) {
-        tests.push({
-          title: "Subject line + preheader test",
-          hypothesis: "Sharper subject/preheader increases Email sessions and CTR.",
-          success_metric: "Email sessions (source/medium)",
-          impact: "medium",
-        });
-      }
-      const socialRow = rows.find(r => (r.medium || "").toLowerCase().includes("social"));
-      if (socialRow) {
-        tests.push({
-          title: "Paid social creative variant",
-          hypothesis: "Creative variant tailored to top audience boosts sessions/users.",
-          success_metric: "Paid Social sessions",
-          impact: "medium",
-        });
-      }
-      if (!tests.length) {
-        tests.push({
-          title: "UTM hygiene audit",
-          hypothesis: "Standardising UTMs improves channel attribution and campaign insight quality.",
-          success_metric: "Share of (other) / (not set) decreases",
-          impact: "low",
-        });
-      }
-      resp.tests = tests;
-    } else {
-      resp.upgradeHint = "Upgrade to PRO to see campaign-level test ideas for your strongest source/medium pairs.";
-    }
-
-    return jsonOk(res, resp);
-  } catch (e) {
-    return res.status(500).json({ error: "summarise-source-medium error", details: String(e?.message || e) });
+  const { rows, dateRange, filters } = req.body || {};
+  if (!rows || !dateRange) {
+    return res.status(400).json({ error: "Missing rows/dateRange" });
   }
-}
 
-function isPro(req) {
-  try {
-    const c = req.headers.cookie || "";
-    return /(?:^|;\s*)isPro=1(?:;|$)/.test(c);
-  } catch { return false; }
-}
-function jsonOk(res, obj) {
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.status(200).end(JSON.stringify(obj));
+  const filtersStr = [
+    filters?.country && filters.country !== "All" ? `Country: ${filters.country}` : null,
+    filters?.channelGroup && filters.channelGroup !== "All" ? `Channel Group: ${filters.channelGroup}` : null,
+  ].filter(Boolean).join(" | ") || "None";
+
+  const safeRows = (rows || []).slice(0, 50).map(r => ({
+    source: r.source || "(unknown)",
+    medium: r.medium || "(unknown)",
+    sessions: Number(r.sessions || 0),
+    users: Number(r.users || 0),
+  }));
+
+  const totalSessions = safeRows.reduce((a, r) => a + r.sessions, 0);
+  const totalUsers = safeRows.reduce((a, r) => a + r.users, 0);
+
+  const system = `
+You are an acquisition analyst. Create a crisp, actionable summary of source/medium performance.
+- Use ONLY provided data.
+- Short bullets, numeric where possible.
+- Always include >=2 hypotheses & A/B test ideas (e.g., UTM landing pages, creatives, audiences), with success metrics.
+- If tracking looks incomplete, call it out and suggest validation.
+- ~220 words max.
+`;
+
+  const user = `
+Date range: ${dateRange.start} → ${dateRange.end}
+Filters: ${filtersStr}
+
+Totals (from table scope):
+- Sessions: ${totalSessions}
+- Users: ${totalUsers}
+
+Top source/medium rows:
+${safeRows.map(r => `- ${r.source} / ${r.medium}: ${r.sessions} sessions, ${r.users} users`).join("\n")}
+
+Write:
+1) **Snapshot** — key acquisition mix, dominant sources.
+2) **What stands out** — up to 3 bullets (e.g., branded vs non-branded, referral spikes).
+3) **Fix/Improve** — 3 actions (UTM consistency, landing page mapping, budget shifts).
+4) **Hypotheses & A/B tests** — at least two concrete tests (e.g., copy/creative variants, keyword themes, placements) with metrics to watch.
+5) **Next steps** — quick checklist (naming, auto-tagging, source deduping).
+`;
+
+  const ai = await callOpenAI({ system, user });
+  if (!ai.ok) return res.status(500).json({ error: "AI error (source/medium)", details: ai.text });
+  return res.status(200).json({ summary: ai.text });
 }
