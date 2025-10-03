@@ -158,6 +158,26 @@ async function fetchJson(url, payload) {
   return data || {};
 }
 
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (e) {
+    try {
+      const seen = new WeakSet();
+      const replacer = (_, v) => {
+        if (v && typeof v === "object") {
+          if (seen.has(v)) return "[[circular]]";
+          seen.add(v);
+        }
+        return v;
+      };
+      return JSON.stringify(value, replacer, 2);
+    } catch (e2) {
+      return String(value);
+    }
+  }
+}
+
 /* ============================== Page ============================== */
 export default function Home() {
   // Base controls
@@ -507,7 +527,9 @@ export default function Home() {
         <details style={{ marginTop: 24 }}>
           <summary>Raw GA4 JSON (debug)</summary>
           <pre style={{ marginTop: 8, background: "#f8f8f8", padding: 16, borderRadius: 8, overflow: "auto" }}>
-{JSON.stringify(result, null, 2)}
+{safeStringify(result)}
+</pre>
+
           </pre>
         </details>
       )}
@@ -516,14 +538,20 @@ export default function Home() {
 }
 
 /* ============================== Reusable AI block ============================== */
-function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, disabled = false }) {
+function AiBlock({
+  asButton = false,
+  buttonLabel = "Summarise with AI",
+  endpoint,
+  payload,
+  isReady = true,           // NEW: controls enablement
+}) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const run = async () => {
-    if (disabled) return;
+    if (!isReady) return;        // guard
     setLoading(true); setError(""); setText(""); setCopied(false);
     try {
       const data = await fetchJson(endpoint, payload);
@@ -543,8 +571,8 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button onClick={run} style={{ padding: "8px 12px", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 }} disabled={loading || disabled}>
-        {loading ? "Summarising…" : (asButton ? buttonLabel : "Summarise with AI")}
+      <button onClick={run} style={{ padding: "8px 12px", cursor: isReady ? "pointer" : "not-allowed", opacity: isReady ? 1 : 0.6 }} disabled={loading || !isReady}>
+        {loading ? "Summarising…" : buttonLabel}
       </button>
       <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text}>
         {copied ? "Copied!" : "Copy insight"}
@@ -779,18 +807,23 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
         <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pro"
-          payload={{
-            topic: "ecom_kpis",
-            totals,
-            dateRange: { start: startDate, end: endDate },
-            filters,
-            currency: "GBP",
-          }}
-          disabled={!totals}
-        />
+  asButton
+  buttonLabel="Summarise with AI"
+  endpoint="/api/insights/summarise-pro"
+  isReady={!!totals}
+  payload={{
+    topic: "ecommerce_kpis",
+    dateRange: { start: startDate, end: endDate },
+    filters,
+    totals, // sessions, users, addToCarts, beginCheckout, transactions, revenue, cvr, aov
+    requirements: {
+      tone: "clear, data-driven, non-fluffy",
+      include_two_hypotheses_min: true,
+      include_two_tests_min: true,
+      keep_under_tokens: 250,
+    }
+  }}
+/>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
@@ -882,25 +915,49 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
           {loading ? "Loading…" : "Load Checkout Funnel"}
         </button>
         <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pro"
-          payload={{
-            topic: "checkout",
-            steps,
-            rates,
-            dateRange: { start: startDate, end: endDate },
-            filters,
-            // Extra context hint to improve depth (server can use this to expand with hypotheses/tests)
-            guidance: {
-              includeDropoffs: true,
-              includeQuickWins: true,
-              includeHypotheses: true,
-              minExperiments: 2,
-            },
-          }}
-          disabled={!steps}
-        />
+  asButton
+  buttonLabel="Summarise with AI"
+  endpoint="/api/insights/summarise-pro"
+  isReady={!!steps}
+  payload={{
+    topic: "checkout_funnel",
+    dateRange: { start: startDate, end: endDate },
+    filters,
+    // raw counts
+    steps,
+    // derived metrics for the model to reason about
+    derived: (() => {
+      const add = steps?.add_to_cart || 0;
+      const begin = steps?.begin_checkout || 0;
+      const ship = steps?.add_shipping_info || 0;
+      const pay = steps?.add_payment_info || 0;
+      const pur = steps?.purchase || 0;
+
+      const rate = (num, den) => (den > 0 ? +( (num / den) * 100 ).toFixed(2) : 0);
+      return {
+        ctr_add_to_checkout: rate(begin, add),          // Add→Checkout
+        ctr_checkout_to_ship: rate(ship, begin),        // Checkout→Shipping
+        ctr_ship_to_pay: rate(pay, ship),               // Shipping→Payment
+        ctr_pay_to_purchase: rate(pur, pay),            // Payment→Purchase
+        overall_cart_to_purchase: rate(pur, add),
+        drop_offs: {
+          after_add: Math.max(add - begin, 0),
+          after_checkout: Math.max(begin - ship, 0),
+          after_shipping: Math.max(ship - pay, 0),
+          after_payment: Math.max(pay - pur, 0),
+        }
+      };
+    })(),
+    // guidance flags for the LLM (your USP)
+    requirements: {
+      tone: "clear, data-driven, non-fluffy",
+      include_bottleneck: true,
+      include_two_hypotheses_min: true,
+      include_two_tests_min: true,
+      keep_under_tokens: 250,
+    }
+  }}
+/>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
