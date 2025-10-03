@@ -923,11 +923,16 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
+  // New local UI controls (client-side)
+  const [topOnly, setTopOnly] = useState(false);
+  const [minSessions, setMinSessions] = useState(0);
+
+  // Load from API (unchanged, still respects global filters)
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
       const data = await fetchJson("/api/ga4/landing-pages", {
-        propertyId, startDate, endDate, filters, limit: 50,
+        propertyId, startDate, endDate, filters, limit: 500, // grab plenty; we’ll trim client-side
       });
 
       const parsed = (data?.rows || []).map((r, i) => ({
@@ -942,6 +947,9 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
       }));
 
       setRows(parsed);
+      // whenever we load new data, reset client filters to sensible defaults
+      setTopOnly(false);
+      setMinSessions(0);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -949,10 +957,26 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
     }
   };
 
+  // Compute slider bounds and filtered view
+  const maxSessions = useMemo(() => rows.reduce((m, r) => Math.max(m, r.sessions || 0), 0), [rows]);
+
+  const filtered = useMemo(() => {
+    let out = rows;
+    if (minSessions > 0) out = out.filter(r => (r.sessions || 0) >= minSessions);
+    // keep order by sessions desc (server already sends this, but we ensure it)
+    out = [...out].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+    if (topOnly) out = out.slice(0, 25); // show top N only
+    return out;
+  }, [rows, minSessions, topOnly]);
+
+  const shownCount = filtered.length;
+  const totalCount = rows.length;
+
+  // CSV & AI export use the *filtered* rows so users get what they see
   const exportCsv = () => {
     downloadCsvGeneric(
       `landing_pages_${startDate}_to_${endDate}`,
-      rows,
+      filtered,
       [
         { header: "Landing Page", key: "landing" },
         { header: "Source",       key: "source" },
@@ -967,8 +991,10 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
 
   return (
     <section style={{ marginTop: 28 }}>
+      {/* Header + actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Landing Pages × Attribution</h3>
+
         <button
           onClick={load}
           style={{ padding: "8px 12px", cursor: "pointer" }}
@@ -980,14 +1006,12 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
-          // If you prefer your pro endpoint, you can point this to /api/insights/summarise-pro
           endpoint="/api/insights/summarise-pro"
           payload={{
             topic: "landing-pages",
             dateRange: { start: startDate, end: endDate },
             filters,
-            // a compact view of the table for the LLM
-            rows: rows.slice(0, 50).map(r => ({
+            rows: filtered.slice(0, 50).map(r => ({
               landing: r.landing,
               source: r.source,
               medium: r.medium,
@@ -996,27 +1020,63 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
               transactions: r.transactions,
               revenue: r.revenue,
             })),
-            // optional hints for stronger recommendations
-            instructions: "Focus on top landing pages by sessions and revenue. Identify sources/mediums driving high-volume but low-conversion traffic, and recommend 2–3 tests with clear hypotheses to improve CR and AOV.",
+            instructions:
+              "Focus on landing pages with high sessions but low transactions/revenue. Identify source/medium mixes that underperform. Provide at least 2 clear hypotheses + tests to improve CR and AOV.",
           }}
         />
 
         <button
           onClick={exportCsv}
           style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!rows.length}
+          disabled={!filtered.length}
         >
           Download CSV
         </button>
       </div>
 
+      {/* Client-side view controls */}
+      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={topOnly}
+            onChange={(e) => setTopOnly(e.target.checked)}
+          />
+          Top entries only (25)
+        </label>
+
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 260 }}>
+          <span style={{ fontSize: 13, color: "#333" }}>Min sessions</span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(10, maxSessions)}
+            step={1}
+            value={Math.min(minSessions, Math.max(10, maxSessions))}
+            onChange={(e) => setMinSessions(Number(e.target.value))}
+            style={{ width: 160 }}
+            disabled={!rows.length}
+          />
+          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
+            {minSessions}
+          </span>
+        </div>
+
+        {rows.length > 0 && (
+          <span style={{ fontSize: 12, color: "#555" }}>
+            Showing <b>{shownCount.toLocaleString()}</b> of {totalCount.toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      {/* Errors / table / empty */}
       {error && (
         <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
           Error: {error}
         </p>
       )}
 
-      {rows.length > 0 ? (
+      {filtered.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
@@ -1031,7 +1091,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {filtered.map((r) => (
                 <tr key={r._k}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.landing}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
@@ -1048,7 +1108,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
           </table>
         </div>
       ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+        !error && <p style={{ marginTop: 8, color: "#666" }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>
       )}
     </section>
   );
