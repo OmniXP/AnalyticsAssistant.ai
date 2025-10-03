@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 /* ============================== Helpers ============================== */
-const STORAGE_KEY = "insightgpt_preset_v3";
+const STORAGE_KEY = "insightgpt_preset_v4";
 
 const COUNTRY_OPTIONS = [
   "All",
@@ -53,7 +53,7 @@ function parseGa4Channels(response) {
 function formatPctDelta(curr, prev) {
   if (prev === 0 && curr === 0) return "0%";
   if (prev === 0) return "+100%";
-  const pct = Math.round(((curr - prev) / prev) * 100);
+  const pct = Math.round(((curr - prev) / Math.max(prev, 1)) * 100);
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
 
@@ -236,6 +236,11 @@ export default function Home() {
     });
   };
 
+  // Whether UI differs from applied filters (show reminder)
+  const filtersDirty =
+    countrySel !== (appliedFilters?.country || "All") ||
+    channelSel !== (appliedFilters?.channelGroup || "All");
+
   // Channel report (uses filters)
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
     return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
@@ -365,6 +370,16 @@ export default function Home() {
             </span>
           )}
         </div>
+
+        {/* Helper & reminder */}
+        <div style={{ marginTop: 8, fontSize: 13, color: "#555" }}>
+          Tip: pick a Country and/or Channel Group, click <b>Apply filters</b>, then run the relevant reports.
+          {filtersDirty && (
+            <div style={{ marginTop: 8, background: "#fff8e1", border: "1px solid #f3d37a", padding: 8, borderRadius: 6 }}>
+              <b>Filters changed but not applied.</b> Click <b>Apply filters</b> to use them in queries.
+            </div>
+          )}
+        </div>
       </div>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -385,26 +400,27 @@ export default function Home() {
                 dateRange: { start: startDate, end: endDate },
                 filters: appliedFilters,
               }}
+              disabled={!rows.length}
             />
           </div>
 
           <ul style={{ marginTop: 12 }}>
-            <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
-            <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
+            <li><b>Total sessions:</b> {Number(totals.sessions || 0).toLocaleString()}</li>
+            <li><b>Total users:</b> {Number(totals.users || 0).toLocaleString()}</li>
             {top && (
               <li>
-                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({Math.round((top.sessions / (totals.sessions || 1)) * 100)}% of total)
+                <b>Top channel:</b> {top.channel} with {Number(top.sessions || 0).toLocaleString()} sessions ({Math.round((Number(top.sessions || 0) / Math.max(Number(totals.sessions || 0), 1)) * 100)}% of total)
               </li>
             )}
             {prevRows.length > 0 && (
               <>
                 <li style={{ marginTop: 6 }}>
                   <b>Sessions vs previous:</b>{" "}
-                  {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
+                  {formatPctDelta(Number(totals.sessions || 0), Number(prevTotals.sessions || 0))} (prev {Number(prevTotals.sessions || 0).toLocaleString()})
                 </li>
                 <li>
                   <b>Users vs previous:</b>{" "}
-                  {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
+                  {formatPctDelta(Number(totals.users || 0), Number(prevTotals.users || 0))} (prev {Number(prevTotals.users || 0).toLocaleString()})
                 </li>
               </>
             )}
@@ -423,13 +439,15 @@ export default function Home() {
               </thead>
               <tbody>
                 {rows.map((r) => {
-                  const pct = totals.sessions > 0 ? Math.round((r.sessions / totals.sessions) * 100) : 0;
+                  const pct = (Number(totals.sessions || 0) > 0)
+                    ? Math.round((Number(r.sessions || 0) / Number(totals.sessions || 0)) * 100)
+                    : 0;
                   return (
                     <tr key={r.channel}>
-                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid " + "#eee" }}>{r.channel}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " + "#eee" }}>{Number(r.sessions || 0).toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " + "#eee" }}>{Number(r.users || 0).toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " + "#eee" }}>{pct}%</td>
                     </tr>
                   );
                 })}
@@ -498,13 +516,14 @@ export default function Home() {
 }
 
 /* ============================== Reusable AI block ============================== */
-function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload }) {
+function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, disabled = false }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const run = async () => {
+    if (disabled) return;
     setLoading(true); setError(""); setText(""); setCopied(false);
     try {
       const data = await fetchJson(endpoint, payload);
@@ -524,7 +543,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
+      <button onClick={run} style={{ padding: "8px 12px", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 }} disabled={loading || disabled}>
         {loading ? "Summarising…" : (asButton ? buttonLabel : "Summarise with AI")}
       </button>
       <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text}>
@@ -562,7 +581,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
       const data = await fetchJson("/api/ga4/source-medium", {
         propertyId, startDate, endDate, filters, limit: 25,
       });
-      const parsed = (data.rows || []).map((r, i) => ({
+      const parsed = (data?.rows || []).map((r, i) => ({
         source: r.dimensionValues?.[0]?.value || "(unknown)",
         medium: r.dimensionValues?.[1]?.value || "(unknown)",
         sessions: Number(r.metricValues?.[0]?.value || 0),
@@ -588,6 +607,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{ topic: "source_medium", rows, dateRange: { start: startDate, end: endDate }, filters }}
+          disabled={!rows.length}
         />
         <button
           onClick={() =>
@@ -627,8 +647,8 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
                 <tr key={`${r.source}-${r.medium}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(r.sessions || 0).toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(r.users || 0).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -651,7 +671,7 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
     setLoading(true); setError(""); setRows([]);
     try {
       const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
-      const parsed = (data.rows || []).map((r, i) => ({
+      const parsed = (data?.rows || []).map((r, i) => ({
         title: r.dimensionValues?.[0]?.value || "(untitled)",
         path: r.dimensionValues?.[1]?.value || "",
         views: Number(r.metricValues?.[0]?.value || 0),
@@ -677,6 +697,7 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{ topic: "pages", rows, dateRange: { start: startDate, end: endDate }, filters }}
+          disabled={!rows.length}
         />
         <button
           onClick={() =>
@@ -716,8 +737,8 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
                 <tr key={`${r.path}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(r.views || 0).toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(r.users || 0).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -761,7 +782,14 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
           asButton
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
-          payload={{ topic: "ecom_kpis", totals, dateRange: { start: startDate, end: endDate }, filters, currency: "GBP" }}
+          payload={{
+            topic: "ecom_kpis",
+            totals,
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            currency: "GBP",
+          }}
+          disabled={!totals}
         />
       </div>
 
@@ -782,7 +810,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
               <Tr label="Begin Checkout (events)" value={totals.beginCheckout} />
               <Tr label="Purchases (transactions)" value={totals.transactions} />
               <Tr label="Revenue" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} />
-              <Tr label="Conversion Rate (purchase / session)" value={`${(totals.cvr || 0).toFixed(2)}%`} />
+              <Tr label="Conversion Rate (purchase / session)" value={`${Number(totals.cvr || 0).toFixed(2)}%`} />
               <Tr label="AOV (Revenue / Transactions)" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)} />
             </tbody>
           </table>
@@ -803,7 +831,7 @@ function Tr({ label, value }) {
   return (
     <tr>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{formatted}</td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " + "#eee" }}>{formatted}</td>
     </tr>
   );
 }
@@ -828,6 +856,24 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
     }
   };
 
+  // Derived funnel rates to help the AI summary (and could be shown later)
+  const rates = (() => {
+    if (!steps) return null;
+    const add = Number(steps.add_to_cart || 0);
+    const chk = Number(steps.begin_checkout || 0);
+    const ship = Number(steps.add_shipping_info || 0);
+    const pay = Number(steps.add_payment_info || 0);
+    const pur = Number(steps.purchase || 0);
+    const safeDiv = (a, b) => (b > 0 ? (a / b) * 100 : 0);
+    return {
+      add_to_checkout: safeDiv(chk, add),
+      checkout_to_shipping: safeDiv(ship, chk),
+      shipping_to_payment: safeDiv(pay, ship),
+      payment_to_purchase: safeDiv(pur, pay),
+      add_to_purchase: safeDiv(pur, add),
+    };
+  })();
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -839,7 +885,21 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
           asButton
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
-          payload={{ topic: "checkout", steps, dateRange: { start: startDate, end: endDate }, filters }}
+          payload={{
+            topic: "checkout",
+            steps,
+            rates,
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            // Extra context hint to improve depth (server can use this to expand with hypotheses/tests)
+            guidance: {
+              includeDropoffs: true,
+              includeQuickWins: true,
+              includeHypotheses: true,
+              minExperiments: 2,
+            },
+          }}
+          disabled={!steps}
         />
       </div>
 
@@ -864,7 +924,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
               ].map(([label, val]) => (
                 <tr key={label}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(val || 0).toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{Number(val || 0).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
