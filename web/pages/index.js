@@ -188,6 +188,9 @@ export default function Home() {
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
 
+  // Fires whenever the user runs a fresh report (to reset AI & section data)
+const [refreshSignal, setRefreshSignal] = useState(0);
+
   // Filter controls (current selectors)
   const [countrySel, setCountrySel] = useState("All");
   const [channelSel, setChannelSel] = useState("All");
@@ -281,6 +284,9 @@ export default function Home() {
         filters: appliedFilters,
       });
       setResult(curr);
+
+      // broadcast "new context" so sections & AI summaries reset
+      setRefreshSignal((n) => n + 1);
 
       // Previous period (optional)
       if (comparePrev) {
@@ -483,16 +489,13 @@ export default function Home() {
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
             <AiBlock
-              asButton
-              buttonLabel="Summarise with AI"
-              endpoint="/api/insights/summarise"
-              payload={{
-                rows,
-                totals,
-                dateRange: { start: startDate, end: endDate },
-                filters: appliedFilters,
-              }}
-            />
+             asButton
+             buttonLabel="Summarise with AI"
+             endpoint="/api/insights/summarise"
+             payload={{ rows, totals, dateRange: { start: startDate, end: endDate }, filters: appliedFilters }}
+             resetSignal={refreshSignal}
+           />
+
           </div>
 
           <ul style={{ marginTop: 12 }}>
@@ -624,11 +627,24 @@ export default function Home() {
 }
 
 /* ============================== Reusable AI block ============================== */
-function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload }) {
+function AiBlock({
+  asButton = false,
+  buttonLabel = "Summarise with AI",
+  endpoint,
+  payload,
+  resetSignal, // NEW: when this changes, clear previous AI text/error
+}) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Clear AI state whenever parent tells us to reset
+  useEffect(() => {
+    setText("");
+    setError("");
+    setCopied(false);
+  }, [resetSignal]);
 
   const run = async () => {
     setLoading(true);
@@ -659,7 +675,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
-        {loading ? "Summarising…" : buttonLabel}
+        {loading ? "Summarising…" : (asButton ? buttonLabel : "Summarise with AI")}
       </button>
       <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text}>
         {copied ? "Copied!" : "Copy insight"}
@@ -685,10 +701,15 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 }
 
 /* ============================== Source / Medium ============================== */
-function SourceMedium({ propertyId, startDate, endDate, filters }) {
+function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  useEffect(() => {
+  // Clear previous data/errors whenever a new report runs
+  setRows([]);
+  setError("");
+}, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -728,6 +749,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-source-medium"
           payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
         />
         <button
           onClick={() =>
@@ -784,10 +806,14 @@ function SourceMedium({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== Top Pages ============================== */
-function TopPages({ propertyId, startDate, endDate, filters }) {
+function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+useEffect(() => {
+  setRows([]);
+  setError("");
+}, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -827,6 +853,7 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pages"
           payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
         />
         <button
           onClick={() =>
@@ -883,10 +910,14 @@ function TopPages({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== E-commerce KPIs ============================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
+  useEffect(() => {
+  setTotals(null);
+  setError("");
+}, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -919,6 +950,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-ecom"
           payload={{ totals, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
         />
       </div>
 
@@ -981,10 +1013,14 @@ function Tr({ label, value }) {
 }
 
 /* ============================== Checkout Funnel ============================== */
-function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
+function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
   const [error, setError] = useState("");
+  useEffect(() => {
+  setSteps(null);
+  setError("");
+}, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -1017,6 +1053,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-funnel"
           payload={{ steps, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
         />
       </div>
 
