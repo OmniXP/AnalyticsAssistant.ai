@@ -587,6 +587,14 @@ const [refreshSignal, setRefreshSignal] = useState(0);
         filters={appliedFilters}
       />
 
+      {/* Landing Pages × Attribution */}
+      <LandingPages
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+     />
+
       {/* E-commerce KPIs */}
       <EcommerceKPIs
         key={`ekpi-${dashKey}`}
@@ -896,6 +904,143 @@ useEffect(() => {
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.users.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
+    </section>
+  );
+}
+
+/* ============================== Landing Pages × Attribution ============================== */
+function LandingPages({ propertyId, startDate, endDate, filters }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const data = await fetchJson("/api/ga4/landing-pages", {
+        propertyId, startDate, endDate, filters, limit: 50,
+      });
+
+      const parsed = (data?.rows || []).map((r, i) => ({
+        landing: r.dimensionValues?.[0]?.value || "(unknown)",
+        source:  r.dimensionValues?.[1]?.value || "(unknown)",
+        medium:  r.dimensionValues?.[2]?.value || "(unknown)",
+        sessions:      Number(r.metricValues?.[0]?.value || 0),
+        users:         Number(r.metricValues?.[1]?.value || 0),
+        transactions:  Number(r.metricValues?.[2]?.value || 0),
+        revenue:       Number(r.metricValues?.[3]?.value || 0),
+        _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
+      }));
+
+      setRows(parsed);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportCsv = () => {
+    downloadCsvGeneric(
+      `landing_pages_${startDate}_to_${endDate}`,
+      rows,
+      [
+        { header: "Landing Page", key: "landing" },
+        { header: "Source",       key: "source" },
+        { header: "Medium",       key: "medium" },
+        { header: "Sessions",     key: "sessions" },
+        { header: "Users",        key: "users" },
+        { header: "Transactions", key: "transactions" },
+        { header: "Revenue",      key: "revenue" },
+      ]
+    );
+  };
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Landing Pages × Attribution</h3>
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId}
+        >
+          {loading ? "Loading…" : "Load Landing Pages"}
+        </button>
+
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          // If you prefer your pro endpoint, you can point this to /api/insights/summarise-pro
+          endpoint="/api/insights/summarise-pro"
+          payload={{
+            topic: "landing-pages",
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            // a compact view of the table for the LLM
+            rows: rows.slice(0, 50).map(r => ({
+              landing: r.landing,
+              source: r.source,
+              medium: r.medium,
+              sessions: r.sessions,
+              users: r.users,
+              transactions: r.transactions,
+              revenue: r.revenue,
+            })),
+            // optional hints for stronger recommendations
+            instructions: "Focus on top landing pages by sessions and revenue. Identify sources/mediums driving high-volume but low-conversion traffic, and recommend 2–3 tests with clear hypotheses to improve CR and AOV.",
+          }}
+        />
+
+        <button
+          onClick={exportCsv}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!rows.length}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      {error && (
+        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
+          Error: {error}
+        </p>
+      )}
+
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Landing Page</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r._k}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.landing}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
                 </tr>
               ))}
