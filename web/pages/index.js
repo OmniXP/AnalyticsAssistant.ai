@@ -1802,10 +1802,33 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [rows, setRows] = useState([]); // [{ period, sessions, users, transactions, revenue }]
   const [error, setError] = useState("");
 
+  // --- Label formatting helpers ---
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  // 20240901 -> "01 Sep 2024"
+  function formatYYYYMMDD(s) {
+    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
+    if (!m) return String(s || "");
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
+  }
+
+  // 202435 or 2024W35 -> "W35 2024"
+  function formatYearWeek(s) {
+    const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
+    if (!m) return String(s || "");
+    const y = m[1], w = m[2];
+    return `W${w} ${y}`;
+  }
+
+  function displayPeriodLabel(raw, gran) {
+    return gran === "weekly" ? formatYearWeek(raw) : formatYYYYMMDD(raw);
+  }
+
   // small helper for a QuickChart line chart
   function buildLineChartUrl(series) {
     if (!series?.length) return "";
-    const labels = series.map((d) => d.period);
+    const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
     const sessions = series.map((d) => d.sessions);
     const users = series.map((d) => d.users);
 
@@ -1824,7 +1847,6 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
       },
     };
     return `https://quickchart.io/chart?w=800&h=360&c=${encodeURIComponent(JSON.stringify(cfg))}`;
-    // (If you later want revenue/transactions lines, just add datasets here.)
   }
 
   const load = async () => {
@@ -1879,7 +1901,6 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             series: rows,
             dateRange: { start: startDate, end: endDate },
             filters,
-            // Ask for sharper guidance (your pro endpoint already worked for other areas)
             goals: [
               "Call out surges/drops and likely drivers",
               "Flag seasonality or anomalies",
@@ -1939,23 +1960,26 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.period}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.period}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {r.sessions.toLocaleString()}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {r.users.toLocaleString()}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {r.transactions.toLocaleString()}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                      {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const label = displayPeriodLabel(r.period, granularity);
+                  return (
+                    <tr key={r.period} title={r.period}>
+                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.sessions.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.users.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.transactions.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
