@@ -586,6 +586,13 @@ const [refreshSignal, setRefreshSignal] = useState(0);
        filters={appliedFilters}
      />
 
+     <CampaignDrilldown
+      propertyId={propertyId}
+      startDate={startDate}
+      endDate={endDate}
+      filters={appliedFilters}
+     />
+
       {/* Top pages */}
       <TopPages
         key={`tp-${dashKey}`}
@@ -1390,6 +1397,220 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
         </div>
       ) : (
         !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
+    </section>
+  );
+}
+
+/* ============================== Campaign drill-down ============================== */
+function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
+  const [campaign, setCampaign] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState("");
+
+  const [totals, setTotals] = useState(null);
+  const [srcMed, setSrcMed] = useState([]);
+  const [content, setContent] = useState([]);
+  const [term, setTerm] = useState([]);
+
+  const load = async () => {
+    setLoading(true); setError("");
+    setTotals(null); setSrcMed([]); setContent([]); setTerm([]);
+    try {
+      const data = await fetchJson("/api/ga4/campaign-detail", {
+        propertyId, startDate, endDate, filters, campaign, limit: 25,
+      });
+
+      const t = data?.totals?.rows?.[0]?.metricValues || [];
+      const totalsParsed = {
+        sessions: Number(t?.[0]?.value || 0),
+        users: Number(t?.[1]?.value || 0),
+        transactions: Number(t?.[2]?.value || 0),
+        revenue: Number(t?.[3]?.value || 0),
+      };
+      setTotals(totalsParsed);
+
+      const parseRows = (rows) => (rows || []).map((r, i) => ({
+        d1: r.dimensionValues?.[0]?.value || "",
+        d2: r.dimensionValues?.[1]?.value || "",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+        transactions: Number(r.metricValues?.[2]?.value || 0),
+        revenue: Number(r.metricValues?.[3]?.value || 0),
+        key: `r-${i}`,
+      }));
+
+      setSrcMed(parseRows(data?.sourceMedium?.rows));
+      setContent((data?.adContent?.rows || []).map((r, i) => ({
+        content: r.dimensionValues?.[0]?.value || "(not set)",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+        transactions: Number(r.metricValues?.[2]?.value || 0),
+        revenue: Number(r.metricValues?.[3]?.value || 0),
+        key: `c-${i}`,
+      })));
+      setTerm((data?.term?.rows || []).map((r, i) => ({
+        term: r.dimensionValues?.[0]?.value || "(not set)",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+        transactions: Number(r.metricValues?.[2]?.value || 0),
+        revenue: Number(r.metricValues?.[3]?.value || 0),
+        key: `t-${i}`,
+      })));
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cvr = totals && totals.sessions > 0 ? (totals.transactions / totals.sessions) * 100 : 0;
+  const aov = totals && totals.transactions > 0 ? (totals.revenue / totals.transactions) : 0;
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Campaign drill-down</h3>
+
+        <input
+          value={campaign}
+          onChange={(e) => setCampaign(e.target.value)}
+          placeholder="Type exact campaign name…"
+          style={{ padding: 8, minWidth: 260 }}
+        />
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId || !campaign}>
+          {loading ? "Loading…" : "Load Campaign Details"}
+        </button>
+
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-pro"
+          payload={{
+            kind: "campaign-detail",
+            campaign,
+            totals,
+            breakdowns: {
+              sourceMedium: srcMed,
+              adContent: content,
+              term,
+            },
+            dateRange: { start: startDate, end: endDate },
+            filters,
+          }}
+        />
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {totals && (
+        <div style={{ marginTop: 12 }}>
+          <b>Totals for “{campaign}”:</b>{" "}
+          Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} ·
+          Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
+          {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} ·
+          CVR {(cvr || 0).toFixed(2)}% · AOV{" "}
+          {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(aov || 0)}
+        </div>
+      )}
+
+      {/* Source / Medium table */}
+      {srcMed.length > 0 && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <h4 style={{ margin: "12px 0 6px" }}>By Source / Medium</h4>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {srcMed.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d1 || "(not set)"}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d2 || "(not set)"}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Ad Content table */}
+      {content.length > 0 && (
+        <div style={{ marginTop: 16, overflowX: "auto" }}>
+          <h4 style={{ margin: "12px 0 6px" }}>By Ad Content (utm_content)</h4>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Ad Content</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {content.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.content}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Term table */}
+      {term.length > 0 && (
+        <div style={{ marginTop: 16, overflowX: "auto" }}>
+          <h4 style={{ margin: "12px 0 6px" }}>By Term (utm_term)</h4>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Term</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {term.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.term}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!error && !loading && !totals && (
+        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click “Load Campaign Details”.</p>
       )}
     </section>
   );
