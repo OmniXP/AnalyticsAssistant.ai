@@ -578,6 +578,14 @@ const [refreshSignal, setRefreshSignal] = useState(0);
         filters={appliedFilters}
       />
 
+      {/* Trends over time */}
+      <TrendsOverTime
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+      />
+
       {/* Campaigns */}
       <Campaigns
        propertyId={propertyId}
@@ -1780,6 +1788,178 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
             </tbody>
           </table>
         </div>
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
+    </section>
+  );
+}
+
+/* ============================== Trends Over Time ============================== */
+function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
+  const [loading, setLoading] = useState(false);
+  const [granularity, setGranularity] = useState("daily"); // "daily" | "weekly"
+  const [rows, setRows] = useState([]); // [{ period, sessions, users, transactions, revenue }]
+  const [error, setError] = useState("");
+
+  // small helper for a QuickChart line chart
+  function buildLineChartUrl(series) {
+    if (!series?.length) return "";
+    const labels = series.map((d) => d.period);
+    const sessions = series.map((d) => d.sessions);
+    const users = series.map((d) => d.users);
+
+    const cfg = {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          { label: "Sessions", data: sessions },
+          { label: "Users", data: users },
+        ],
+      },
+      options: {
+        plugins: { legend: { position: "bottom" } },
+        scales: { y: { beginAtZero: true } },
+      },
+    };
+    return `https://quickchart.io/chart?w=800&h=360&c=${encodeURIComponent(JSON.stringify(cfg))}`;
+    // (If you later want revenue/transactions lines, just add datasets here.)
+  }
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const data = await fetchJson("/api/ga4/timeseries", {
+        propertyId, startDate, endDate, filters, granularity,
+      });
+      setRows(data?.series || []);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const hasRows = rows.length > 0;
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Trends over time</h3>
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          Granularity
+          <select
+            value={granularity}
+            onChange={(e) => setGranularity(e.target.value)}
+            style={{ padding: 6 }}
+          >
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+        </label>
+
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId}
+          title={!propertyId ? "Enter a GA4 property ID first" : ""}
+        >
+          {loading ? "Loading…" : "Load Trends"}
+        </button>
+
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-pro"
+          payload={{
+            kind: "timeseries",
+            granularity,
+            series: rows,
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            // Ask for sharper guidance (your pro endpoint already worked for other areas)
+            goals: [
+              "Call out surges/drops and likely drivers",
+              "Flag seasonality or anomalies",
+              "Recommend 2–3 next actions or tests",
+            ],
+          }}
+        />
+
+        <button
+          onClick={() =>
+            downloadCsvGeneric(
+              `timeseries_${granularity}_${startDate}_to_${endDate}`,
+              rows,
+              [
+                { header: "Period", key: "period" },
+                { header: "Sessions", key: "sessions" },
+                { header: "Users", key: "users" },
+                { header: "Transactions", key: "transactions" },
+                { header: "Revenue", key: "revenue" },
+              ]
+            )
+          }
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!hasRows}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      {error && (
+        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
+          Error: {error}
+        </p>
+      )}
+
+      {hasRows ? (
+        <>
+          {/* Chart */}
+          <div style={{ marginTop: 12 }}>
+            <img
+              src={buildLineChartUrl(rows)}
+              alt="Sessions & Users trend"
+              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+            />
+          </div>
+
+          {/* Table */}
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Period</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.period}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.period}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                      {r.sessions.toLocaleString()}
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                      {r.users.toLocaleString()}
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                      {r.transactions.toLocaleString()}
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                      {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       ) : (
         !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
       )}
