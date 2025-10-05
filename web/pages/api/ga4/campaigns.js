@@ -12,13 +12,10 @@ const sessionOptions = {
   },
 };
 
-// Build GA4 dimension filters from our UI filters
 function buildDimensionFilter(filters) {
   if (!filters) return undefined;
-
   const andGroup = { andGroup: { expressions: [] } };
 
-  // Country filter
   if (filters.country && filters.country !== "All") {
     andGroup.andGroup.expressions.push({
       filter: {
@@ -27,8 +24,6 @@ function buildDimensionFilter(filters) {
       },
     });
   }
-
-  // Channel Group filter
   if (filters.channelGroup && filters.channelGroup !== "All") {
     andGroup.andGroup.expressions.push({
       filter: {
@@ -37,7 +32,6 @@ function buildDimensionFilter(filters) {
       },
     });
   }
-
   if (andGroup.andGroup.expressions.length === 0) return undefined;
   return andGroup;
 }
@@ -60,8 +54,8 @@ export default async function handler(req, res) {
     const body = {
       dateRanges: [{ startDate, endDate }],
       metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-      // Keep it simple & compatible: campaign only
-      dimensions: [{ name: "sessionCampaign" }],
+      // ⬅️ fixed: use sessionCampaignName
+      dimensions: [{ name: "sessionCampaignName" }],
       limit: Math.max(1, Math.min(100000, Number(limit) || 50)),
     };
 
@@ -77,12 +71,11 @@ export default async function handler(req, res) {
       body: JSON.stringify(body),
     });
 
-    const dataText = await apiRes.text();
-    let data = null;
-    try { data = dataText ? JSON.parse(dataText) : null; } catch {}
+    const text = await apiRes.text();
+    let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
 
     if (!apiRes.ok) {
-      const msg = data?.error?.message || dataText || `GA4 API error (campaigns)`;
+      const msg = data?.error?.message || text || "GA4 API error (campaigns)";
       return res.status(apiRes.status).json({ error: msg, details: data || null });
     }
 
