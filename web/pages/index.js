@@ -1802,28 +1802,52 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [rows, setRows] = useState([]); // [{ period, sessions, users, transactions, revenue }]
   const [error, setError] = useState("");
 
-  // --- Label formatting helpers ---
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// --- Label formatting helpers ---
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-  // 20240901 -> "01 Sep 2024"
-  function formatYYYYMMDD(s) {
-    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
-    if (!m) return String(s || "");
-    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-    return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
-  }
+function pad2(n) { return String(n).padStart(2, "0"); }
 
-  // 202435 or 2024W35 -> "W35 2024"
-  function formatYearWeek(s) {
-    const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
-    if (!m) return String(s || "");
-    const y = m[1], w = m[2];
-    return `W${w} ${y}`;
-  }
+// Get the Monday of an ISO week
+function isoWeekStartUTC(year, week) {
+  // Start from Jan 4th (always in ISO week 1), then step to the requested week
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7; // 1..7 (Mon..Sun)
+  const mondayWeek1 = new Date(jan4);
+  mondayWeek1.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const mondayTarget = new Date(mondayWeek1);
+  mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
+  return mondayTarget;
+}
 
-  function displayPeriodLabel(raw, gran) {
-    return gran === "weekly" ? formatYearWeek(raw) : formatYYYYMMDD(raw);
-  }
+// 202435 or 2024W35 -> "06–12 Sep 2024" (week date range)
+function formatYearWeekRange(s) {
+  const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
+  if (!m) return String(s || "");
+  const year = Number(m[1]);
+  const week = Number(m[2]);
+
+  const start = isoWeekStartUTC(year, week);           // Monday
+  const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6); // Sunday
+
+  const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
+  const endStr   = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
+
+  // Compact, readable axis label:
+  return `${startStr}–${endStr}`;
+}
+
+// Already in your code; keep as-is
+function formatYYYYMMDD(s) {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
+  if (!m) return String(s || "");
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
+}
+
+// Use the new weekly formatter here:
+function displayPeriodLabel(raw, gran) {
+  return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
+}
 
   // small helper for a QuickChart line chart
   function buildLineChartUrl(series) {
