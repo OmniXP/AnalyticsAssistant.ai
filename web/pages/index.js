@@ -578,6 +578,14 @@ const [refreshSignal, setRefreshSignal] = useState(0);
         filters={appliedFilters}
       />
 
+      {/* Campaigns */}
+      <Campaigns
+       propertyId={propertyId}
+       startDate={startDate}
+       endDate={endDate}
+       filters={appliedFilters}
+     />
+
       {/* Top pages */}
       <TopPages
         key={`tp-${dashKey}`}
@@ -801,6 +809,93 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.users.toLocaleString()}
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
+    </section>
+  );
+}
+
+/* ============================== Campaigns ============================== */
+function Campaigns({ propertyId, startDate, endDate, filters }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const data = await fetchJson("/api/ga4/campaigns", {
+        propertyId, startDate, endDate, filters, limit: 50,
+      });
+      const parsed = (data.rows || []).map((r, i) => ({
+        campaign: r.dimensionValues?.[0]?.value || "(not set)",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+      }));
+      setRows(parsed);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Campaigns</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Campaigns"}
+        </button>
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-campaigns"
+          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+        />
+        <button
+          onClick={() =>
+            downloadCsvGeneric(
+              `campaigns_${startDate}_to_${endDate}`,
+              rows,
+              [
+                { header: "Campaign", key: "campaign" },
+                { header: "Sessions", key: "sessions" },
+                { header: "Users", key: "users" },
+              ]
+            )
+          }
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!rows.length}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.campaign}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.campaign}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

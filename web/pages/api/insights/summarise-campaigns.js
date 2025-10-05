@@ -3,48 +3,38 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   try {
-    const { rows, dateRange } = req.body || {};
-    if (!Array.isArray(rows) || !rows.length || !dateRange?.start || !dateRange?.end) {
-      return res.status(400).json({ error: "Missing rows/dateRange" });
+    const { rows = [], dateRange = {}, filters = {} } = req.body || {};
+
+    // rows: [{ campaign, sessions, users }]
+    const totalSessions = rows.reduce((a, r) => a + (Number(r.sessions) || 0), 0);
+    const totalUsers = rows.reduce((a, r) => a + (Number(r.users) || 0), 0);
+
+    const sorted = [...rows].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+    const top = sorted.slice(0, 5);
+
+    const lines = [];
+    lines.push(`Campaign performance ${dateRange.start || "?"} → ${dateRange.end || "?"}.`);
+    if (filters?.country && filters.country !== "All") lines.push(`Country filter: ${filters.country}.`);
+    if (filters?.channelGroup && filters.channelGroup !== "All") lines.push(`Channel group filter: ${filters.channelGroup}.`);
+    lines.push(`Total sessions: ${totalSessions.toLocaleString()} · Total users: ${totalUsers.toLocaleString()}`);
+
+    if (top.length) {
+      lines.push(`Top campaigns by sessions:`);
+      top.forEach((r, i) => {
+        const share = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
+        lines.push(`${i + 1}. ${r.campaign} — ${r.sessions.toLocaleString()} sessions (${share}%), ${r.users.toLocaleString()} users`);
+      });
+    } else {
+      lines.push(`No campaign rows in this range.`);
     }
 
-    const table = rows.slice(0, 30).map((r, i) =>
-      `${i + 1}. src="${r.source}" med="${r.medium}" camp="${r.campaign}" ` +
-      `sessions=${r.sessions} users=${r.users} views=${r.views} conv=${r.conversions} rev=${r.revenue}`
-    ).join("\n");
+    // 2 quick hypotheses/tests
+    lines.push(`\nSuggested tests:`);
+    lines.push(`• Expand the best performer’s reach: replicate ${top[0]?.campaign || "top campaign"} targeting across an additional channel where relevant.`);
+    lines.push(`• Improve underperformers: pause bottom 20% of campaigns by session share and reallocate to top performers for 2 weeks; measure lift in sessions and CPC.`);
 
-    const prompt = `You are a marketing analytics assistant. Summarise campaign performance for ${dateRange.start} to ${dateRange.end}.
-Focus on:
-- Highest revenue and conversions by source/medium/campaign
-- Any campaigns with strong volume but weak conversion
-- 3–5 practical recommendations
-
-Data:
-${table}`;
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
-
-    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "gpt-4o-mini", input: prompt, max_output_tokens: 450, temperature: 0.2 }),
-    });
-
-    const raw = await openaiRes.text();
-    let data = null; try { data = raw ? JSON.parse(raw) : null; } catch {}
-
-    if (!openaiRes.ok) {
-      const msg = data?.error?.message || data?.error || raw || `HTTP ${openaiRes.status}`;
-      return res.status(openaiRes.status).json({ error: msg });
-    }
-
-    let text = "";
-    try { text = data?.output?.[0]?.content?.[0]?.text || data?.output_text || ""; } catch {}
-    if (!text) text = typeof data === "string" ? data : raw || "No response";
-
-    res.status(200).json({ summary: text });
-  } catch (e) {
-    res.status(500).json({ error: String(e?.message || e) });
+    return res.status(200).json({ summary: lines.join("\n") });
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to summarise campaigns", details: String(err?.message || err) });
   }
 }
