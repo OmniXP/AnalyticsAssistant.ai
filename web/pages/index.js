@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 /* ============================== Helpers ============================== */
 
 /** -------- URL helpers (Saved Views) -------- */
-function encodeQuery(state) {
+function encodeQuery(state, { autorun = true, includePropertyId = false } = {}) {
   const p = new URLSearchParams();
   if (state.startDate) p.set("start", state.startDate);
   if (state.endDate) p.set("end", state.endDate);
@@ -15,6 +15,8 @@ function encodeQuery(state) {
     p.set("channel", state.appliedFilters.channelGroup);
   }
   if (state.comparePrev) p.set("compare", "1");
+  if (autorun) p.set("autorun", "1");
+  if (includePropertyId && state.propertyId) p.set("prop", state.propertyId);
   return p.toString();
 }
 
@@ -28,6 +30,8 @@ function decodeQuery() {
     country: q.country || "All",
     channelGroup: q.channel || "All",
     comparePrev: q.compare === "1",
+    autorun: q.autorun === "1",
+    prop: q.prop || null,
   };
 }
 
@@ -225,6 +229,7 @@ export default function Home() {
   const [startDate, setStartDate] = useState("2024-09-01");
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
+  const [copiedShare, setCopiedShare] = useState(false); // for the "Copied!" feedback
 
   // Fires whenever the user runs a fresh report (to reset AI & section data)
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -269,6 +274,44 @@ export default function Home() {
       setComparePrev(!!q.comparePrev);
     } catch {}
   }, []);
+
+  useEffect(() => {
+  try {
+    if (typeof window === "undefined") return;
+    const q = decodeQuery();
+    if (!q) return;
+
+    if (q.startDate) setStartDate(q.startDate);
+    if (q.endDate) setEndDate(q.endDate);
+
+    setCountrySel(q.country || "All");
+    setChannelSel(q.channelGroup || "All");
+    setAppliedFilters({
+      country: q.country || "All",
+      channelGroup: q.channelGroup || "All",
+    });
+
+    setComparePrev(!!q.comparePrev);
+
+    // NEW: optionally take propertyId from URL
+    if (q.prop) {
+      setPropertyId(q.prop);
+    }
+
+    // NEW: autorun if we have a propertyId (either in URL or already saved)
+    const tryAutorun = () => {
+      const pid = q.prop || propertyId;
+      if (q.autorun && pid) {
+        // delay to ensure state has applied before running
+        setTimeout(() => runReport(), 0);
+      }
+    };
+    // If propertyId is already in state now, run immediately; otherwise wait
+    // a tick for setPropertyId to land.
+    setTimeout(tryAutorun, 0);
+  } catch {}
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   // Load preset once (localStorage)
   useEffect(() => {
@@ -464,17 +507,25 @@ export default function Home() {
 
         <button
           onClick={async () => {
-            try {
-              const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
-              const path = window.location.pathname + (qs ? `?${qs}` : "");
-              window.history.replaceState(null, "", path);
-            } catch {}
-            const ok = await copyCurrentUrl();
-            if (!ok) alert("Could not copy to clipboard.");
+          // write current view into URL (autorun on open)
+          const qs = encodeQuery(
+        { startDate, endDate, appliedFilters, comparePrev, propertyId },
+        { autorun: true, includePropertyId: false } // set true if you want prop in the link
+        );
+          const url = window.location.pathname + (qs ? `?${qs}` : "");
+          try { window.history.replaceState(null, "", url); } catch {}
+
+          try {
+          await navigator.clipboard.writeText(window.location.href);
+          setCopiedShare(true);
+          setTimeout(() => setCopiedShare(false), 1400);
+          } catch {
+          alert("Could not copy to clipboard.");
+          }
           }}
           style={{ padding: "10px 14px", cursor: "pointer" }}
         >
-          Copy share link
+        {copiedShare ? "Copied!" : "Copy share link"}
         </button>
 
         <button
