@@ -1,30 +1,9 @@
-// /workspaces/insightsgpt/web/pages/index.js
+// /pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
 /* ============================== Helpers ============================== */
 
-/** -------- URL helpers (Saved Views) -------- */
-function encodeQuery(
-  state,
-  opts = { autorun: true, includePropertyId: true }
-) {
-  const p = new URLSearchParams();
-
-  if (state.startDate) p.set("start", state.startDate);
-  if (state.endDate) p.set("end", state.endDate);
-
-  const country = state.appliedFilters?.country;
-  const channel = state.appliedFilters?.channelGroup;
-  if (country && country !== "All") p.set("country", country);
-  if (channel && channel !== "All") p.set("channel", channel);
-
-  if (state.comparePrev) p.set("compare", "1");
-  if (opts.autorun) p.set("autorun", "1");
-  if (opts.includePropertyId && state.propertyId) p.set("prop", state.propertyId);
-
-  return p.toString();
-}
-
+/** ---- Saved-view URL helpers ---- */
 function decodeQuery() {
   if (typeof window === "undefined") return null;
   const p = new URLSearchParams(window.location.search);
@@ -40,13 +19,9 @@ function decodeQuery() {
   };
 }
 
-async function copyCurrentUrl() {
-  try {
-    await navigator.clipboard.writeText(window.location.href);
-    return true;
-  } catch {
-    return false;
-  }
+async function copyToClipboard(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { return false; }
 }
 
 const STORAGE_KEY = "insightgpt_preset_v2";
@@ -82,6 +57,7 @@ const CHANNEL_GROUP_OPTIONS = [
   "Paid Shopping",
 ];
 
+/** Channel parser */
 function parseGa4Channels(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
   const rows = response.rows.map((r) => ({
@@ -110,12 +86,11 @@ function ymd(d) {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
-
 function computePreviousRange(startStr, endStr) {
   const start = new Date(startStr);
   const end = new Date(endStr);
   const oneDay = 24 * 60 * 60 * 1000;
-  const days = Math.round((end - start) / oneDay) + 1; // inclusive
+  const days = Math.round((end - start) / oneDay) + 1;
   const prevEnd = new Date(start.getTime() - oneDay);
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
@@ -134,17 +109,12 @@ function downloadCsvChannels(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
-
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -156,17 +126,12 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n");
-
   const filename = `${filenamePrefix}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -208,22 +173,16 @@ async function fetchJson(url, payload) {
 
 /** Safe stringify for debug block */
 function safeStringify(value) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch (e) {
+  try { return JSON.stringify(value, null, 2); }
+  catch (e) {
     try {
       const seen = new WeakSet();
       const replacer = (_, v) => {
-        if (v && typeof v === "object") {
-          if (seen.has(v)) return "[[circular]]";
-          seen.add(v);
-        }
+        if (v && typeof v === "object") { if (seen.has(v)) return "[[circular]]"; seen.add(v); }
         return v;
       };
       return JSON.stringify(value, replacer, 2);
-    } catch {
-      return String(value);
-    }
+    } catch { return String(value); }
   }
 }
 
@@ -234,32 +193,32 @@ export default function Home() {
   const [startDate, setStartDate] = useState("2024-09-01");
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
-  const [copiedShare, setCopiedShare] = useState(false); // for the "Copied!" feedback
+
+  // Copy link feedback
+  const [copiedShare, setCopiedShare] = useState(false);
 
   // Fires whenever the user runs a fresh report (to reset AI & section data)
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  // Filter controls (current selectors)
+  // Filter controls (selectors)
   const [countrySel, setCountrySel] = useState("All");
   const [channelSel, setChannelSel] = useState("All");
 
-  // Filters actually applied to queries
-  const [appliedFilters, setAppliedFilters] = useState({
-    country: "All",
-    channelGroup: "All",
-  });
+  // Filters applied to queries
+  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
 
   // Re-mount key for hard resets
   const [dashKey, setDashKey] = useState(1);
 
-  // Channel results (main hero)
+  // Channel results
   const [result, setResult] = useState(null);
   const [prevResult, setPrevResult] = useState(null);
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load from URL (if present) ONCE after mount
+  // Load from URL once (saved view)
+  const [shouldAutorun, setShouldAutorun] = useState(false);
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
@@ -268,157 +227,89 @@ export default function Home() {
 
       if (q.startDate) setStartDate(q.startDate);
       if (q.endDate) setEndDate(q.endDate);
-
       setCountrySel(q.country || "All");
       setChannelSel(q.channelGroup || "All");
-      setAppliedFilters({
-        country: q.country || "All",
-        channelGroup: q.channelGroup || "All",
-      });
-
+      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
       setComparePrev(!!q.comparePrev);
+
+      if (q.prop) setPropertyId(q.prop); // optional: prefill property id
+      setShouldAutorun(!!q.autorun);
     } catch {}
   }, []);
-
-  // adopt propertyId from the link (if present)
-if (q.prop) setPropertyId(q.prop);
-
-// autorun if the link asked for it and we have a propertyId
-if (q.autorun && (q.prop || propertyId)) {
-  // Let state setters flush first
-  setTimeout(() => {
-    // ensure appliedFilters reflect URL on first run
-    setAppliedFilters({
-      country: q.country || "All",
-      channelGroup: q.channelGroup || q.channel || "All",
-    });
-    runReport();
-  }, 0);
-}
-
-  useEffect(() => {
-  try {
-    if (typeof window === "undefined") return;
-    const q = decodeQuery();
-    if (!q) return;
-
-    if (q.startDate) setStartDate(q.startDate);
-    if (q.endDate) setEndDate(q.endDate);
-
-    setCountrySel(q.country || "All");
-    setChannelSel(q.channelGroup || "All");
-    setAppliedFilters({
-      country: q.country || "All",
-      channelGroup: q.channelGroup || "All",
-    });
-
-    setComparePrev(!!q.comparePrev);
-
-    // NEW: optionally take propertyId from URL
-    if (q.prop) {
-      setPropertyId(q.prop);
-    }
-
-    // NEW: autorun if we have a propertyId (either in URL or already saved)
-    const tryAutorun = () => {
-      const pid = q.prop || propertyId;
-      if (q.autorun && pid) {
-        // delay to ensure state has applied before running
-        setTimeout(() => runReport(), 0);
-      }
-    };
-    // If propertyId is already in state now, run immediately; otherwise wait
-    // a tick for setPropertyId to land.
-    setTimeout(tryAutorun, 0);
-  } catch {}
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
 
   // Load preset once (localStorage)
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (saved?.propertyId) setPropertyId(saved.propertyId);
+      if (saved?.propertyId && !propertyId) setPropertyId(saved.propertyId);
       if (saved?.startDate) setStartDate(saved.startDate);
       if (saved?.endDate) setEndDate(saved.endDate);
       if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
       if (saved?.countrySel) setCountrySel(saved.countrySel);
       if (saved?.channelSel) setChannelSel(saved.channelSel);
     } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-run if link requested it and we have a propertyId
+  useEffect(() => {
+    if (shouldAutorun && propertyId) {
+      runReport(); // will also trigger refreshSignal
+      setShouldAutorun(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAutorun, propertyId]);
 
   // Save preset whenever these change
   useEffect(() => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({
-          propertyId,
-          startDate,
-          endDate,
-          appliedFilters,
-          countrySel,
-          channelSel,
-        })
+        JSON.stringify({ propertyId, startDate, endDate, appliedFilters, countrySel, channelSel })
       );
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
   const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
-  const { rows: prevRows, totals: prevTotals } = useMemo(
-    () => parseGa4Channels(prevResult),
-    [prevResult]
-  );
+  const { rows: prevRows, totals: prevTotals } = useMemo(() => parseGa4Channels(prevResult), [prevResult]);
 
   const top = rows[0];
-  const topShare =
-    top && totals.sessions > 0
-      ? Math.round((top.sessions / totals.sessions) * 100)
-      : 0;
+  const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
-  const connect = () => {
-    window.location.href = "/api/auth/google/start";
-  };
+  const connect = () => { window.location.href = "/api/auth/google/start"; };
 
-  // Apply filters button
-  const applyFilters = () => {
-    setAppliedFilters({
-      country: countrySel,
-      channelGroup: channelSel,
-    });
-  };
+  // Apply filters
+  const applyFilters = () => setAppliedFilters({ country: countrySel, channelGroup: channelSel });
 
-  // Channel report (uses filters)
+  // Channel report
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
     return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
   }
 
   const runReport = async () => {
-    setError("");
-    setResult(null);
-    setPrevResult(null);
-    setLoading(true);
+    setError(""); setResult(null); setPrevResult(null); setLoading(true);
     try {
-      // Current period with filters
-      const curr = await fetchGa4Channels({
-        propertyId,
-        startDate,
-        endDate,
-        filters: appliedFilters,
-      });
+      // current
+      const curr = await fetchGa4Channels({ propertyId, startDate, endDate, filters: appliedFilters });
       setResult(curr);
 
-      // Update URL to reflect the view we just ran
+      // update URL to shareable view (no navigation)
       try {
-        const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
-        const path = window.location.pathname + (qs ? `?${qs}` : "");
+        const p = new URLSearchParams();
+        if (startDate) p.set("start", startDate);
+        if (endDate) p.set("end", endDate);
+        if (appliedFilters?.country && appliedFilters.country !== "All") p.set("country", appliedFilters.country);
+        if (appliedFilters?.channelGroup && appliedFilters.channelGroup !== "All") p.set("channel", appliedFilters.channelGroup);
+        if (comparePrev) p.set("compare", "1");
+        if (propertyId) p.set("prop", propertyId);
+        const path = window.location.pathname + (p.toString() ? `?${p.toString()}` : "");
         window.history.replaceState(null, "", path);
       } catch {}
 
-      // broadcast "new context" so sections & AI summaries reset
+      // tell child sections/AI to reset
       setRefreshSignal((n) => n + 1);
 
-      // Previous period (optional)
+      // previous period
       if (comparePrev) {
         const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
         const prev = await fetchGa4Channels({
@@ -439,39 +330,24 @@ if (q.autorun && (q.prop || propertyId)) {
   // Reset Dashboard (keep propertyId)
   const resetDashboard = () => {
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
-
     setStartDate("2024-09-01");
     setEndDate("2024-09-30");
     setCountrySel("All");
     setChannelSel("All");
     setAppliedFilters({ country: "All", channelGroup: "All" });
     setComparePrev(false);
-
-    // Clear section data so the dashboard visibly resets
     setResult(null);
     setPrevResult(null);
     setError("");
-
-    // Remove any saved-view querystring (?start=...&end=... etc.)
-    try {
-      const path = window.location.pathname;
-      window.history.replaceState(null, "", path);
-    } catch {}
-
-    // Force children to reset too
+    // strip querystring
+    try { window.history.replaceState(null, "", window.location.pathname); } catch {}
+    // hard reset child sections
     setDashKey((k) => k + 1);
     setRefreshSignal((n) => n + 1);
   };
 
   return (
-    <main
-      style={{
-        padding: 24,
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-        maxWidth: 1100,
-        margin: "0 auto",
-      }}
-    >
+    <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ marginBottom: 4 }}>InsightGPT (MVP)</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Connect GA4, choose a date range, optionally apply filters, and view traffic & insights.
@@ -483,8 +359,7 @@ if (q.autorun && (q.prop || propertyId)) {
           Connect Google Analytics
         </button>
 
-        <label>
-          GA4 Property ID&nbsp;
+        <label>GA4 Property ID&nbsp;
           <input
             id="property-id"
             name="property-id"
@@ -495,63 +370,41 @@ if (q.autorun && (q.prop || propertyId)) {
           />
         </label>
 
-        <label>
-          Start date&nbsp;
-          <input
-            id="start-date"
-            name="start-date"
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            style={{ padding: 8 }}
-          />
+        <label>Start date&nbsp;
+          <input id="start-date" name="start-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8 }} />
         </label>
-        <label>
-          End date&nbsp;
-          <input
-            id="end-date"
-            name="end-date"
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            style={{ padding: 8 }}
-          />
+        <label>End date&nbsp;
+          <input id="end-date" name="end-date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8 }} />
         </label>
 
-        <button
-          onClick={runReport}
-          style={{ padding: "10px 14px", cursor: "pointer" }}
-          disabled={loading || !propertyId}
-        >
+        <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
 
         <button
           onClick={async () => {
-          // Build a URL that reproduces this view and auto-runs on open
-          const qs = encodeQuery(
-          { startDate, endDate, appliedFilters, comparePrev, propertyId },
-          { autorun: true, includePropertyId: true } // set to false if you don't want to expose prop ID
-          );
-          const url = window.location.pathname + (qs ? `?${qs}` : "");
-
-          // Update the browser URL (so copying picks up the latest)
-          try { window.history.replaceState(null, "", url); } catch {}
-
-          // Copy to clipboard with “Copied!” feedback
-          try {
-          await navigator.clipboard.writeText(window.location.href);
-          setCopiedShare(true);
-          setTimeout(() => setCopiedShare(false), 1400);
-          } catch {
-          alert("Could not copy to clipboard.");
-          }
+            try {
+              const p = new URLSearchParams();
+              if (startDate) p.set("start", startDate);
+              if (endDate) p.set("end", endDate);
+              if (appliedFilters?.country && appliedFilters.country !== "All") p.set("country", appliedFilters.country);
+              if (appliedFilters?.channelGroup && appliedFilters.channelGroup !== "All") p.set("channel", appliedFilters.channelGroup);
+              if (comparePrev) p.set("compare", "1");
+              if (propertyId) p.set("prop", propertyId);
+              // tell receiver to autorun
+              p.set("autorun", "1");
+              const shareUrl = `${window.location.origin}${window.location.pathname}?${p.toString()}`;
+              const ok = await copyToClipboard(shareUrl);
+              if (ok) { setCopiedShare(true); setTimeout(() => setCopiedShare(false), 1400); }
+              else { alert("Could not copy to clipboard."); }
+            } catch {
+              alert("Could not copy to clipboard.");
+            }
           }}
           style={{ padding: "10px 14px", cursor: "pointer" }}
-         >
+        >
           {copiedShare ? "Copied!" : "Copy share link"}
         </button>
-
 
         <button
           onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
@@ -562,28 +415,12 @@ if (q.autorun && (q.prop || propertyId)) {
           Download CSV
         </button>
 
-        <label
-          style={{
-            display: "inline-flex",
-            gap: 8,
-            alignItems: "center",
-            paddingLeft: 8,
-            borderLeft: "1px solid #ddd",
-          }}
-        >
-          <input
-            id="compare-prev"
-            type="checkbox"
-            checked={comparePrev}
-            onChange={(e) => setComparePrev(e.target.checked)}
-          />
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }}>
+          <input id="compare-prev" type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
           Compare vs previous period
         </label>
 
-        <button
-          onClick={resetDashboard}
-          style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}
-        >
+        <button onClick={resetDashboard} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
           Reset Dashboard
         </button>
       </div>
@@ -592,51 +429,20 @@ if (q.autorun && (q.prop || propertyId)) {
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <b>Filters:</b>
-          <label>
-            Country&nbsp;
-            <select
-              id="country-filter"
-              value={countrySel}
-              onChange={(e) => setCountrySel(e.target.value)}
-              style={{ padding: 8 }}
-            >
-              {COUNTRY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
+          <label>Country&nbsp;
+            <select id="country-filter" value={countrySel} onChange={(e) => setCountrySel(e.target.value)} style={{ padding: 8 }}>
+              {COUNTRY_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           </label>
-          <label>
-            Channel Group&nbsp;
-            <select
-              id="channel-filter"
-              value={channelSel}
-              onChange={(e) => setChannelSel(e.target.value)}
-              style={{ padding: 8 }}
-            >
-              {CHANNEL_GROUP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
+          <label>Channel Group&nbsp;
+            <select id="channel-filter" value={channelSel} onChange={(e) => setChannelSel(e.target.value)} style={{ padding: 8 }}>
+              {CHANNEL_GROUP_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           </label>
-          <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>
-            Apply filters
-          </button>
+          <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>Apply filters</button>
           {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
-            <span
-              style={{
-                background: "#e6f4ea",
-                color: "#137333",
-                padding: "4px 8px",
-                borderRadius: 999,
-                fontSize: 12,
-              }}
-            >
-              Filters active:&nbsp;
-              {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
+            <span style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
+              Filters active: {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
               {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
               {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
             </span>
@@ -664,29 +470,20 @@ if (q.autorun && (q.prop || propertyId)) {
           </div>
 
           <ul style={{ marginTop: 12 }}>
-            <li>
-              <b>Total sessions:</b> {totals.sessions.toLocaleString()}
-            </li>
-            <li>
-              <b>Total users:</b> {totals.users.toLocaleString()}
-            </li>
+            <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
+            <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
             {top && (
               <li>
-                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions (
-                {topShare}% of total)
+                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
               </li>
             )}
             {prevRows.length > 0 && (
               <>
                 <li style={{ marginTop: 6 }}>
-                  <b>Sessions vs previous:</b>{" "}
-                  {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev{" "}
-                  {prevTotals.sessions.toLocaleString()})
+                  <b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
                 </li>
                 <li>
-                  <b>Users vs previous:</b>{" "}
-                  {formatPctDelta(totals.users, prevTotals.users)} (prev{" "}
-                  {prevTotals.users.toLocaleString()})
+                  <b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
                 </li>
               </>
             )}
@@ -709,12 +506,8 @@ if (q.autorun && (q.prop || propertyId)) {
                   return (
                     <tr key={r.channel}>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                        {r.sessions.toLocaleString()}
-                      </td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                        {r.users.toLocaleString()}
-                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
                     </tr>
                   );
@@ -753,26 +546,11 @@ if (q.autorun && (q.prop || propertyId)) {
       />
 
       {/* Campaigns */}
-      <Campaigns
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <Campaigns propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
-      <CampaignDrilldown
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <CampaignDrilldown propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
-      <CampaignsOverview
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <CampaignsOverview propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* Top pages */}
       <TopPages
@@ -785,12 +563,7 @@ if (q.autorun && (q.prop || propertyId)) {
       />
 
       {/* Landing Pages × Attribution */}
-      <LandingPages
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <LandingPages propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* E-commerce KPIs */}
       <EcommerceKPIs
@@ -816,15 +589,7 @@ if (q.autorun && (q.prop || propertyId)) {
       {result ? (
         <details style={{ marginTop: 24 }}>
           <summary>Raw GA4 JSON (debug)</summary>
-          <pre
-            style={{
-              marginTop: 8,
-              background: "#f8f8f8",
-              padding: 16,
-              borderRadius: 8,
-              overflow: "auto",
-            }}
-          >
+          <pre style={{ marginTop: 8, background: "#f8f8f8", padding: 16, borderRadius: 8, overflow: "auto" }}>
             {safeStringify(result)}
           </pre>
         </details>
@@ -834,30 +599,17 @@ if (q.autorun && (q.prop || propertyId)) {
 }
 
 /* ============================== Reusable AI block ============================== */
-function AiBlock({
-  asButton = false,
-  buttonLabel = "Summarise with AI",
-  endpoint,
-  payload,
-  resetSignal, // when this changes, clear previous AI text/error
-}) {
+function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   // Clear AI state whenever parent tells us to reset
-  useEffect(() => {
-    setText("");
-    setError("");
-    setCopied(false);
-  }, [resetSignal]);
+  useEffect(() => { setText(""); setError(""); setCopied(false); }, [resetSignal]);
 
   const run = async () => {
-    setLoading(true);
-    setError("");
-    setText("");
-    setCopied(false);
+    setLoading(true); setError(""); setText(""); setCopied(false);
     try {
       const data = await fetchJson(endpoint, payload);
       const summary = data?.summary || (typeof data === "string" ? data : "");
@@ -870,13 +622,8 @@ function AiBlock({
   };
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text || "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setError("Could not copy to clipboard");
-    }
+    try { await navigator.clipboard.writeText(text || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { setError("Could not copy to clipboard"); }
   };
 
   return (
@@ -889,17 +636,7 @@ function AiBlock({
       </button>
       {error && <span style={{ color: "crimson" }}>Error: {error}</span>}
       {text && (
-        <div
-          style={{
-            marginTop: 8,
-            background: "#fffceb",
-            border: "1px solid #f5e08f",
-            padding: 10,
-            borderRadius: 6,
-            whiteSpace: "pre-wrap",
-            width: "100%",
-          }}
-        >
+        <div style={{ marginTop: 8, background: "#fffceb", border: "1px solid #f5e08f", padding: 10, borderRadius: 6, whiteSpace: "pre-wrap", width: "100%" }}>
           {text}
         </div>
       )}
@@ -913,36 +650,21 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  // Clear previous data/errors whenever a new report runs
-  useEffect(() => {
-    setRows([]);
-    setError("");
-  }, [resetSignal]);
+  useEffect(() => { setRows([]); setError(""); }, [resetSignal]);
 
   const load = async () => {
-    setLoading(true);
-    setError("");
-    setRows([]);
+    setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/source-medium", {
-        propertyId,
-        startDate,
-        endDate,
-        filters,
-        limit: 25,
-      });
-      const parsed = (data.rows || []).map((r, i) => ({
+      const data = await fetchJson("/api/ga4/source-medium", { propertyId, startDate, endDate, filters, limit: 25 });
+      const parsed = (data.rows || []).map((r) => ({
         source: r.dimensionValues?.[0]?.value || "(unknown)",
         medium: r.dimensionValues?.[1]?.value || "(unknown)",
         sessions: Number(r.metricValues?.[0]?.value || 0),
         users: Number(r.metricValues?.[1]?.value || 0),
       }));
       setRows(parsed);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
   };
 
   return (
@@ -974,11 +696,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
           Download CSV
         </button>
       </div>
-
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
-      )}
-
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
       {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -995,25 +713,19 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
                 <tr key={`${r.source}-${r.medium}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.sessions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.users.toLocaleString()}
-                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
 
-/* ============================== Campaigns ============================== */
+/* ============================== Campaigns (overview) ============================== */
 function Campaigns({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1022,56 +734,60 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/campaigns", {
-        propertyId, startDate, endDate, filters, limit: 50,
-      });
-      const parsed = (data.rows || []).map((r, i) => ({
-        campaign: r.dimensionValues?.[0]?.value || "(not set)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-      }));
+      const data = await fetchJson("/api/ga4/campaigns", { propertyId, startDate, endDate, filters, limit: 100 });
+      const parsed = (data.rows || []).map((r, i) => {
+        const name         = r.dimensionValues?.[0]?.value ?? "(not set)";
+        const sessions     = Number(r.metricValues?.[0]?.value || 0);
+        const users        = Number(r.metricValues?.[1]?.value || 0);
+        const transactions = Number(r.metricValues?.[2]?.value || 0);
+        const revenue      = Number(r.metricValues?.[3]?.value || 0);
+        const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
+        const aov = transactions > 0 ? revenue / transactions : 0;
+        return { key: `c-${i}`, name, sessions, users, transactions, revenue, cvr, aov };
+      }).sort((a, b) => b.revenue - a.revenue);
       setRows(parsed);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
   };
 
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Campaigns</h3>
+        <h3 style={{ margin: 0 }}>Campaigns (overview)</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Campaigns"}
         </button>
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-campaigns"
-          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+          endpoint="/api/insights/summarise-pro"
+          payload={{ kind: "campaigns-overview", campaigns: rows, dateRange: { start: startDate, end: endDate }, filters }}
         />
         <button
-          onClick={() =>
-            downloadCsvGeneric(
-              `campaigns_${startDate}_to_${endDate}`,
-              rows,
-              [
-                { header: "Campaign", key: "campaign" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ]
-            )
-          }
+          onClick={() => downloadCsvGeneric(`campaigns_${startDate}_to_${endDate}`, rows.map(r => ({
+            name: r.name,
+            sessions: r.sessions,
+            users: r.users,
+            transactions: r.transactions,
+            revenue: r.revenue,
+            cvr: `${r.cvr.toFixed(2)}%`,
+            aov: r.aov,
+          })), [
+            { header: "Campaign", key: "name" },
+            { header: "Sessions", key: "sessions" },
+            { header: "Users", key: "users" },
+            { header: "Transactions", key: "transactions" },
+            { header: "Revenue", key: "revenue" },
+            { header: "CVR (%)", key: "cvr" },
+            { header: "AOV", key: "aov" },
+          ])}
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!rows.length}
         >
           Download CSV
         </button>
       </div>
-
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-
       {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -1080,510 +796,32 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.campaign}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.campaign}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
-    </section>
-  );
-}
-
-/* ============================== Top Pages ============================== */
-function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setRows([]);
-    setError("");
-  }, [resetSignal]);
-
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    setRows([]);
-    try {
-      const data = await fetchJson("/api/ga4/top-pages", {
-        propertyId,
-        startDate,
-        endDate,
-        filters,
-        limit: 20,
-      });
-      const parsed = (data.rows || []).map((r, i) => ({
-        title: r.dimensionValues?.[0]?.value || "(untitled)",
-        path: r.dimensionValues?.[1]?.value || "",
-        views: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-      }));
-      setRows(parsed);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <section style={{ marginTop: 28 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Top pages (views)</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load Top Pages"}
-        </button>
-        <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pages"
-          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
-          resetSignal={resetSignal}
-        />
-        <button
-          onClick={() =>
-            downloadCsvGeneric(`top_pages_${startDate}_to_${endDate}`, rows, [
-              { header: "Title", key: "title" },
-              { header: "Path", key: "path" },
-              { header: "Views", key: "views" },
-              { header: "Users", key: "users" },
-            ])
-          }
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!rows.length}
-        >
-          Download CSV
-        </button>
-      </div>
-
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
-      )}
-
-      {rows.length > 0 ? (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.path}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.views.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.users.toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
-    </section>
-  );
-}
-
-/* ============================== Landing Pages × Attribution ============================== */
-function LandingPages({ propertyId, startDate, endDate, filters }) {
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
-  const [error, setError] = useState("");
-
-  // New local UI controls (client-side)
-  const [topOnly, setTopOnly] = useState(false);
-  const [minSessions, setMinSessions] = useState(0);
-
-  // Load from API (unchanged, still respects global filters)
-  const load = async () => {
-    setLoading(true); setError(""); setRows([]);
-    try {
-      const data = await fetchJson("/api/ga4/landing-pages", {
-        propertyId, startDate, endDate, filters, limit: 500,
-      });
-
-      const parsed = (data?.rows || []).map((r, i) => ({
-        landing: r.dimensionValues?.[0]?.value || "(unknown)",
-        source:  r.dimensionValues?.[1]?.value || "(unknown)",
-        medium:  r.dimensionValues?.[2]?.value || "(unknown)",
-        sessions:      Number(r.metricValues?.[0]?.value || 0),
-        users:         Number(r.metricValues?.[1]?.value || 0),
-        transactions:  Number(r.metricValues?.[2]?.value || 0),
-        revenue:       Number(r.metricValues?.[3]?.value || 0),
-        _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
-      }));
-
-      setRows(parsed);
-      // whenever we load new data, reset client filters to sensible defaults
-      setTopOnly(false);
-      setMinSessions(0);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Compute slider bounds and filtered view
-  const maxSessions = useMemo(() => rows.reduce((m, r) => Math.max(m, r.sessions || 0), 0), [rows]);
-
-  const filtered = useMemo(() => {
-    let out = rows;
-    if (minSessions > 0) out = out.filter(r => (r.sessions || 0) >= minSessions);
-    out = [...out].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
-    if (topOnly) out = out.slice(0, 25);
-    return out;
-  }, [rows, minSessions, topOnly]);
-
-  const shownCount = filtered.length;
-  const totalCount = rows.length;
-
-  const exportCsv = () => {
-    downloadCsvGeneric(
-      `landing_pages_${startDate}_to_${endDate}`,
-      filtered,
-      [
-        { header: "Landing Page", key: "landing" },
-        { header: "Source",       key: "source" },
-        { header: "Medium",       key: "medium" },
-        { header: "Sessions",     key: "sessions" },
-        { header: "Users",        key: "users" },
-        { header: "Transactions", key: "transactions" },
-        { header: "Revenue",      key: "revenue" },
-      ]
-    );
-  };
-
-  return (
-    <section style={{ marginTop: 28 }}>
-      {/* Header + actions */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Landing Pages × Attribution</h3>
-
-        <button
-          onClick={load}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading…" : "Load Landing Pages"}
-        </button>
-
-        <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pro"
-          payload={{
-            topic: "landing-pages",
-            dateRange: { start: startDate, end: endDate },
-            filters,
-            rows: filtered.slice(0, 50).map(r => ({
-              landing: r.landing,
-              source: r.source,
-              medium: r.medium,
-              sessions: r.sessions,
-              users: r.users,
-              transactions: r.transactions,
-              revenue: r.revenue,
-            })),
-            instructions:
-              "Focus on landing pages with high sessions but low transactions/revenue. Identify source/medium mixes that underperform. Provide at least 2 clear hypotheses + tests to improve CR and AOV.",
-          }}
-        />
-
-        <button
-          onClick={exportCsv}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!filtered.length}
-        >
-          Download CSV
-        </button>
-      </div>
-
-      {/* Client-side view controls */}
-      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={topOnly}
-            onChange={(e) => setTopOnly(e.target.checked)}
-          />
-          Top entries only (25)
-        </label>
-
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 260 }}>
-          <span style={{ fontSize: 13, color: "#333" }}>Min sessions</span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(10, maxSessions)}
-            step={1}
-            value={Math.min(minSessions, Math.max(10, maxSessions))}
-            onChange={(e) => setMinSessions(Number(e.target.value))}
-            style={{ width: 160 }}
-            disabled={!rows.length}
-          />
-          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
-            {minSessions}
-          </span>
-        </div>
-
-        {rows.length > 0 && (
-          <span style={{ fontSize: 12, color: "#555" }}>
-            Showing <b>{shownCount.toLocaleString()}</b> of {totalCount.toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {/* Errors / table / empty */}
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
-          Error: {error}
-        </p>
-      )}
-
-      {filtered.length > 0 ? (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Landing Page</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>CVR</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>AOV</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
-                <tr key={r._k}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.landing}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+              {rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>
-      )}
-    </section>
-  );
-}
-
-/* ============================== E-commerce KPIs ============================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
-  const [loading, setLoading] = useState(false);
-  const [totals, setTotals] = useState(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setTotals(null);
-    setError("");
-  }, [resetSignal]);
-
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    setTotals(null);
-    try {
-      const data = await fetchJson("/api/ga4/ecommerce-summary", {
-        propertyId,
-        startDate,
-        endDate,
-        filters,
-      });
-      setTotals(data?.totals || null);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <section style={{ marginTop: 28 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>E-commerce KPIs</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load E-commerce KPIs"}
-        </button>
-        <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-ecom"
-          payload={{ totals, dateRange: { start: startDate, end: endDate }, filters }}
-          resetSignal={resetSignal}
-        />
-      </div>
-
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
-      )}
-      {!error && totals && (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: 560 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              <Tr label="Sessions" value={totals.sessions} />
-              <Tr label="Users" value={totals.users} />
-              <Tr label="Add-to-Cart (events)" value={totals.addToCarts} />
-              <Tr label="Begin Checkout (events)" value={totals.beginCheckout} />
-              <Tr label="Purchases (transactions)" value={totals.transactions} />
-              <Tr
-                label="Revenue"
-                value={new Intl.NumberFormat("en-GB", {
-                  style: "currency",
-                  currency: "GBP",
-                }).format(totals.revenue || 0)}
-              />
-              <Tr
-                label="Conversion Rate (purchase / session)"
-                value={`${(totals.cvr || 0).toFixed(2)}%`}
-              />
-              <Tr
-                label="AOV (Revenue / Transactions)"
-                value={new Intl.NumberFormat("en-GB", {
-                  style: "currency",
-                  currency: "GBP",
-                }).format(totals.aov || 0)}
-              />
-            </tbody>
-          </table>
-        </div>
-      )}
-      {!error && !totals && <p style={{ marginTop: 8, color: "#666" }}>No data loaded yet.</p>}
-    </section>
-  );
-}
-
-function Tr({ label, value }) {
-  const formatted =
-    typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : value;
-  return (
-    <tr>
-      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-        {formatted}
-      </td>
-    </tr>
-  );
-}
-
-/* ============================== Checkout Funnel ============================== */
-function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
-  const [loading, setLoading] = useState(false);
-  const [steps, setSteps] = useState(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setSteps(null);
-    setError("");
-  }, [resetSignal]);
-
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    setSteps(null);
-    try {
-      const data = await fetchJson("/api/ga4/checkout-funnel", {
-        propertyId,
-        startDate,
-        endDate,
-        filters,
-      });
-      setSteps(data?.steps || null);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <section style={{ marginTop: 28 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Checkout funnel (event counts)</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading…" : "Load Checkout Funnel"}
-        </button>
-        <AiBlock
-          asButton
-          buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-funnel"
-          payload={{ steps, dateRange: { start: startDate, end: endDate }, filters }}
-          resetSignal={resetSignal}
-        />
-      </div>
-
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
-      )}
-
-      {steps ? (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: 520 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ["Add to cart", steps.add_to_cart],
-                ["Begin checkout", steps.begin_checkout],
-                ["Add shipping", steps.add_shipping_info],
-                ["Add payment", steps.add_payment_info],
-                ["Purchase", steps.purchase],
-              ].map(([label, val]) => (
-                <tr key={label}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cvr.toFixed(2)}%</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {(val || 0).toLocaleString()}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
@@ -1643,11 +881,8 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         revenue: Number(r.metricValues?.[3]?.value || 0),
         key: `t-${i}`,
       })));
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
   };
 
   const cvr = totals && totals.sessions > 0 ? (totals.transactions / totals.sessions) * 100 : 0;
@@ -1658,12 +893,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Campaign drill-down</h3>
 
-        <input
-          value={campaign}
-          onChange={(e) => setCampaign(e.target.value)}
-          placeholder="Type exact campaign name…"
-          style={{ padding: 8, minWidth: 260 }}
-        />
+        <input value={campaign} onChange={(e) => setCampaign(e.target.value)} placeholder="Type exact campaign name…" style={{ padding: 8, minWidth: 260 }} />
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId || !campaign}>
           {loading ? "Loading…" : "Load Campaign Details"}
         </button>
@@ -1676,11 +906,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
             kind: "campaign-detail",
             campaign,
             totals,
-            breakdowns: {
-              sourceMedium: srcMed,
-              adContent: content,
-              term,
-            },
+            breakdowns: { sourceMedium: srcMed, adContent: content, term },
             dateRange: { start: startDate, end: endDate },
             filters,
           }}
@@ -1700,7 +926,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         </div>
       )}
 
-      {/* Source / Medium table */}
+      {/* Source/Medium */}
       {srcMed.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Source / Medium</h4>
@@ -1733,7 +959,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         </div>
       )}
 
-      {/* Ad Content table */}
+      {/* Ad Content */}
       {content.length > 0 && (
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Ad Content (utm_content)</h4>
@@ -1764,7 +990,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         </div>
       )}
 
-      {/* Term table */}
+      {/* Term */}
       {term.length > 0 && (
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Term (utm_term)</h4>
@@ -1802,162 +1028,359 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================== Campaigns Overview ============================== */
-function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
-  const [loading, setLoading]   = useState(false);
-  const [rows, setRows]         = useState([]);
-  const [error, setError]       = useState("");
-  const [q, setQ]               = useState(""); // client-side search
+/* ============================== Top Pages ============================== */
+function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+  useEffect(() => { setRows([]); setError(""); }, [resetSignal]);
 
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/campaigns", {
-        propertyId, startDate, endDate, filters, limit: 100,
-      });
-
-      const parsed = (data.rows || []).map((r, i) => {
-        const name          = r.dimensionValues?.[0]?.value ?? "(not set)";
-        const sessions      = Number(r.metricValues?.[0]?.value || 0);
-        const users         = Number(r.metricValues?.[1]?.value || 0);
-        const transactions  = Number(r.metricValues?.[2]?.value || 0);
-        const revenue       = Number(r.metricValues?.[3]?.value || 0);
-        const cvr           = sessions > 0 ? (transactions / sessions) * 100 : 0;
-        const aov           = transactions > 0 ? revenue / transactions : 0;
-
-        return {
-          key: `c-${i}`,
-          name, sessions, users, transactions, revenue, cvr, aov,
-        };
-      });
-
-      parsed.sort((a, b) => b.revenue - a.revenue);
-
+      const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
+      const parsed = (data.rows || []).map((r, i) => ({
+        title: r.dimensionValues?.[0]?.value || "(untitled)",
+        path: r.dimensionValues?.[1]?.value || "",
+        views: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
+      }));
       setRows(parsed);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
   };
-
-  const visible = q
-    ? rows.filter(r => r.name.toLowerCase().includes(q.toLowerCase()))
-    : rows;
 
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Campaigns (overview)</h3>
-
-        <button
-          onClick={load}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading…" : "Load Campaigns"}
+        <h3 style={{ margin: 0 }}>Top pages (views)</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Top Pages"}
         </button>
-
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search campaign name…"
-          style={{ padding: 8, minWidth: 220 }}
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-pages"
+          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
         />
+        <button
+          onClick={() => downloadCsvGeneric(`top_pages_${startDate}_to_${endDate}`, rows, [
+            { header: "Title", key: "title" },
+            { header: "Path", key: "path" },
+            { header: "Views", key: "views" },
+            { header: "Users", key: "users" },
+          ])}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!rows.length}
+        >
+          Download CSV
+        </button>
+      </div>
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {rows.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.path}-${i}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+    </section>
+  );
+}
 
+/* ============================== Landing Pages × Attribution ============================== */
+function LandingPages({ propertyId, startDate, endDate, filters }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+
+  // local view controls
+  const [topOnly, setTopOnly] = useState(false);
+  const [minSessions, setMinSessions] = useState(0);
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const data = await fetchJson("/api/ga4/landing-pages", { propertyId, startDate, endDate, filters, limit: 500 });
+      const parsed = (data?.rows || []).map((r, i) => ({
+        landing: r.dimensionValues?.[0]?.value || "(unknown)",
+        source:  r.dimensionValues?.[1]?.value || "(unknown)",
+        medium:  r.dimensionValues?.[2]?.value || "(unknown)",
+        sessions:      Number(r.metricValues?.[0]?.value || 0),
+        users:         Number(r.metricValues?.[1]?.value || 0),
+        transactions:  Number(r.metricValues?.[2]?.value || 0),
+        revenue:       Number(r.metricValues?.[3]?.value || 0),
+        _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
+      }));
+      setRows(parsed);
+      setTopOnly(false);
+      setMinSessions(0);
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
+  };
+
+  const maxSessions = useMemo(() => rows.reduce((m, r) => Math.max(m, r.sessions || 0), 0), [rows]);
+  const filtered = useMemo(() => {
+    let out = rows;
+    if (minSessions > 0) out = out.filter(r => (r.sessions || 0) >= minSessions);
+    out = [...out].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+    if (topOnly) out = out.slice(0, 25);
+    return out;
+  }, [rows, minSessions, topOnly]);
+
+  const exportCsv = () => {
+    downloadCsvGeneric(`landing_pages_${startDate}_to_${endDate}`, filtered, [
+      { header: "Landing Page", key: "landing" },
+      { header: "Source",       key: "source" },
+      { header: "Medium",       key: "medium" },
+      { header: "Sessions",     key: "sessions" },
+      { header: "Users",        key: "users" },
+      { header: "Transactions", key: "transactions" },
+      { header: "Revenue",      key: "revenue" },
+    ]);
+  };
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Landing Pages × Attribution</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Landing Pages"}
+        </button>
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{
-            kind: "campaigns-overview",
-            campaigns: visible,
+            topic: "landing-pages",
             dateRange: { start: startDate, end: endDate },
             filters,
+            rows: filtered.slice(0, 50).map(r => ({
+              landing: r.landing, source: r.source, medium: r.medium,
+              sessions: r.sessions, users: r.users, transactions: r.transactions, revenue: r.revenue,
+            })),
+            instructions:
+              "Focus on landing pages with high sessions but low transactions/revenue. Identify source/medium mixes that underperform. Provide at least 2 clear hypotheses + tests to improve CR and AOV.",
           }}
         />
-
-        <button
-          onClick={() =>
-            downloadCsvGeneric(
-              `campaigns_${startDate}_to_${endDate}`,
-              visible.map(r => ({
-                name: r.name,
-                sessions: r.sessions,
-                users: r.users,
-                transactions: r.transactions,
-                revenue: r.revenue,
-                cvr: `${r.cvr.toFixed(2)}%`,
-                aov: r.aov,
-              })),
-              [
-                { header: "Campaign",      key: "name" },
-                { header: "Sessions",      key: "sessions" },
-                { header: "Users",         key: "users" },
-                { header: "Transactions",  key: "transactions" },
-                { header: "Revenue",       key: "revenue" },
-                { header: "CVR (%)",       key: "cvr" },
-                { header: "AOV",           key: "aov" },
-              ]
-            )
-          }
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!visible.length}
-        >
+        <button onClick={exportCsv} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!filtered.length}>
           Download CSV
         </button>
       </div>
 
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
-          Error: {error}
-        </p>
-      )}
+      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} />
+          Top entries only (25)
+        </label>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 260 }}>
+          <span style={{ fontSize: 13, color: "#333" }}>Min sessions</span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(10, maxSessions)}
+            step={1}
+            value={Math.min(minSessions, Math.max(10, maxSessions))}
+            onChange={(e) => setMinSessions(Number(e.target.value))}
+            style={{ width: 160 }}
+            disabled={!rows.length}
+          />
+          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
+            {minSessions}
+          </span>
+        </div>
+        {rows.length > 0 && (
+          <span style={{ fontSize: 12, color: "#555" }}>
+            Showing <b>{filtered.length.toLocaleString()}</b> of {rows.length.toLocaleString()}
+          </span>
+        )}
+      </div>
 
-      {visible.length > 0 ? (
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {filtered.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Landing Page</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>CVR</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>AOV</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map((r) => (
-                <tr key={r.key}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.sessions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.users.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.transactions.toLocaleString()}
-                  </td>
+              {filtered.map((r) => (
+                <tr key={r._k}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.landing}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {r.cvr.toFixed(2)}%
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>)}
+    </section>
+  );
+}
+
+/* ============================== E-commerce KPIs ============================== */
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
+  const [loading, setLoading] = useState(false);
+  const [totals, setTotals] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => { setTotals(null); setError(""); }, [resetSignal]);
+
+  const load = async () => {
+    setLoading(true); setError(""); setTotals(null);
+    try {
+      const data = await fetchJson("/api/ga4/ecommerce-summary", { propertyId, startDate, endDate, filters });
+      setTotals(data?.totals || null);
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>E-commerce KPIs</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load E-commerce KPIs"}
+        </button>
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-ecom"
+          payload={{ totals, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
+        />
+      </div>
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {!error && totals && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: 560 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <Tr label="Sessions" value={totals.sessions} />
+              <Tr label="Users" value={totals.users} />
+              <Tr label="Add-to-Cart (events)" value={totals.addToCarts} />
+              <Tr label="Begin Checkout (events)" value={totals.beginCheckout} />
+              <Tr label="Purchases (transactions)" value={totals.transactions} />
+              <Tr label="Revenue" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} />
+              <Tr label="Conversion Rate (purchase / session)" value={`${(totals.cvr || 0).toFixed(2)}%`} />
+              <Tr label="AOV (Revenue / Transactions)" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)} />
+            </tbody>
+          </table>
+        </div>
       )}
+      {!error && !totals && <p style={{ marginTop: 8, color: "#666" }}>No data loaded yet.</p>}
+    </section>
+  );
+}
+
+function Tr({ label, value }) {
+  const formatted = typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : value;
+  return (
+    <tr>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{formatted}</td>
+    </tr>
+  );
+}
+
+/* ============================== Checkout Funnel ============================== */
+function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
+  const [loading, setLoading] = useState(false);
+  const [steps, setSteps] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => { setSteps(null); setError(""); }, [resetSignal]);
+
+  const load = async () => {
+    setLoading(true); setError(""); setSteps(null);
+    try {
+      const data = await fetchJson("/api/ga4/checkout-funnel", { propertyId, startDate, endDate, filters });
+      setSteps(data?.steps || null);
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Checkout funnel (event counts)</h3>
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Checkout Funnel"}
+        </button>
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-funnel"
+          payload={{ steps, dateRange: { start: startDate, end: endDate }, filters }}
+          resetSignal={resetSignal}
+        />
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {steps ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: 520 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["Add to cart", steps.add_to_cart],
+                ["Begin checkout", steps.begin_checkout],
+                ["Add shipping", steps.add_shipping_info],
+                ["Add payment", steps.add_payment_info],
+                ["Purchase", steps.purchase],
+              ].map(([label, val]) => (
+                <tr key={label}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(val || 0).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
@@ -1966,14 +1389,12 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
 function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState("daily"); // "daily" | "weekly"
-  const [rows, setRows] = useState([]); // [{ period, sessions, users, transactions, revenue }]
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
   // --- Label formatting helpers ---
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   function pad2(n) { return String(n).padStart(2, "0"); }
-
-  // Get the Monday of an ISO week
   function isoWeekStartUTC(year, week) {
     const jan4 = new Date(Date.UTC(year, 0, 4));
     const jan4Day = jan4.getUTCDay() || 7;
@@ -1983,30 +1404,23 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
     return mondayTarget;
   }
-
-  // 202435 or 2024W35 -> "06–12 Sep 2024"
   function formatYearWeekRange(s) {
     const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
     const year = Number(m[1]);
     const week = Number(m[2]);
-
-    const start = isoWeekStartUTC(year, week);           // Monday
-    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6); // Sunday
-
+    const start = isoWeekStartUTC(year, week);
+    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
     const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
     const endStr   = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
-
     return `${startStr}–${endStr}`;
   }
-
   function formatYYYYMMDD(s) {
     const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
     const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
     return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
   }
-
   function displayPeriodLabel(raw, gran) {
     return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
   }
@@ -2016,20 +1430,10 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
     const sessions = series.map((d) => d.sessions);
     const users = series.map((d) => d.users);
-
     const cfg = {
       type: "line",
-      data: {
-        labels,
-        datasets: [
-          { label: "Sessions", data: sessions },
-          { label: "Users", data: users },
-        ],
-      },
-      options: {
-        plugins: { legend: { position: "bottom" } },
-        scales: { y: { beginAtZero: true } },
-      },
+      data: { labels, datasets: [{ label: "Sessions", data: sessions }, { label: "Users", data: users }] },
+      options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
     };
     return `https://quickchart.io/chart?w=800&h=360&c=${encodeURIComponent(JSON.stringify(cfg))}`;
   }
@@ -2037,15 +1441,10 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/timeseries", {
-        propertyId, startDate, endDate, filters, granularity,
-      });
+      const data = await fetchJson("/api/ga4/timeseries", { propertyId, startDate, endDate, filters, granularity });
       setRows(data?.series || []);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setLoading(false); }
   };
 
   const hasRows = rows.length > 0;
@@ -2057,22 +1456,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Granularity
-          <select
-            value={granularity}
-            onChange={(e) => setGranularity(e.target.value)}
-            style={{ padding: 6 }}
-          >
+          <select value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
           </select>
         </label>
 
-        <button
-          onClick={load}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={loading || !propertyId}
-          title={!propertyId ? "Enter a GA4 property ID first" : ""}
-        >
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
           {loading ? "Loading…" : "Load Trends"}
         </button>
 
@@ -2096,17 +1486,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 
         <button
           onClick={() =>
-            downloadCsvGeneric(
-              `timeseries_${granularity}_${startDate}_to_${endDate}`,
-              rows,
-              [
-                { header: "Period", key: "period" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-                { header: "Transactions", key: "transactions" },
-                { header: "Revenue", key: "revenue" },
-              ]
-            )
+            downloadCsvGeneric(`timeseries_${granularity}_${startDate}_to_${endDate}`, rows, [
+              { header: "Period", key: "period" },
+              { header: "Sessions", key: "sessions" },
+              { header: "Users", key: "users" },
+              { header: "Transactions", key: "transactions" },
+              { header: "Revenue", key: "revenue" },
+            ])
           }
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!hasRows}
@@ -2115,24 +1501,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
         </button>
       </div>
 
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
-          Error: {error}
-        </p>
-      )}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
       {hasRows ? (
         <>
-          {/* Chart */}
           <div style={{ marginTop: 12 }}>
-            <img
-              src={buildLineChartUrl(rows)}
-              alt="Sessions & Users trend"
-              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
-            />
+            <img src={buildLineChartUrl(rows)} alt="Sessions & Users trend" style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }} />
           </div>
-
-          {/* Table */}
           <div style={{ marginTop: 12, overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
@@ -2150,15 +1525,9 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
                   return (
                     <tr key={r.period} title={r.period}>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                        {r.sessions.toLocaleString()}
-                      </td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                        {r.users.toLocaleString()}
-                      </td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                        {r.transactions.toLocaleString()}
-                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                         {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                       </td>
@@ -2169,9 +1538,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             </table>
           </div>
         </>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
 }
