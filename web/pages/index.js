@@ -227,7 +227,7 @@ export default function Home() {
   const [comparePrev, setComparePrev] = useState(false);
 
   // Fires whenever the user runs a fresh report (to reset AI & section data)
-const [refreshSignal, setRefreshSignal] = useState(0);
+  const [refreshSignal, setRefreshSignal] = useState(0);
 
   // Filter controls (current selectors)
   const [countrySel, setCountrySel] = useState("All");
@@ -249,31 +249,28 @@ const [refreshSignal, setRefreshSignal] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load preset once
   // Load from URL (if present) ONCE after mount
-useEffect(() => {
-  try {
-    if (typeof window === "undefined") return;
-    const q = decodeQuery();
-    if (!q) return;
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const q = decodeQuery();
+      if (!q) return;
 
-    // Only override if query has something meaningful
-    if (q.startDate) setStartDate(q.startDate);
-    if (q.endDate) setEndDate(q.endDate);
+      if (q.startDate) setStartDate(q.startDate);
+      if (q.endDate) setEndDate(q.endDate);
 
-    // Reflect filters in both selectors and applied filters,
-    // but keep "All" if not provided in URL
-    setCountrySel(q.country || "All");
-    setChannelSel(q.channelGroup || "All");
-    setAppliedFilters({
-      country: q.country || "All",
-      channelGroup: q.channelGroup || "All",
-    });
+      setCountrySel(q.country || "All");
+      setChannelSel(q.channelGroup || "All");
+      setAppliedFilters({
+        country: q.country || "All",
+        channelGroup: q.channelGroup || "All",
+      });
 
-    setComparePrev(!!q.comparePrev);
-  } catch {}
-}, []);
+      setComparePrev(!!q.comparePrev);
+    } catch {}
+  }, []);
 
+  // Load preset once (localStorage)
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -348,12 +345,11 @@ useEffect(() => {
       setResult(curr);
 
       // Update URL to reflect the view we just ran
-try {
-  const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
-  const path = window.location.pathname + (qs ? `?${qs}` : "");
-  window.history.replaceState(null, "", path);
-} catch {}
-
+      try {
+        const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+        const path = window.location.pathname + (qs ? `?${qs}` : "");
+        window.history.replaceState(null, "", path);
+      } catch {}
 
       // broadcast "new context" so sections & AI summaries reset
       setRefreshSignal((n) => n + 1);
@@ -376,36 +372,32 @@ try {
     }
   };
 
-  // Reset Dashboard:
-  // - Keep propertyId (per your request)
-  // - Reset dates to defaults
-  // - Clear filters to "All"
-  // - Clear current results
-  // - Remount data sections to clear their internal state
-  const resetDashboard = resetPreset;{
-  // Keep propertyId, reset everything else
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {}
+  // Reset Dashboard (keep propertyId)
+  const resetDashboard = () => {
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
 
-  setStartDate("2024-09-01");
-  setEndDate("2024-09-30");
-  setCountrySel("All");
-  setChannelSel("All");
-  setAppliedFilters({ country: "All", channelGroup: "All" });
-  setComparePrev(false);
+    setStartDate("2024-09-01");
+    setEndDate("2024-09-30");
+    setCountrySel("All");
+    setChannelSel("All");
+    setAppliedFilters({ country: "All", channelGroup: "All" });
+    setComparePrev(false);
 
-  // Clear section data so the dashboard visibly resets
-  setResult(null);
-  setPrevResult(null);
-  setError("");
+    // Clear section data so the dashboard visibly resets
+    setResult(null);
+    setPrevResult(null);
+    setError("");
 
-  // Remove any saved-view querystring (?start=...&end=... etc.)
-  try {
-    const path = window.location.pathname;
-    window.history.replaceState(null, "", path);
-  } catch {}
-};
+    // Remove any saved-view querystring (?start=...&end=... etc.)
+    try {
+      const path = window.location.pathname;
+      window.history.replaceState(null, "", path);
+    } catch {}
+
+    // Force children to reset too
+    setDashKey((k) => k + 1);
+    setRefreshSignal((n) => n + 1);
+  };
 
   return (
     <main
@@ -472,20 +464,18 @@ try {
 
         <button
           onClick={async () => {
-          // Ensure URL reflects current selections before copying
-          try {
-          const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
-          const path = window.location.pathname + (qs ? `?${qs}` : "");
-          window.history.replaceState(null, "", path);
-          } catch {}
-          const ok = await copyCurrentUrl();
-          if (!ok) alert("Could not copy to clipboard.");
-         }}
+            try {
+              const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+              const path = window.location.pathname + (qs ? `?${qs}` : "");
+              window.history.replaceState(null, "", path);
+            } catch {}
+            const ok = await copyCurrentUrl();
+            if (!ok) alert("Could not copy to clipboard.");
+          }}
           style={{ padding: "10px 14px", cursor: "pointer" }}
         >
-         Copy share link
+          Copy share link
         </button>
-
 
         <button
           onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
@@ -589,13 +579,12 @@ try {
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
             <AiBlock
-             asButton
-             buttonLabel="Summarise with AI"
-             endpoint="/api/insights/summarise"
-             payload={{ rows, totals, dateRange: { start: startDate, end: endDate }, filters: appliedFilters }}
-             resetSignal={refreshSignal}
-           />
-
+              asButton
+              buttonLabel="Summarise with AI"
+              endpoint="/api/insights/summarise"
+              payload={{ rows, totals, dateRange: { start: startDate, end: endDate }, filters: appliedFilters }}
+              resetSignal={refreshSignal}
+            />
           </div>
 
           <ul style={{ marginTop: 12 }}>
@@ -676,6 +665,7 @@ try {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
+        resetSignal={refreshSignal}
       />
 
       {/* Trends over time */}
@@ -688,25 +678,25 @@ try {
 
       {/* Campaigns */}
       <Campaigns
-       propertyId={propertyId}
-       startDate={startDate}
-       endDate={endDate}
-       filters={appliedFilters}
-     />
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+      />
 
-     <CampaignDrilldown
-      propertyId={propertyId}
-      startDate={startDate}
-      endDate={endDate}
-      filters={appliedFilters}
-     />
+      <CampaignDrilldown
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+      />
 
-     <CampaignsOverview
-      propertyId={propertyId}
-      startDate={startDate}
-      endDate={endDate}
-      filters={appliedFilters}
-     />
+      <CampaignsOverview
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+      />
 
       {/* Top pages */}
       <TopPages
@@ -715,6 +705,7 @@ try {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
+        resetSignal={refreshSignal}
       />
 
       {/* Landing Pages × Attribution */}
@@ -723,7 +714,7 @@ try {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
-     />
+      />
 
       {/* E-commerce KPIs */}
       <EcommerceKPIs
@@ -732,6 +723,7 @@ try {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
+        resetSignal={refreshSignal}
       />
 
       {/* Checkout funnel */}
@@ -741,6 +733,7 @@ try {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
+        resetSignal={refreshSignal}
       />
 
       {/* Raw JSON (debug) */}
@@ -770,7 +763,7 @@ function AiBlock({
   buttonLabel = "Summarise with AI",
   endpoint,
   payload,
-  resetSignal, // NEW: when this changes, clear previous AI text/error
+  resetSignal, // when this changes, clear previous AI text/error
 }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
@@ -843,11 +836,12 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
-  useEffect(() => {
+
   // Clear previous data/errors whenever a new report runs
-  setRows([]);
-  setError("");
-}, [resetSignal]);
+  useEffect(() => {
+    setRows([]);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -1035,10 +1029,11 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
-useEffect(() => {
-  setRows([]);
-  setError("");
-}, [resetSignal]);
+
+  useEffect(() => {
+    setRows([]);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -1149,7 +1144,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
     setLoading(true); setError(""); setRows([]);
     try {
       const data = await fetchJson("/api/ga4/landing-pages", {
-        propertyId, startDate, endDate, filters, limit: 500, // grab plenty; we’ll trim client-side
+        propertyId, startDate, endDate, filters, limit: 500,
       });
 
       const parsed = (data?.rows || []).map((r, i) => ({
@@ -1180,16 +1175,14 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
   const filtered = useMemo(() => {
     let out = rows;
     if (minSessions > 0) out = out.filter(r => (r.sessions || 0) >= minSessions);
-    // keep order by sessions desc (server already sends this, but we ensure it)
     out = [...out].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
-    if (topOnly) out = out.slice(0, 25); // show top N only
+    if (topOnly) out = out.slice(0, 25);
     return out;
   }, [rows, minSessions, topOnly]);
 
   const shownCount = filtered.length;
   const totalCount = rows.length;
 
-  // CSV & AI export use the *filtered* rows so users get what they see
   const exportCsv = () => {
     downloadCsvGeneric(
       `landing_pages_${startDate}_to_${endDate}`,
@@ -1336,10 +1329,11 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
+
   useEffect(() => {
-  setTotals(null);
-  setError("");
-}, [resetSignal]);
+    setTotals(null);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -1439,10 +1433,11 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
   const [error, setError] = useState("");
+
   useEffect(() => {
-  setSteps(null);
-  setError("");
-}, [resetSignal]);
+    setSteps(null);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
     setLoading(true);
@@ -1741,18 +1736,16 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      // Reuse your existing campaigns list endpoint.
-      // If your endpoint is named differently, just change the URL below.
       const data = await fetchJson("/api/ga4/campaigns", {
         propertyId, startDate, endDate, filters, limit: 100,
       });
 
       const parsed = (data.rows || []).map((r, i) => {
-        const name          = r.dimensionValues?.[0]?.value ?? "(not set)";            // sessionCampaignName
-        const sessions      = Number(r.metricValues?.[0]?.value || 0);                 // sessions
-        const users         = Number(r.metricValues?.[1]?.value || 0);                 // totalUsers
-        const transactions  = Number(r.metricValues?.[2]?.value || 0);                 // transactions
-        const revenue       = Number(r.metricValues?.[3]?.value || 0);                 // totalRevenue
+        const name          = r.dimensionValues?.[0]?.value ?? "(not set)";
+        const sessions      = Number(r.metricValues?.[0]?.value || 0);
+        const users         = Number(r.metricValues?.[1]?.value || 0);
+        const transactions  = Number(r.metricValues?.[2]?.value || 0);
+        const revenue       = Number(r.metricValues?.[3]?.value || 0);
         const cvr           = sessions > 0 ? (transactions / sessions) * 100 : 0;
         const aov           = transactions > 0 ? revenue / transactions : 0;
 
@@ -1762,7 +1755,6 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
         };
       });
 
-      // Sort by revenue desc as default
       parsed.sort((a, b) => b.revenue - a.revenue);
 
       setRows(parsed);
@@ -1773,7 +1765,6 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
     }
   };
 
-  // simple client-side filter by campaign name
   const visible = q
     ? rows.filter(r => r.name.toLowerCase().includes(q.toLowerCase()))
     : rows;
@@ -1902,54 +1893,48 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [rows, setRows] = useState([]); // [{ period, sessions, users, transactions, revenue }]
   const [error, setError] = useState("");
 
-// --- Label formatting helpers ---
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  // --- Label formatting helpers ---
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function pad2(n) { return String(n).padStart(2, "0"); }
 
-function pad2(n) { return String(n).padStart(2, "0"); }
+  // Get the Monday of an ISO week
+  function isoWeekStartUTC(year, week) {
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const jan4Day = jan4.getUTCDay() || 7;
+    const mondayWeek1 = new Date(jan4);
+    mondayWeek1.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+    const mondayTarget = new Date(mondayWeek1);
+    mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
+    return mondayTarget;
+  }
 
-// Get the Monday of an ISO week
-function isoWeekStartUTC(year, week) {
-  // Start from Jan 4th (always in ISO week 1), then step to the requested week
-  const jan4 = new Date(Date.UTC(year, 0, 4));
-  const jan4Day = jan4.getUTCDay() || 7; // 1..7 (Mon..Sun)
-  const mondayWeek1 = new Date(jan4);
-  mondayWeek1.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
-  const mondayTarget = new Date(mondayWeek1);
-  mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
-  return mondayTarget;
-}
+  // 202435 or 2024W35 -> "06–12 Sep 2024"
+  function formatYearWeekRange(s) {
+    const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
+    if (!m) return String(s || "");
+    const year = Number(m[1]);
+    const week = Number(m[2]);
 
-// 202435 or 2024W35 -> "06–12 Sep 2024" (week date range)
-function formatYearWeekRange(s) {
-  const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
-  if (!m) return String(s || "");
-  const year = Number(m[1]);
-  const week = Number(m[2]);
+    const start = isoWeekStartUTC(year, week);           // Monday
+    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6); // Sunday
 
-  const start = isoWeekStartUTC(year, week);           // Monday
-  const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6); // Sunday
+    const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
+    const endStr   = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
 
-  const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
-  const endStr   = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
+    return `${startStr}–${endStr}`;
+  }
 
-  // Compact, readable axis label:
-  return `${startStr}–${endStr}`;
-}
+  function formatYYYYMMDD(s) {
+    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
+    if (!m) return String(s || "");
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
+  }
 
-// Already in your code; keep as-is
-function formatYYYYMMDD(s) {
-  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
-  if (!m) return String(s || "");
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-  return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
-}
+  function displayPeriodLabel(raw, gran) {
+    return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
+  }
 
-// Use the new weekly formatter here:
-function displayPeriodLabel(raw, gran) {
-  return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
-}
-
-  // small helper for a QuickChart line chart
   function buildLineChartUrl(series) {
     if (!series?.length) return "";
     const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
