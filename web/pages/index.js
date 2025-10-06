@@ -4,19 +4,24 @@ import { useEffect, useMemo, useState } from "react";
 /* ============================== Helpers ============================== */
 
 /** -------- URL helpers (Saved Views) -------- */
-function encodeQuery(state, { autorun = true, includePropertyId = false } = {}) {
+function encodeQuery(
+  state,
+  opts = { autorun: true, includePropertyId: true }
+) {
   const p = new URLSearchParams();
+
   if (state.startDate) p.set("start", state.startDate);
   if (state.endDate) p.set("end", state.endDate);
-  if (state.appliedFilters?.country && state.appliedFilters.country !== "All") {
-    p.set("country", state.appliedFilters.country);
-  }
-  if (state.appliedFilters?.channelGroup && state.appliedFilters.channelGroup !== "All") {
-    p.set("channel", state.appliedFilters.channelGroup);
-  }
+
+  const country = state.appliedFilters?.country;
+  const channel = state.appliedFilters?.channelGroup;
+  if (country && country !== "All") p.set("country", country);
+  if (channel && channel !== "All") p.set("channel", channel);
+
   if (state.comparePrev) p.set("compare", "1");
-  if (autorun) p.set("autorun", "1");
-  if (includePropertyId && state.propertyId) p.set("prop", state.propertyId);
+  if (opts.autorun) p.set("autorun", "1");
+  if (opts.includePropertyId && state.propertyId) p.set("prop", state.propertyId);
+
   return p.toString();
 }
 
@@ -275,6 +280,22 @@ export default function Home() {
     } catch {}
   }, []);
 
+  // adopt propertyId from the link (if present)
+if (q.prop) setPropertyId(q.prop);
+
+// autorun if the link asked for it and we have a propertyId
+if (q.autorun && (q.prop || propertyId)) {
+  // Let state setters flush first
+  setTimeout(() => {
+    // ensure appliedFilters reflect URL on first run
+    setAppliedFilters({
+      country: q.country || "All",
+      channelGroup: q.channelGroup || q.channel || "All",
+    });
+    runReport();
+  }, 0);
+}
+
   useEffect(() => {
   try {
     if (typeof window === "undefined") return;
@@ -507,14 +528,17 @@ export default function Home() {
 
         <button
           onClick={async () => {
-          // write current view into URL (autorun on open)
+          // Build a URL that reproduces this view and auto-runs on open
           const qs = encodeQuery(
-        { startDate, endDate, appliedFilters, comparePrev, propertyId },
-        { autorun: true, includePropertyId: false } // set true if you want prop in the link
-        );
+          { startDate, endDate, appliedFilters, comparePrev, propertyId },
+          { autorun: true, includePropertyId: true } // set to false if you don't want to expose prop ID
+          );
           const url = window.location.pathname + (qs ? `?${qs}` : "");
+
+          // Update the browser URL (so copying picks up the latest)
           try { window.history.replaceState(null, "", url); } catch {}
 
+          // Copy to clipboard with “Copied!” feedback
           try {
           await navigator.clipboard.writeText(window.location.href);
           setCopiedShare(true);
@@ -524,9 +548,10 @@ export default function Home() {
           }
           }}
           style={{ padding: "10px 14px", cursor: "pointer" }}
-        >
-        {copiedShare ? "Copied!" : "Copy share link"}
+         >
+          {copiedShare ? "Copied!" : "Copy share link"}
         </button>
+
 
         <button
           onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
