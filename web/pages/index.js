@@ -382,7 +382,7 @@ try {
   // - Clear filters to "All"
   // - Clear current results
   // - Remount data sections to clear their internal state
-  const resetPreset = () => {
+  const resetDashboard = resetPreset;{
   // Keep propertyId, reset everything else
   try {
     localStorage.removeItem(STORAGE_KEY);
