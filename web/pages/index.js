@@ -2,6 +2,44 @@
 import { useEffect, useMemo, useState } from "react";
 
 /* ============================== Helpers ============================== */
+
+/** -------- URL helpers (Saved Views) -------- */
+function encodeQuery(state) {
+  const p = new URLSearchParams();
+  if (state.startDate) p.set("start", state.startDate);
+  if (state.endDate) p.set("end", state.endDate);
+  if (state.appliedFilters?.country && state.appliedFilters.country !== "All") {
+    p.set("country", state.appliedFilters.country);
+  }
+  if (state.appliedFilters?.channelGroup && state.appliedFilters.channelGroup !== "All") {
+    p.set("channel", state.appliedFilters.channelGroup);
+  }
+  if (state.comparePrev) p.set("compare", "1");
+  return p.toString();
+}
+
+function decodeQuery() {
+  if (typeof window === "undefined") return null;
+  const p = new URLSearchParams(window.location.search);
+  const q = Object.fromEntries(p.entries());
+  return {
+    startDate: q.start || null,
+    endDate: q.end || null,
+    country: q.country || "All",
+    channelGroup: q.channel || "All",
+    comparePrev: q.compare === "1",
+  };
+}
+
+async function copyCurrentUrl() {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const STORAGE_KEY = "insightgpt_preset_v2";
 
 const COUNTRY_OPTIONS = [
@@ -212,6 +250,30 @@ const [refreshSignal, setRefreshSignal] = useState(0);
   const [loading, setLoading] = useState(false);
 
   // Load preset once
+  // Load from URL (if present) ONCE after mount
+useEffect(() => {
+  try {
+    if (typeof window === "undefined") return;
+    const q = decodeQuery();
+    if (!q) return;
+
+    // Only override if query has something meaningful
+    if (q.startDate) setStartDate(q.startDate);
+    if (q.endDate) setEndDate(q.endDate);
+
+    // Reflect filters in both selectors and applied filters,
+    // but keep "All" if not provided in URL
+    setCountrySel(q.country || "All");
+    setChannelSel(q.channelGroup || "All");
+    setAppliedFilters({
+      country: q.country || "All",
+      channelGroup: q.channelGroup || "All",
+    });
+
+    setComparePrev(!!q.comparePrev);
+  } catch {}
+}, []);
+
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -285,6 +347,14 @@ const [refreshSignal, setRefreshSignal] = useState(0);
       });
       setResult(curr);
 
+      // Update URL to reflect the view we just ran
+try {
+  const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+  const path = window.location.pathname + (qs ? `?${qs}` : "");
+  window.history.replaceState(null, "", path);
+} catch {}
+
+
       // broadcast "new context" so sections & AI summaries reset
       setRefreshSignal((n) => n + 1);
 
@@ -312,17 +382,30 @@ const [refreshSignal, setRefreshSignal] = useState(0);
   // - Clear filters to "All"
   // - Clear current results
   // - Remount data sections to clear their internal state
-  const resetDashboard = () => {
-    setStartDate("2024-09-01");
-    setEndDate("2024-09-30");
-    setCountrySel("All");
-    setChannelSel("All");
-    setAppliedFilters({ country: "All", channelGroup: "All" });
-    setResult(null);
-    setPrevResult(null);
-    setError("");
-    setDashKey((k) => k + 1); // force remount of sections
-  };
+  const resetPreset = () => {
+  // Keep propertyId, reset everything else
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {}
+
+  setStartDate("2024-09-01");
+  setEndDate("2024-09-30");
+  setCountrySel("All");
+  setChannelSel("All");
+  setAppliedFilters({ country: "All", channelGroup: "All" });
+  setComparePrev(false);
+
+  // Clear section data so the dashboard visibly resets
+  setResult(null);
+  setPrevResult(null);
+  setError("");
+
+  // Remove any saved-view querystring (?start=...&end=... etc.)
+  try {
+    const path = window.location.pathname;
+    window.history.replaceState(null, "", path);
+  } catch {}
+};
 
   return (
     <main
@@ -386,6 +469,23 @@ const [refreshSignal, setRefreshSignal] = useState(0);
         >
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
+
+        <button
+          onClick={async () => {
+          // Ensure URL reflects current selections before copying
+          try {
+          const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+          const path = window.location.pathname + (qs ? `?${qs}` : "");
+          window.history.replaceState(null, "", path);
+          } catch {}
+          const ok = await copyCurrentUrl();
+          if (!ok) alert("Could not copy to clipboard.");
+         }}
+          style={{ padding: "10px 14px", cursor: "pointer" }}
+        >
+         Copy share link
+        </button>
+
 
         <button
           onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
