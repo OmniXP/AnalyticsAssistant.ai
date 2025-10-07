@@ -1,97 +1,94 @@
 // /pages/api/ga4/products.js
-import { getIronSession } from "iron-session";
+import { getAccessToken } from "../auth/google/token"; // adjust path if your token util lives elsewhere
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
+// Small helpers to build GA4 filter expressions safely
+function buildFilter(fieldName, value) {
+  if (!value || value === "All") return null;
+  // For channel group and country we match exact string
+  return {
+    filter: {
+      fieldName,
+      stringFilter: { matchType: "EXACT", value }
+    }
+  };
+}
+
+function mergeAndFilters(filters) {
+  const andGroup = filters.filter(Boolean);
+  if (!andGroup.length) return null;
+  return { andGroup: { expressions: andGroup } };
+}
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
-
-  const session = await getIronSession(req, res, sessionOptions);
-  const ga = session.gaTokens;
-  if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
+  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
   try {
-    const { propertyId, startDate, endDate, limit = 50, filters } = req.body || {};
+    const {
+      propertyId,
+      startDate,
+      endDate,
+      filters = {},
+      limit = 50,
+    } = req.body || {};
+
     if (!propertyId || !startDate || !endDate) {
       return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
     }
 
-    // Build an optional dimensionFilter from your global filters
-    // (It's OK to filter on a dimension that isn't in 'dimensions' below.)
-    const andConditions = [];
-    if (filters?.country && filters.country !== "All") {
-      andConditions.push({
-        filter: {
-          fieldName: "country",
-          stringFilter: { value: String(filters.country), matchType: "EXACT" },
-        },
-      });
-    }
-    if (filters?.channelGroup && filters.channelGroup !== "All") {
-      andConditions.push({
-        filter: {
-          fieldName: "sessionDefaultChannelGroup",
-          stringFilter: { value: String(filters.channelGroup), matchType: "EXACT" },
-        },
-      });
-    }
+    const accessToken = await getAccessToken(); // your OAuth helper
 
-    const body = {
+    // IMPORTANT: use **item-scoped** dimensions and **compatible** metrics.
+    // - dimensions: itemName, itemId
+    // - metrics: itemsViewed, addToCarts, itemPurchaseQuantity, itemRevenue
+    // These are all item-scoped and compatible with each other.
+    const requestBody = {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "itemId" }, { name: "itemName" }],
+      dimensions: [
+        { name: "itemName" },
+        { name: "itemId" },
+      ],
       metrics: [
-        { name: "itemsPurchased" },
+        { name: "itemsViewed" },
+        { name: "addToCarts" },
+        { name: "itemPurchaseQuantity" },
         { name: "itemRevenue" },
       ],
-      // Order by itemsPurchased desc, then revenue desc
+      limit: Math.max(1, Math.min(5000, Number(limit) || 50)),
       orderBys: [
-        { metric: { metricName: "itemsPurchased" }, desc: true },
         { metric: { metricName: "itemRevenue" }, desc: true },
+        { metric: { metricName: "itemPurchaseQuantity" }, desc: true },
       ],
-      limit: String(limit),
     };
 
-    if (andConditions.length) {
-      body.dimensionFilter = { andGroup: { expressions: andConditions } };
-    }
+    // Apply optional filters (country / default channel group) if not "All"
+    const countryExpr = buildFilter("country", filters.country);
+    const chExpr = buildFilter("sessionDefaultChannelGroup", filters.channelGroup);
+    const where = mergeAndFilters([countryExpr, chExpr]);
+    if (where) requestBody.dimensionFilter = where;
 
     const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-    const apiRes = await fetch(url, {
+    const gaRes = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ga.access_token}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     });
 
-    const text = await apiRes.text();
+    const text = await gaRes.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch {}
-
-    if (!apiRes.ok) {
-      const msg =
-        data?.error?.message ||
-        data?.message ||
-        text ||
-        `HTTP ${apiRes.status}`;
-      return res.status(400).json({
+    if (!gaRes.ok) {
+      return res.status(gaRes.status).json({
         error: "GA4 API error (products)",
-        details: data || { message: msg },
+        details: data || text || `HTTP ${gaRes.status}`
       });
     }
 
+    // Return the GA4 payload directly; frontend will parse metric headers safely
     return res.status(200).json(data || {});
   } catch (e) {
-    return res.status(500).json({ error: "Server error (products)", message: String(e?.message || e) });
+    return res.status(500).json({ error: "Server error (products)", details: String(e?.message || e) });
   }
 }
