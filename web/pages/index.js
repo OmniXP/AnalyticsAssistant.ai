@@ -516,14 +516,13 @@ export default function Home() {
       />
 
       {/* Product performance */}
-      <ProductPerformance
-       key={`pp-${dashKey}`}
-       propertyId={propertyId}
-       startDate={startDate}
-       endDate={endDate}
-       filters={appliedFilters}
-       resetSignal={refreshSignal}
-     />
+        <Products
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+        resetSignal={refreshSignal}
+      />
 
       {/* Checkout funnel */}
       <CheckoutFunnel
@@ -673,7 +672,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
       ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
-  
+
 /* ============================== Campaigns Overview ============================== */
 function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading]   = useState(false);
@@ -1657,64 +1656,40 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================== Product Performance ============================== */
-function ProductPerformance({ propertyId, startDate, endDate, filters, resetSignal }) {
+/* ============================== Product performance ============================== */
+function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);   // parsed item rows
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  // Client-side view controls
-  const [topOnly, setTopOnly] = useState(false);
-  const [minViews, setMinViews] = useState(0);
-
-  // Reset when a new main report is run
+  // Clear old data if a new report runs
   useEffect(() => {
     setRows([]);
     setError("");
-    setTopOnly(false);
-    setMinViews(0);
   }, [resetSignal]);
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/product-performance", {
-        propertyId, startDate, endDate, filters, limit: 200,
+      const data = await fetchJson("/api/ga4/products", {
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        limit: 50,
       });
 
-      // Parse GA rows -> friendlier shape
-      const parsed = (data?.rows || []).map((r, i) => {
-        const name  = r?.dimensionValues?.[0]?.value || "(unknown)";
-        const id    = r?.dimensionValues?.[1]?.value || `(row-${i})`;
-
-        const views        = Number(r?.metricValues?.[0]?.value || 0); // itemViews
-        const addToCarts   = Number(r?.metricValues?.[1]?.value || 0); // addToCarts
-        const purchasedQty = Number(r?.metricValues?.[2]?.value || 0); // itemPurchaseQuantity
-        const revenue      = Number(r?.metricValues?.[3]?.value || 0); // itemRevenue
-        const cartToView   = Number(r?.metricValues?.[4]?.value || 0); // cartToViewRate (already %)
-
-        // Derive other useful rates client-side (guard divide-by-zero)
-        const viewToCart = views > 0 ? (addToCarts / views) * 100 : 0;
-        const cartToBuy  = addToCarts > 0 ? (purchasedQty / addToCarts) * 100 : 0;
-        const viewToBuy  = views > 0 ? (purchasedQty / views) * 100 : 0;
-
-        return {
-          key: `${id}-${i}`,
-          name, id,
-          views, addToCarts, purchasedQty, revenue,
-          cartToViewRate: cartToView,   // from GA
-          viewToCartRate: viewToCart,   // derived
-          cartToPurchaseRate: cartToBuy,// derived
-          overallCR: viewToBuy,         // derived
-        };
-      });
-
-      // Sort by revenue desc by default
-      parsed.sort((a, b) => b.revenue - a.revenue);
+      // Expect: dimensions [itemId, itemName], metrics [itemsPurchased, itemRevenue]
+      const parsed = (data?.rows || []).map((r, i) => ({
+        id: r.dimensionValues?.[0]?.value || `row-${i}`,
+        name: r.dimensionValues?.[1]?.value || "(unknown)",
+        itemsPurchased: Number(r.metricValues?.[0]?.value || 0),
+        itemRevenue: Number(r.metricValues?.[1]?.value || 0),
+      }));
 
       setRows(parsed);
-      setTopOnly(false);
-      setMinViews(0);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -1722,46 +1697,17 @@ function ProductPerformance({ propertyId, startDate, endDate, filters, resetSign
     }
   };
 
-  // For slider bounds
-  const maxViews = useMemo(() => rows.reduce((m, r) => Math.max(m, r.views || 0), 0), [rows]);
-
-  // Apply client-side view
-  const visible = useMemo(() => {
-    let out = rows;
-    if (minViews > 0) out = out.filter(r => (r.views || 0) >= minViews);
-    if (topOnly) out = out.slice(0, 50); // show top 50 if toggled
-    return out;
-  }, [rows, minViews, topOnly]);
-
-  const exportCsv = () => {
+  const exportCsv = () =>
     downloadCsvGeneric(
-      `product_performance_${startDate}_to_${endDate}`,
-      visible.map(r => ({
-        name: r.name,
-        id: r.id,
-        views: r.views,
-        add_to_carts: r.addToCarts,
-        purchased_qty: r.purchasedQty,
-        revenue: r.revenue,
-        "view→cart %": r.viewToCartRate.toFixed(2),
-        "cart→purchase %": r.cartToPurchaseRate.toFixed(2),
-        "view→purchase %": r.overallCR.toFixed(2),
-      })),
+      `products_${startDate}_to_${endDate}`,
+      rows,
       [
-        { header: "Item Name", key: "name" },
-        { header: "Item ID", key: "id" },
-        { header: "Item Views", key: "views" },
-        { header: "Add-to-Carts", key: "add_to_carts" },
-        { header: "Items Purchased", key: "purchased_qty" },
-        { header: "Item Revenue", key: "revenue" },
-        { header: "View→Cart %", key: "view→cart %" },
-        { header: "Cart→Purchase %", key: "cart→purchase %" },
-        { header: "View→Purchase %", key: "view→purchase %" },
+        { header: "Item",            key: "name" },
+        { header: "ID",              key: "id" },
+        { header: "Items Purchased", key: "itemsPurchased" },
+        { header: "Item Revenue",    key: "itemRevenue" },
       ]
     );
-  };
-
-  const hasRows = visible.length > 0;
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -1784,20 +1730,17 @@ function ProductPerformance({ propertyId, startDate, endDate, filters, resetSign
             kind: "products",
             dateRange: { start: startDate, end: endDate },
             filters,
-            // Keep payload lean: send top 50 after client-side filters.
-            items: visible.slice(0, 50).map(r => ({
-              name: r.name,
+            rows: rows.map(r => ({
               id: r.id,
-              views: r.views,
-              addToCarts: r.addToCarts,
-              purchasedQty: r.purchasedQty,
-              revenue: r.revenue,
-              viewToCartRate: Number(r.viewToCartRate.toFixed(2)),
-              cartToPurchaseRate: Number(r.cartToPurchaseRate.toFixed(2)),
-              overallCR: Number(r.overallCR.toFixed(2)),
+              name: r.name,
+              itemsPurchased: r.itemsPurchased,
+              itemRevenue: r.itemRevenue,
             })),
-            instructions:
-              "Identify high-views/low-CR products (fixes), high-CR/low-views winners (scale), potential price/stock issues from ratios, and at least 2–3 concrete hypotheses + test ideas (copy, offer, UX, bundle/upsell, image, trust).",
+            goals: [
+              "Identify best and worst performing items by purchase volume and revenue",
+              "Spot opportunities for price, presentation, or inventory tweaks",
+              "Give at least 2 concrete test ideas to lift CR or AOV"
+            ],
           }}
           resetSignal={resetSignal}
         />
@@ -1805,84 +1748,48 @@ function ProductPerformance({ propertyId, startDate, endDate, filters, resetSign
         <button
           onClick={exportCsv}
           style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!hasRows}
+          disabled={!rows.length}
         >
           Download CSV
         </button>
       </div>
 
-      {/* Client-side view controls */}
-      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <input type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} />
-          Top items only (50)
-        </label>
+      {error && (
+        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
+          Error: {error}
+        </p>
+      )}
 
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 260 }}>
-          <span style={{ fontSize: 13, color: "#333" }}>Min item views</span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(10, maxViews)}
-            step={1}
-            value={Math.min(minViews, Math.max(10, maxViews))}
-            onChange={(e) => setMinViews(Number(e.target.value))}
-            style={{ width: 160 }}
-            disabled={!rows.length}
-          />
-          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
-            {minViews}
-          </span>
-        </div>
-
-        {rows.length > 0 && (
-          <span style={{ fontSize: 12, color: "#555" }}>
-            Showing <b>{visible.length.toLocaleString()}</b> of {rows.length.toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-
-      {hasRows ? (
+      {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
                 <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
                 <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Views</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Add-to-Carts</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Purchased (qty)</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items Purchased</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Revenue</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>View→Cart %</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Cart→Purchase %</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>View→Purchase %</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map((r) => (
-                <tr key={r.key}>
+              {rows.map((r, i) => (
+                <tr key={`${r.id}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.addToCarts.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchasedQty.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                    {r.itemsPurchased.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.viewToCartRate.toFixed(2)}%</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cartToPurchaseRate.toFixed(2)}%</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.overallCR.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.itemRevenue || 0)}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
       )}
     </section>
   );
 }
-
