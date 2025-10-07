@@ -19,11 +19,6 @@ function decodeQuery() {
   };
 }
 
-async function copyToClipboard(text) {
-  try { await navigator.clipboard.writeText(text); return true; }
-  catch { return false; }
-}
-
 const STORAGE_KEY = "insightgpt_preset_v2";
 
 const COUNTRY_OPTIONS = [
@@ -194,9 +189,6 @@ export default function Home() {
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
 
-  // Copy link feedback
-  const [copiedShare, setCopiedShare] = useState(false);
-
   // Fires whenever the user runs a fresh report (to reset AI & section data)
   const [refreshSignal, setRefreshSignal] = useState(0);
 
@@ -217,26 +209,6 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load from URL once (saved view)
-  const [shouldAutorun, setShouldAutorun] = useState(false);
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      const q = decodeQuery();
-      if (!q) return;
-
-      if (q.startDate) setStartDate(q.startDate);
-      if (q.endDate) setEndDate(q.endDate);
-      setCountrySel(q.country || "All");
-      setChannelSel(q.channelGroup || "All");
-      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
-      setComparePrev(!!q.comparePrev);
-
-      if (q.prop) setPropertyId(q.prop); // optional: prefill property id
-      setShouldAutorun(!!q.autorun);
-    } catch {}
-  }, []);
-
   // Load preset once (localStorage)
   useEffect(() => {
     try {
@@ -250,15 +222,6 @@ export default function Home() {
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Auto-run if link requested it and we have a propertyId
-  useEffect(() => {
-    if (shouldAutorun && propertyId) {
-      runReport(); // will also trigger refreshSignal
-      setShouldAutorun(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldAutorun, propertyId]);
 
   // Save preset whenever these change
   useEffect(() => {
@@ -379,31 +342,6 @@ export default function Home() {
 
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Running…" : "Run GA4 Report"}
-        </button>
-
-        <button
-          onClick={async () => {
-            try {
-              const p = new URLSearchParams();
-              if (startDate) p.set("start", startDate);
-              if (endDate) p.set("end", endDate);
-              if (appliedFilters?.country && appliedFilters.country !== "All") p.set("country", appliedFilters.country);
-              if (appliedFilters?.channelGroup && appliedFilters.channelGroup !== "All") p.set("channel", appliedFilters.channelGroup);
-              if (comparePrev) p.set("compare", "1");
-              if (propertyId) p.set("prop", propertyId);
-              // tell receiver to autorun
-              p.set("autorun", "1");
-              const shareUrl = `${window.location.origin}${window.location.pathname}?${p.toString()}`;
-              const ok = await copyToClipboard(shareUrl);
-              if (ok) { setCopiedShare(true); setTimeout(() => setCopiedShare(false), 1400); }
-              else { alert("Could not copy to clipboard."); }
-            } catch {
-              alert("Could not copy to clipboard.");
-            }
-          }}
-          style={{ padding: "10px 14px", cursor: "pointer" }}
-        >
-          {copiedShare ? "Copied!" : "Copy share link"}
         </button>
 
         <button
@@ -574,6 +512,16 @@ export default function Home() {
         filters={appliedFilters}
         resetSignal={refreshSignal}
       />
+
+      {/* Product performance */}
+      <ProductPerformance
+       key={`pp-${dashKey}`}
+       propertyId={propertyId}
+       startDate={startDate}
+       endDate={endDate}
+       filters={appliedFilters}
+       resetSignal={refreshSignal}
+     />
 
       {/* Checkout funnel */}
       <CheckoutFunnel
@@ -1542,3 +1490,233 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     </section>
   );
 }
+
+/* ============================== Product Performance ============================== */
+function ProductPerformance({ propertyId, startDate, endDate, filters, resetSignal }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);   // parsed item rows
+  const [error, setError] = useState("");
+
+  // Client-side view controls
+  const [topOnly, setTopOnly] = useState(false);
+  const [minViews, setMinViews] = useState(0);
+
+  // Reset when a new main report is run
+  useEffect(() => {
+    setRows([]);
+    setError("");
+    setTopOnly(false);
+    setMinViews(0);
+  }, [resetSignal]);
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const data = await fetchJson("/api/ga4/product-performance", {
+        propertyId, startDate, endDate, filters, limit: 200,
+      });
+
+      // Parse GA rows -> friendlier shape
+      const parsed = (data?.rows || []).map((r, i) => {
+        const name  = r?.dimensionValues?.[0]?.value || "(unknown)";
+        const id    = r?.dimensionValues?.[1]?.value || `(row-${i})`;
+
+        const views        = Number(r?.metricValues?.[0]?.value || 0); // itemViews
+        const addToCarts   = Number(r?.metricValues?.[1]?.value || 0); // addToCarts
+        const purchasedQty = Number(r?.metricValues?.[2]?.value || 0); // itemPurchaseQuantity
+        const revenue      = Number(r?.metricValues?.[3]?.value || 0); // itemRevenue
+        const cartToView   = Number(r?.metricValues?.[4]?.value || 0); // cartToViewRate (already %)
+
+        // Derive other useful rates client-side (guard divide-by-zero)
+        const viewToCart = views > 0 ? (addToCarts / views) * 100 : 0;
+        const cartToBuy  = addToCarts > 0 ? (purchasedQty / addToCarts) * 100 : 0;
+        const viewToBuy  = views > 0 ? (purchasedQty / views) * 100 : 0;
+
+        return {
+          key: `${id}-${i}`,
+          name, id,
+          views, addToCarts, purchasedQty, revenue,
+          cartToViewRate: cartToView,   // from GA
+          viewToCartRate: viewToCart,   // derived
+          cartToPurchaseRate: cartToBuy,// derived
+          overallCR: viewToBuy,         // derived
+        };
+      });
+
+      // Sort by revenue desc by default
+      parsed.sort((a, b) => b.revenue - a.revenue);
+
+      setRows(parsed);
+      setTopOnly(false);
+      setMinViews(0);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // For slider bounds
+  const maxViews = useMemo(() => rows.reduce((m, r) => Math.max(m, r.views || 0), 0), [rows]);
+
+  // Apply client-side view
+  const visible = useMemo(() => {
+    let out = rows;
+    if (minViews > 0) out = out.filter(r => (r.views || 0) >= minViews);
+    if (topOnly) out = out.slice(0, 50); // show top 50 if toggled
+    return out;
+  }, [rows, minViews, topOnly]);
+
+  const exportCsv = () => {
+    downloadCsvGeneric(
+      `product_performance_${startDate}_to_${endDate}`,
+      visible.map(r => ({
+        name: r.name,
+        id: r.id,
+        views: r.views,
+        add_to_carts: r.addToCarts,
+        purchased_qty: r.purchasedQty,
+        revenue: r.revenue,
+        "view→cart %": r.viewToCartRate.toFixed(2),
+        "cart→purchase %": r.cartToPurchaseRate.toFixed(2),
+        "view→purchase %": r.overallCR.toFixed(2),
+      })),
+      [
+        { header: "Item Name", key: "name" },
+        { header: "Item ID", key: "id" },
+        { header: "Item Views", key: "views" },
+        { header: "Add-to-Carts", key: "add_to_carts" },
+        { header: "Items Purchased", key: "purchased_qty" },
+        { header: "Item Revenue", key: "revenue" },
+        { header: "View→Cart %", key: "view→cart %" },
+        { header: "Cart→Purchase %", key: "cart→purchase %" },
+        { header: "View→Purchase %", key: "view→purchase %" },
+      ]
+    );
+  };
+
+  const hasRows = visible.length > 0;
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Product performance</h3>
+
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId}
+        >
+          {loading ? "Loading…" : "Load Products"}
+        </button>
+
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-pro"
+          payload={{
+            kind: "products",
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            // Keep payload lean: send top 50 after client-side filters.
+            items: visible.slice(0, 50).map(r => ({
+              name: r.name,
+              id: r.id,
+              views: r.views,
+              addToCarts: r.addToCarts,
+              purchasedQty: r.purchasedQty,
+              revenue: r.revenue,
+              viewToCartRate: Number(r.viewToCartRate.toFixed(2)),
+              cartToPurchaseRate: Number(r.cartToPurchaseRate.toFixed(2)),
+              overallCR: Number(r.overallCR.toFixed(2)),
+            })),
+            instructions:
+              "Identify high-views/low-CR products (fixes), high-CR/low-views winners (scale), potential price/stock issues from ratios, and at least 2–3 concrete hypotheses + test ideas (copy, offer, UX, bundle/upsell, image, trust).",
+          }}
+          resetSignal={resetSignal}
+        />
+
+        <button
+          onClick={exportCsv}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!hasRows}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      {/* Client-side view controls */}
+      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} />
+          Top items only (50)
+        </label>
+
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 260 }}>
+          <span style={{ fontSize: 13, color: "#333" }}>Min item views</span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(10, maxViews)}
+            step={1}
+            value={Math.min(minViews, Math.max(10, maxViews))}
+            onChange={(e) => setMinViews(Number(e.target.value))}
+            style={{ width: 160 }}
+            disabled={!rows.length}
+          />
+          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
+            {minViews}
+          </span>
+        </div>
+
+        {rows.length > 0 && (
+          <span style={{ fontSize: 12, color: "#555" }}>
+            Showing <b>{visible.length.toLocaleString()}</b> of {rows.length.toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {hasRows ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Views</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Add-to-Carts</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Purchased (qty)</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Revenue</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>View→Cart %</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Cart→Purchase %</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>View→Purchase %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.addToCarts.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchasedQty.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.viewToCartRate.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cartToPurchaseRate.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.overallCR.toFixed(2)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>
+      )}
+    </section>
+  );
+}
+
