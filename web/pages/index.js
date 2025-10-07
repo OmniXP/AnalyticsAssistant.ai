@@ -602,20 +602,15 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
 
   useEffect(() => { setRows([]); setError(""); }, [resetSignal]);
 
-  const load = async () => {
-    setLoading(true); setError(""); setRows([]);
-    try {
-      const data = await fetchJson("/api/ga4/source-medium", { propertyId, startDate, endDate, filters, limit: 25 });
-      const parsed = (data.rows || []).map((r) => ({
-        source: r.dimensionValues?.[0]?.value || "(unknown)",
-        medium: r.dimensionValues?.[1]?.value || "(unknown)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-      }));
-      setRows(parsed);
-    } catch (e) { setError(String(e.message || e)); }
-    finally { setLoading(false); }
-  };
+       // after: const data = await fetchJson("/api/ga4/products", { ... });
+       const parsed = (data?.rows || []).map((r, i) => ({
+       id:   r.dimensionValues?.[0]?.value || `row-${i}`,       // itemId
+       name: r.dimensionValues?.[1]?.value || "(unknown)",      // itemName
+       itemsPurchased: Number(r.metricValues?.[0]?.value || 0), // itemsPurchased
+       itemRevenue:    Number(r.metricValues?.[1]?.value || 0), // itemRevenue
+       }));
+       setRows(parsed);
+      };
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -651,30 +646,34 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.source}-${r.medium}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
+  <tr>
+    <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+    <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
+    <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items Purchased</th>
+    <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item Revenue</th>
+  </tr>
+</thead>
+<tbody>
+  {rows.map((r, i) => (
+    <tr key={`${r.id}-${i}`}>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+        {r.itemsPurchased.toLocaleString()}
+      </td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+        {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.itemRevenue || 0)}
+      </td>
+    </tr>
+  ))}
+</tbody>
+
           </table>
         </div>
       ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
     </section>
   );
-}
-
+  
 /* ============================== Campaigns Overview ============================== */
 function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading]   = useState(false);
