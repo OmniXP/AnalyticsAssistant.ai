@@ -1978,31 +1978,92 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const [lastResponse, setLastResponse] = useState(null); // for debug when empty
 
   useEffect(() => {
     setRows([]);
     setError("");
+    setLastResponse(null);
   }, [resetSignal]);
 
+  // Try multiple endpoints to be robust to server route naming
+  async function fetchProductsAnywhere(payload) {
+    const endpoints = ["/api/ga4/products", "/api/ga4/product-performance"];
+    let lastErr = null;
+    for (const url of endpoints) {
+      try {
+        const data = await fetchJson(url, payload);
+        return { data, url };
+      } catch (e) {
+        lastErr = e;
+        // try next
+      }
+    }
+    if (lastErr) throw lastErr;
+    throw new Error("No products endpoints responded");
+  }
+
+  // Map GA4 rows -> UI rows, using metric headers when available
+  function parseProductRows(data) {
+    const rows = data?.rows || [];
+    if (!rows.length) return [];
+
+    // Try to read metric headers so we can map by name
+    const headers = (data?.metricHeaders || []).map(h => h?.name);
+
+    // helper to find a metric index by any of several GA4 names
+    const findIdx = (candidates, fallbackIndex) => {
+      for (const name of candidates) {
+        const i = headers.indexOf(name);
+        if (i !== -1) return i;
+      }
+      // if no headers, fall back to a positional guess
+      return typeof fallbackIndex === "number" ? fallbackIndex : -1;
+    };
+
+    // Common GA4 names we might see
+    const idxViews      = findIdx(["itemsViewed", "itemViews", "screenPageViews", "views"], 0);
+    const idxAddToCart  = findIdx(["addToCarts", "itemAddToCarts", "addToCart"], 1);
+    const idxPurchased  = findIdx(["itemPurchaseQuantity", "itemsPurchased", "purchases"], 2);
+    const idxRevenue    = findIdx(["itemRevenue", "purchaseRevenue", "totalRevenue", "ecommercePurchases"], 3);
+
+    return rows.map((r, i) => {
+      const name = r?.dimensionValues?.[0]?.value || "(unknown)";
+      const id   = r?.dimensionValues?.[1]?.value || `row-${i}`;
+
+      const mv = r?.metricValues || [];
+      const num = (ix) => (ix >= 0 && mv[ix] && mv[ix].value != null) ? Number(mv[ix].value) : 0;
+
+      return {
+        name,
+        id,
+        views:      num(idxViews),
+        addToCarts: num(idxAddToCart),
+        purchased:  num(idxPurchased),
+        revenue:    num(idxRevenue),
+      };
+    });
+  }
+
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
+    setLastResponse(null);
     try {
-      const data = await fetchJson("/api/ga4/products", {
-        propertyId, startDate, endDate, filters, limit: 50,
-      });
+      const payload = { propertyId, startDate, endDate, filters, limit: 50 };
+      const { data, url } = await fetchProductsAnywhere(payload);
 
-      // Expect GA4 response rows: [itemName, itemId] + metrics
-      const parsed = (data?.rows || []).map((r, i) => ({
-        name: r.dimensionValues?.[0]?.value || "(unknown)",
-        id: r.dimensionValues?.[1]?.value || `row-${i}`,
-        // Adjust to match your API metric order
-        views: Number(r.metricValues?.[0]?.value || 0),
-        addToCarts: Number(r.metricValues?.[1]?.value || 0),
-        purchased: Number(r.metricValues?.[2]?.value || 0),
-        revenue: Number(r.metricValues?.[3]?.value || 0),
-      }));
+      // If backend wrapped GA4 under data.result, unwrap
+      const maybe = data?.rows ? data : (data?.result || data);
 
+      const parsed = parseProductRows(maybe);
       setRows(parsed);
+      setLastResponse({ from: url, sample: (maybe?.rows || []).slice(0, 3) }); // keep a tiny debug sample
+      if (!parsed.length && !data?.rows && !maybe?.rows) {
+        // If nothing recognisable came back, show a helpful note
+        setError("No product rows returned. Check date range, filters, and GA4 e-commerce tagging.");
+      }
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -2065,6 +2126,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               "Suggest 2–3 tests to improve add-to-cart and purchase rate",
             ],
           }}
+          resetSignal={resetSignal}
         />
 
         <button
@@ -2112,7 +2174,27 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
           </table>
         </div>
       ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+        !error && (
+          <>
+            <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+            {lastResponse && (
+              <details style={{ marginTop: 8 }}>
+                <summary>Raw products response (debug)</summary>
+                <pre
+                  style={{
+                    marginTop: 8,
+                    background: "#f8f8f8",
+                    padding: 16,
+                    borderRadius: 8,
+                    overflow: "auto",
+                  }}
+                >
+{safeStringify(lastResponse)}
+                </pre>
+              </details>
+            )}
+          </>
+        )
       )}
     </section>
   );
