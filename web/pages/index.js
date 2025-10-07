@@ -1,6 +1,8 @@
 // /pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
+/* eslint-disable @next/next/no-img-element */
+
 /* ============================== Helpers ============================== */
 
 /** ---- Saved-view URL helpers ---- */
@@ -673,75 +675,120 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   );
 }
 
-/* ============================== Campaigns (overview) ============================== */
-function Campaigns({ propertyId, startDate, endDate, filters }) {
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
-  const [error, setError] = useState("");
+/* ============================== Campaigns Overview ============================== */
+function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
+  const [loading, setLoading]   = useState(false);
+  const [rows, setRows]         = useState([]);
+  const [error, setError]       = useState("");
+  const [q, setQ]               = useState(""); // client-side search
 
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/campaigns", { propertyId, startDate, endDate, filters, limit: 100 });
+      const data = await fetchJson("/api/ga4/campaigns", {
+        propertyId, startDate, endDate, filters, limit: 100,
+      });
+
       const parsed = (data.rows || []).map((r, i) => {
-        const name         = r.dimensionValues?.[0]?.value ?? "(not set)";
-        const sessions     = Number(r.metricValues?.[0]?.value || 0);
-        const users        = Number(r.metricValues?.[1]?.value || 0);
-        const transactions = Number(r.metricValues?.[2]?.value || 0);
-        const revenue      = Number(r.metricValues?.[3]?.value || 0);
-        const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
-        const aov = transactions > 0 ? revenue / transactions : 0;
+        const name          = r.dimensionValues?.[0]?.value ?? "(not set)"; // sessionCampaignName
+        const sessions      = Number(r.metricValues?.[0]?.value || 0);      // sessions
+        const users         = Number(r.metricValues?.[1]?.value || 0);      // totalUsers
+        const transactions  = Number(r.metricValues?.[2]?.value || 0);      // transactions
+        const revenue       = Number(r.metricValues?.[3]?.value || 0);      // totalRevenue
+        const cvr           = sessions > 0 ? (transactions / sessions) * 100 : 0;
+        const aov           = transactions > 0 ? revenue / transactions : 0;
+
         return { key: `c-${i}`, name, sessions, users, transactions, revenue, cvr, aov };
-      }).sort((a, b) => b.revenue - a.revenue);
+      });
+
+      parsed.sort((a, b) => b.revenue - a.revenue);
       setRows(parsed);
-    } catch (e) { setError(String(e.message || e)); }
-    finally { setLoading(false); }
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const visible = q
+    ? rows.filter(r => r.name.toLowerCase().includes(q.toLowerCase()))
+    : rows;
 
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Campaigns (overview)</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId}
+        >
           {loading ? "Loading…" : "Load Campaigns"}
         </button>
+
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search campaign name…"
+          style={{ padding: 8, minWidth: 220 }}
+        />
+
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
-          payload={{ kind: "campaigns-overview", campaigns: rows, dateRange: { start: startDate, end: endDate }, filters }}
+          payload={{
+            kind: "campaigns-overview",
+            campaigns: visible,
+            dateRange: { start: startDate, end: endDate },
+            filters,
+          }}
         />
+
         <button
-          onClick={() => downloadCsvGeneric(`campaigns_${startDate}_to_${endDate}`, rows.map(r => ({
-            name: r.name,
-            sessions: r.sessions,
-            users: r.users,
-            transactions: r.transactions,
-            revenue: r.revenue,
-            cvr: `${r.cvr.toFixed(2)}%`,
-            aov: r.aov,
-          })), [
-            { header: "Campaign", key: "name" },
-            { header: "Sessions", key: "sessions" },
-            { header: "Users", key: "users" },
-            { header: "Transactions", key: "transactions" },
-            { header: "Revenue", key: "revenue" },
-            { header: "CVR (%)", key: "cvr" },
-            { header: "AOV", key: "aov" },
-          ])}
+          onClick={() =>
+            downloadCsvGeneric(
+              `campaigns_${startDate}_to_${endDate}`,
+              visible.map(r => ({
+                name: r.name,
+                sessions: r.sessions,
+                users: r.users,
+                transactions: r.transactions,
+                revenue: r.revenue,
+                cvr: `${r.cvr.toFixed(2)}%`,
+                aov: r.aov,
+              })),
+              [
+                { header: "Campaign",      key: "name" },
+                { header: "Sessions",      key: "sessions" },
+                { header: "Users",         key: "users" },
+                { header: "Transactions",  key: "transactions" },
+                { header: "Revenue",       key: "revenue" },
+                { header: "CVR (%)",       key: "cvr" },
+                { header: "AOV",           key: "aov" },
+              ]
+            )
+          }
           style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!rows.length}
+          disabled={!visible.length}
         >
           Download CSV
         </button>
       </div>
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {rows.length > 0 ? (
+
+      {error && (
+        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
+          Error: {error}
+        </p>
+      )}
+
+      {visible.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
@@ -751,16 +798,24 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {visible.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cvr.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.cvr.toFixed(2)}%
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
@@ -769,7 +824,9 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
     </section>
   );
 }
