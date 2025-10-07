@@ -1033,6 +1033,116 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   );
 }
 
+/* ============================== Campaigns ============================== */
+function Campaigns({ propertyId, startDate, endDate, filters }) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(""); setRows([]);
+    try {
+      const data = await fetchJson("/api/ga4/campaigns", {
+        propertyId, startDate, endDate, filters, limit: 100,
+      });
+      const parsed = (data.rows || []).map((r, i) => ({
+        name: r.dimensionValues?.[0]?.value ?? "(not set)",            // sessionCampaignName
+        sessions: Number(r.metricValues?.[0]?.value || 0),             // sessions
+        users: Number(r.metricValues?.[1]?.value || 0),                // totalUsers
+        // these may or may not be present depending on your API route:
+        transactions: Number(r.metricValues?.[2]?.value || 0),
+        revenue: Number(r.metricValues?.[3]?.value || 0),
+        key: `c-${i}`,
+      }));
+      setRows(parsed);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const visible = q ? rows.filter(r => r.name.toLowerCase().includes(q.toLowerCase())) : rows;
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Campaigns</h3>
+
+        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Campaigns"}
+        </button>
+
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search campaign name…"
+          style={{ padding: 8, minWidth: 220 }}
+        />
+
+        <AiBlock
+          asButton
+          buttonLabel="Summarise with AI"
+          endpoint="/api/insights/summarise-campaigns"
+          payload={{ rows: visible, dateRange: { start: startDate, end: endDate }, filters }}
+        />
+
+        <button
+          onClick={() =>
+            downloadCsvGeneric(
+              `campaigns_${startDate}_to_${endDate}`,
+              visible.map(r => ({
+                name: r.name,
+                sessions: r.sessions,
+                users: r.users,
+                transactions: r.transactions,
+                revenue: r.revenue,
+              })),
+              [
+                { header: "Campaign",      key: "name" },
+                { header: "Sessions",      key: "sessions" },
+                { header: "Users",         key: "users" },
+                { header: "Transactions",  key: "transactions" },
+                { header: "Revenue",       key: "revenue" },
+              ]
+            )
+          }
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!visible.length}
+        >
+          Download CSV
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {visible.length > 0 ? (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+    </section>
+  );
+}
+
 /* ============================== Top Pages ============================== */
 function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
