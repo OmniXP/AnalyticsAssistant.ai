@@ -1,94 +1,93 @@
 // /pages/api/ga4/products.js
-import { getAccessToken } from "../auth/google/token"; // adjust path if your token util lives elsewhere
-
-// Small helpers to build GA4 filter expressions safely
-function buildFilter(fieldName, value) {
-  if (!value || value === "All") return null;
-  // For channel group and country we match exact string
-  return {
-    filter: {
-      fieldName,
-      stringFilter: { matchType: "EXACT", value }
-    }
-  };
-}
-
-function mergeAndFilters(filters) {
-  const andGroup = filters.filter(Boolean);
-  if (!andGroup.length) return null;
-  return { andGroup: { expressions: andGroup } };
-}
+// If your other GA4 routes import from a different path, copy that EXACT path here:
+import { getAccessToken } from "../auth/google/token";
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
 
   try {
-    const {
-      propertyId,
-      startDate,
-      endDate,
-      filters = {},
-      limit = 50,
-    } = req.body || {};
+    const { propertyId, startDate, endDate, filters, limit = 50 } = req.body || {};
+    if (!propertyId) return res.status(400).json({ error: "Missing propertyId" });
 
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
+    // 1) Get OAuth token (same way as your working routes)
+    const token = await getAccessToken();
+
+    // 2) Apply global filters (country, channel group) if present
+    const andFilters = [];
+    if (filters?.country && filters.country !== "All") {
+      andFilters.push({
+        filter: {
+          fieldName: "country",
+          stringFilter: { matchType: "EXACT", value: filters.country },
+        },
+      });
     }
+    if (filters?.channelGroup && filters.channelGroup !== "All") {
+      andFilters.push({
+        filter: {
+          fieldName: "sessionDefaultChannelGroup",
+          stringFilter: { matchType: "EXACT", value: filters.channelGroup },
+        },
+      });
+    }
+    const dimensionFilter =
+      andFilters.length > 0 ? { andGroup: { expressions: andFilters } } : undefined;
 
-    const accessToken = await getAccessToken(); // your OAuth helper
-
-    // IMPORTANT: use **item-scoped** dimensions and **compatible** metrics.
-    // - dimensions: itemName, itemId
-    // - metrics: itemsViewed, addToCarts, itemPurchaseQuantity, itemRevenue
-    // These are all item-scoped and compatible with each other.
-    const requestBody = {
+    // 3) Build GA4 request
+    // IMPORTANT:
+    // - Avoid itemsViewed + addToCarts together; some properties flag them as incompatible.
+    // - Use itemPurchaseQuantity (count of items bought) and itemRevenue (revenue per item).
+    const body = {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [
-        { name: "itemName" },
-        { name: "itemId" },
-      ],
+      dimensions: [{ name: "itemName" }, { name: "itemId" }],
       metrics: [
-        { name: "itemsViewed" },
-        { name: "addToCarts" },
-        { name: "itemPurchaseQuantity" },
-        { name: "itemRevenue" },
+        { name: "addToCarts" },           // adds (compatible with item metrics)
+        { name: "itemPurchaseQuantity" }, // purchased quantity
+        { name: "itemRevenue" },          // revenue attributed to the item
       ],
-      limit: Math.max(1, Math.min(5000, Number(limit) || 50)),
-      orderBys: [
-        { metric: { metricName: "itemRevenue" }, desc: true },
-        { metric: { metricName: "itemPurchaseQuantity" }, desc: true },
-      ],
+      orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
+      limit: String(limit),
+      ...(dimensionFilter ? { dimensionFilter } : {}),
     };
-
-    // Apply optional filters (country / default channel group) if not "All"
-    const countryExpr = buildFilter("country", filters.country);
-    const chExpr = buildFilter("sessionDefaultChannelGroup", filters.channelGroup);
-    const where = mergeAndFilters([countryExpr, chExpr]);
-    if (where) requestBody.dimensionFilter = where;
 
     const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
     const gaRes = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(body),
     });
 
     const text = await gaRes.text();
     let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch {}
-    if (!gaRes.ok) {
-      return res.status(gaRes.status).json({
-        error: "GA4 API error (products)",
-        details: data || text || `HTTP ${gaRes.status}`
-      });
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // leave as text
     }
 
-    // Return the GA4 payload directly; frontend will parse metric headers safely
-    return res.status(200).json(data || {});
+    if (!gaRes.ok) {
+      const msg =
+        data?.error?.message ||
+        text ||
+        "GA4 API error (products)";
+      return res.status(400).json({ error: msg, details: data || null });
+    }
+
+    // 4) Normalize output for the frontend
+    return res.status(200).json({
+      dimensionHeaders: data?.dimensionHeaders || [],
+      metricHeaders: data?.metricHeaders || [],
+      rows: data?.rows || [],
+      rowCount: data?.rowCount || 0,
+      kind: "analyticsData#runReport",
+    });
   } catch (e) {
-    return res.status(500).json({ error: "Server error (products)", details: String(e?.message || e) });
+    return res.status(500).json({ error: String(e?.message || e) });
   }
 }
