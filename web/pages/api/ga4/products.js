@@ -1,188 +1,221 @@
-// /pages/api/ga4/products.js
-// ⬅️ If your other GA4 routes import from a different path, copy that EXACT path here:
-import { getAccessToken } from "../auth/google/token";
+// /web/pages/api/ga4/products.js
+import { getIronSession } from "iron-session";
 
-/**
- * Build a GA4 dimensionFilter from our optional global filters
- */
-function buildDimensionFilter(filters) {
-  const and = [];
-  if (filters?.country && filters.country !== "All") {
-    and.push({
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  },
+};
+
+// Build a GA4 dimensionFilter expression from our optional filters
+function buildFilterExpression({ country, channel }) {
+  const exprs = [];
+
+  if (country) {
+    exprs.push({
       filter: {
         fieldName: "country",
-        stringFilter: { matchType: "EXACT", value: filters.country },
+        stringFilter: { matchType: "EXACT", value: String(country) },
       },
     });
   }
-  if (filters?.channelGroup && filters.channelGroup !== "All") {
-    and.push({
+
+  if (channel) {
+    exprs.push({
       filter: {
         fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { matchType: "EXACT", value: filters.channelGroup },
+        stringFilter: { matchType: "EXACT", value: String(channel) },
       },
     });
   }
-  return and.length ? { andGroup: { expressions: and } } : undefined;
+
+  if (exprs.length === 0) return undefined;
+  if (exprs.length === 1) return exprs[0];
+  return { andGroup: { expressions: exprs } };
 }
 
-/**
- * Call GA4 Data API
- */
-async function runReport({ token, propertyId, body }) {
+// Helper to call GA4 runReport with the bearer token
+async function runReport({ accessToken, propertyId, body }) {
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-  const resp = await fetch(url, {
+  const apiRes = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
   });
-  const text = await resp.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch {}
-  if (!resp.ok) {
-    const msg = data?.error?.message || text || "GA4 API error";
-    const err = new Error(msg);
-    err.details = data;
-    throw err;
+  const data = await apiRes.json().catch(() => null);
+  if (!apiRes.ok) {
+    const msg = data?.error?.message || "GA4 API error (products)";
+    const status = data?.error?.status || "INVALID_ARGUMENT";
+    throw new Error(`${msg} — ${JSON.stringify({ error: data?.error }, null, 0)}`);
   }
-  return data || {};
+  return data;
+}
+
+// "All", "", null, undefined -> null (to disable a filter)
+function normalise(v) {
+  if (v == null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (s === "" || s === "all") return null;
+  return v;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
-    const { propertyId, startDate, endDate, filters, limit = 200 } = req.body || {};
-    if (!propertyId) return res.status(400).json({ error: "Missing propertyId" });
+    const session = await getIronSession(req, res, sessionOptions);
+    const ga = session.gaTokens;
+    if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
 
-    const token = await getAccessToken();
+    const {
+      propertyId,
+      startDate,
+      endDate,
+      filters,          // { country, channelGroup }
+      limit = 50,
+    } = req.body || {};
 
-    // ---------- Attempt 1: standard item breakdown (with filters) ----------
-    const baseBody = {
+    if (!propertyId || !startDate || !endDate) {
+      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
+    }
+
+    const country = normalise(filters?.country);
+    const channel = normalise(filters?.channelGroup);
+    const commonFilter = buildFilterExpression({ country, channel });
+
+    // --- 1) Purchases & Revenue per item (SAFE combo with item dims) ---
+    const purchaseBody = {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: "itemName" }, { name: "itemId" }],
-      metrics: [
-        // Keep to combos that are broadly compatible across properties
-        { name: "itemPurchaseQuantity" }, // items purchased
-        { name: "itemRevenue" },          // revenue attributed to item
-        { name: "addToCarts" },           // add-to-carts (works for many props; if incompatible it'll fail)
-      ],
+      metrics: [{ name: "itemsPurchased" }, { name: "itemRevenue" }],
       orderBys: [{ metric: { metricName: "itemRevenue" }, desc: true }],
-      keepEmptyRows: false,
-      limit: String(limit),
+      limit: Math.max(1, Math.min(1000, Number(limit) || 50)),
+      ...(commonFilter ? { dimensionFilter: commonFilter } : {}),
     };
 
-    const dimFilter = buildDimensionFilter(filters);
-    const body1 = dimFilter ? { ...baseBody, dimensionFilter: dimFilter } : baseBody;
-
-    let data1;
-    try {
-      data1 = await runReport({ token, propertyId, body: body1 });
-    } catch (e) {
-      // If this fails due to incompatibility (e.g., addToCarts w/ item dims), try a safer metric set.
-      const safeBody = {
-        ...body1,
-        metrics: [
-          { name: "itemPurchaseQuantity" },
-          { name: "itemRevenue" },
-        ],
-      };
-      data1 = await runReport({ token, propertyId, body: safeBody });
-    }
-
-    if ((data1?.rowCount || 0) > 0) {
-      return res.status(200).json({
-        rows: data1.rows || [],
-        metricHeaders: data1.metricHeaders || [],
-        dimensionHeaders: data1.dimensionHeaders || [],
-        rowCount: data1.rowCount || 0,
-        note: null,
-      });
-    }
-
-    // ---------- Attempt 2: remove filters entirely (rule out over-strict filters) ----------
-    let data2;
-    try {
-      const body2 = { ...baseBody };
-      // Use the "safe" metrics only to maximize compatibility
-      body2.metrics = [
-        { name: "itemPurchaseQuantity" },
-        { name: "itemRevenue" },
-      ];
-      data2 = await runReport({ token, propertyId, body: body2 });
-    } catch (e) {
-      // If this fails it's a deeper API/config error
-      return res.status(400).json({
-        error: "GA4 API error (products)",
-        details: e.details || { message: e.message },
-      });
-    }
-
-    if ((data2?.rowCount || 0) > 0) {
-      return res.status(200).json({
-        rows: data2.rows || [],
-        metricHeaders: data2.metricHeaders || [],
-        dimensionHeaders: data2.dimensionHeaders || [],
-        rowCount: data2.rowCount || 0,
-        note: "Returned rows only after removing filters. Your current country / channel filters may exclude all product events.",
-      });
-    }
-
-    // ---------- Attempt 3: diagnostic probe for purchase events w/ items ----------
-    // Some setups send purchase but not view/add events with items[]. This probe asks:
-    // "Do any purchase events have an items[] array for this date range?"
-    const probeBody = {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "itemName" }, { name: "itemId" }],
-      metrics: [{ name: "itemPurchaseQuantity" }],
-      keepEmptyRows: false,
-      limit: "50",
-      dimensionFilter: {
-        andGroup: {
-          expressions: [
-            {
-              filter: {
-                fieldName: "eventName",
-                stringFilter: { matchType: "EXACT", value: "purchase" },
-              },
-            },
-          ],
-        },
-      },
-    };
-
-    let probe;
-    try {
-      probe = await runReport({ token, propertyId, body: probeBody });
-    } catch (e) {
-      // If even the probe fails, bubble that message up
-      return res.status(400).json({
-        error: "GA4 API error (products probe)",
-        details: e.details || { message: e.message },
-      });
-    }
-
-    const hasAnyItems = (probe?.rowCount || 0) > 0;
-
-    return res.status(200).json({
-      rows: [],
-      rowCount: 0,
-      note: hasAnyItems
-        ? "We can see purchases with items[], but no item-level revenue/quantity matched your (date range / filters). Try widening the date range or clearing filters."
-        : "No purchases with items[] were found for this date range. Check GA4 ‘Monetisation → E-commerce purchases’ and your tagging: view_item / add_to_cart / purchase must include an items[] array with item_id / item_name.",
-      debug: {
-        attempt1_withFilters: data1?.rowCount || 0,
-        attempt2_noFilters: data2?.rowCount || 0,
-        attempt3_purchaseProbe: probe?.rowCount || 0,
-      },
+    const purchasesReport = await runReport({
+      accessToken: ga.access_token,
+      propertyId,
+      body: purchaseBody,
     });
+
+    // Seed map with purchase/revenue rows
+    const byItemId = new Map();
+    (purchasesReport.rows || []).forEach((r) => {
+      const itemName = r.dimensionValues?.[0]?.value || "(unknown)";
+      const itemId = r.dimensionValues?.[1]?.value || "";
+      const itemsPurchased = Number(r.metricValues?.[0]?.value || 0);
+      const itemRevenue = Number(r.metricValues?.[1]?.value || 0);
+      byItemId.set(itemId || `idx-${byItemId.size}`, {
+        itemId: itemId || "",
+        itemName,
+        itemsPurchased,
+        itemRevenue,
+        addToCarts: 0,
+        itemViews: 0,
+      });
+    });
+
+    // If nothing came back, short-circuit with a friendly message
+    if (byItemId.size === 0) {
+      return res.status(200).json({
+        rows: [],
+        note:
+          "No product rows returned. This often means the date range + filters produce no purchases or your ecommerce tagging isn't sending an items[] array with item_id/item_name.",
+      });
+    }
+
+    // --- 2) Add-to-cart counts per item (separate query) ---
+    try {
+      const atcBody = {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: "itemId" }],
+        metrics: [{ name: "eventCount" }],
+        dimensionFilter: {
+          andGroup: {
+            expressions: [
+              ...(commonFilter ? [commonFilter] : []),
+              {
+                filter: {
+                  fieldName: "eventName",
+                  stringFilter: { matchType: "EXACT", value: "add_to_cart" },
+                },
+              },
+            ],
+          },
+        },
+        limit: 1000,
+      };
+
+      const atcReport = await runReport({
+        accessToken: ga.access_token,
+        propertyId,
+        body: atcBody,
+      });
+
+      (atcReport.rows || []).forEach((r) => {
+        const itemId = r.dimensionValues?.[0]?.value || "";
+        const count = Number(r.metricValues?.[0]?.value || 0);
+        const row = byItemId.get(itemId);
+        if (row) row.addToCarts = count;
+      });
+    } catch (e) {
+      // Swallow add_to_cart errors so we still return purchases/revenue
+      // (You’ll still see the full error in the server logs)
+    }
+
+    // --- 3) View item counts per item (separate query) ---
+    try {
+      const viewBody = {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: "itemId" }],
+        metrics: [{ name: "eventCount" }],
+        dimensionFilter: {
+          andGroup: {
+            expressions: [
+              ...(commonFilter ? [commonFilter] : []),
+              {
+                filter: {
+                  fieldName: "eventName",
+                  stringFilter: { matchType: "EXACT", value: "view_item" },
+                },
+              },
+            ],
+          },
+        },
+        limit: 1000,
+      };
+
+      const viewReport = await runReport({
+        accessToken: ga.access_token,
+        propertyId,
+        body: viewBody,
+      });
+
+      (viewReport.rows || []).forEach((r) => {
+        const itemId = r.dimensionValues?.[0]?.value || "";
+        const count = Number(r.metricValues?.[0]?.value || 0);
+        const row = byItemId.get(itemId);
+        if (row) row.itemViews = count;
+      });
+    } catch (e) {
+      // Swallow view_item errors; purchases/revenue still useful
+    }
+
+    // Final rows, sorted by revenue desc
+    const rows = Array.from(byItemId.values()).sort((a, b) => b.itemRevenue - a.itemRevenue);
+    return res.status(200).json({ rows });
   } catch (e) {
-    return res.status(500).json({ error: String(e.message || e) });
+    return res
+      .status(500)
+      .json({ error: "Server error (products)", details: String(e?.message || e) });
   }
 }

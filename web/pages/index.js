@@ -1799,14 +1799,22 @@ function Products({ propertyId, startDate, endDate, filters }) {
         sampleRows: (maybe?.rows || []).slice(0, 3),
       });
 
-      const parsed = (maybe?.rows || []).map((r, i) => ({
-        name: r.dimensionValues?.[0]?.value || "(unknown)",
-        id: r.dimensionValues?.[1]?.value || `row-${i}`,
-        itemsViewed: Number(r.metricValues?.[0]?.value || 0),
-        itemsAddedToCart: Number(r.metricValues?.[1]?.value || 0),
-        itemsPurchased: Number(r.metricValues?.[2]?.value || 0),
-        itemRevenue: Number(r.metricValues?.[3]?.value || 0),
+      const parsed = (data.rows || []).map((r, i) => ({
+       name: r.itemName || "(unknown)",
+       id: r.itemId || `row-${i}`,
+       views: Number(r.itemViews || 0),
+       addToCarts: Number(r.addToCarts || 0),
+       purchased: Number(r.itemsPurchased || 0),
+       revenue: Number(r.itemRevenue || 0),
       }));
+      setRows(parsed);
+
+      // Optional: if the API returned a friendly note when there were no rows
+      if (data.note) {
+      // if you have a `setNote` state, set it here. Otherwise you can ignore this.
+      // setNote(data.note);
+      console.log("Products note:", data.note);
+    }
 
       setRows(parsed);
 
