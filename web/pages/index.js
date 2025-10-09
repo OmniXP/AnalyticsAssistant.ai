@@ -35,6 +35,9 @@ function decodeQuery() {
 
 const STORAGE_KEY = "insightgpt_preset_v2";
 
+const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
+
+
 const COUNTRY_OPTIONS = [
   "All",
   "United Kingdom",
@@ -313,6 +316,28 @@ export default function Home() {
       channelGroup: channelSel,
     });
   };
+
+  <SavedViews
+  startDate={startDate}
+  endDate={endDate}
+  countrySel={countrySel}
+  channelSel={channelSel}
+  comparePrev={comparePrev}
+  onApply={(view) => {
+    // Update selectors
+    setStartDate(view.startDate);
+    setEndDate(view.endDate);
+    setCountrySel(view.country || "All");
+    setChannelSel(view.channelGroup || "All");
+    setComparePrev(!!view.comparePrev);
+    // Sync appliedFilters too (so sections respect it)
+    setAppliedFilters({
+      country: view.country || "All",
+      channelGroup: view.channelGroup || "All",
+    });
+  }}
+  onRunReport={runReport}
+/>
 
   // Channel report (uses filters)
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
@@ -1989,6 +2014,118 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
 {JSON.stringify(debug, null, 2)}
           </pre>
         </details>
+      )}
+    </section>
+  );
+}
+
+/* ============================== Saved View ============================== */
+function SavedViews({
+  // current values (used when saving a new view)
+  startDate, endDate, countrySel, channelSel, comparePrev,
+
+  // actions we call when applying a view
+  onApply,         // (view) => void  -> should update selectors + appliedFilters + comparePrev
+  onRunReport,     // () => void      -> your existing runReport function
+}) {
+  const [presets, setPresets] = useState([]);
+  const [name, setName] = useState("");
+  const [notice, setNotice] = useState("");
+
+  // Load existing presets
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_VIEWS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(arr)) setPresets(arr);
+    } catch {}
+  }, []);
+
+  const persist = (arr) => {
+    setPresets(arr);
+    try { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr)); } catch {}
+  };
+
+  const saveCurrent = () => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) { setNotice("Give your view a name."); return; }
+
+    // If a preset with the same name exists, overwrite
+    const next = [...presets.filter(p => p.name !== trimmed), {
+      id: crypto?.randomUUID?.() || String(Date.now()),
+      name: trimmed,
+      startDate,
+      endDate,
+      country: countrySel,
+      channelGroup: channelSel,
+      comparePrev: !!comparePrev,
+      savedAt: new Date().toISOString(),
+    }].sort((a, b) => a.name.localeCompare(b.name));
+
+    persist(next);
+    setNotice("Saved!");
+    setTimeout(() => setNotice(""), 1200);
+  };
+
+  const apply = (p, run = false) => {
+    onApply({
+      startDate: p.startDate,
+      endDate: p.endDate,
+      country: p.country,
+      channelGroup: p.channelGroup,
+      comparePrev: !!p.comparePrev,
+    });
+    if (run) onRunReport();
+  };
+
+  const remove = (p) => {
+    const next = presets.filter(x => x.name !== p.name);
+    persist(next);
+  };
+
+  return (
+    <section style={{ marginTop: 12, padding: 12, border: "1px dashed #e0e0e0", borderRadius: 8, background: "#fbfbfb" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: 16 }}>Saved Views</h3>
+
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name this view (e.g. UK · Organic · Sep)"
+          style={{ padding: 8, minWidth: 260 }}
+        />
+        <button onClick={saveCurrent} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          Save current
+        </button>
+        {notice && <span style={{ color: "#137333", fontSize: 12 }}>{notice}</span>}
+      </div>
+
+      {presets.length > 0 ? (
+        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+          {presets.map((p) => (
+            <div key={p.name} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ minWidth: 280 }}>
+                <b>{p.name}</b>{" "}
+                <span style={{ color: "#666", fontSize: 12 }}>
+                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup} {p.comparePrev ? "· compare" : ""}
+                </span>
+              </div>
+              <button onClick={() => apply(p, false)} style={{ padding: "6px 10px", cursor: "pointer" }}>
+                Apply
+              </button>
+              <button onClick={() => apply(p, true)} style={{ padding: "6px 10px", cursor: "pointer" }}>
+                Apply & Run
+              </button>
+              <button onClick={() => remove(p)} style={{ padding: "6px 10px", cursor: "pointer", color: "#b00020" }}>
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
+          No saved views yet. Set dates/filters, give it a name, then “Save current”.
+        </p>
       )}
     </section>
   );
