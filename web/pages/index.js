@@ -611,14 +611,14 @@ export default function Home() {
         resetSignal={refreshSignal}
       />
 
-      {/* Product performance (NEW / FIXED) */}
-      <Products
-        key={`prod-${dashKey}`}
+      {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
+       <Products
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
       />
+    )}
 
       {/* Raw JSON (debug) */}
       {result ? (
@@ -1776,108 +1776,178 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================== Product Performance (FIXED) ============================== */
-function Products({ propertyId, startDate, endDate, filters }) {
+/* ============================== Product Performance ============================== */
+function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState([]);            // [{ name, id, views, carts, purchases, revenue }]
   const [error, setError] = useState("");
-  const [lastResponse, setLastResponse] = useState(null); // debug sample
+  const [debug, setDebug] = useState(null);        // raw GA4 response
 
-  // inside function Products(...) { ... }
-const load = async () => {
-  setLoading(true); setError(""); setRows([]); setLastResponse(null);
-  try {
-    const payload = { propertyId, startDate, endDate, filters, limit: 100 };
-    try {
-      const full = await fetchJson("/api/ga4/products", payload);
-      setLastResponse(full?.debug || null);
-      const parsed = (full?.rows || []).map((r, i) => ({
-        name: r.name, id: r.id || `row-${i}`,
-        itemsViewed: Number(r.itemViews || 0),
-        itemsAddedToCart: Number(r.addToCarts || 0),
-        itemsPurchased: Number(r.itemsPurchased || 0),
-        itemRevenue: Number(r.itemRevenue || 0),
-      }));
-      if (!parsed.length) throw new Error("Empty product result");
-      setRows(parsed);
-    } catch (primaryErr) {
-      // Fallback to lite (views + addToCarts)
-      const lite = await fetchJson("/api/ga4/products-lite", payload);
-      setLastResponse(lite?.debug || null);
-      const parsed = (lite?.rows || []).map((r, i) => ({
-        name: r.name, id: r.id || `row-${i}`,
-        itemsViewed: Number(r.itemViews || 0),
-        itemsAddedToCart: Number(r.addToCarts || 0),
-        itemsPurchased: Number(r.itemsPurchased ?? 0),
-        itemRevenue: Number(r.itemRevenue ?? 0),
-      }));
-      if (!parsed.length) {
-        throw new Error("No product rows returned. Check date range and GA4 item tagging.");
-      }
-      setRows(parsed);
-      // Optional: surface that we used the fallback
-      setError("Showing Lite results (views + add-to-carts).");
-    }
-  } catch (e) {
-    setError(String(e.message || e));
-  } finally {
-    setLoading(false);
+  // Clear when dashboard context changes (Run report / Reset dashboard)
+  useEffect(() => {
+    setRows([]);
+    setError("");
+    setDebug(null);
+  }, [resetSignal]);
+
+  // Parse GA4 runReport into product rows (dimension/metric headers robustly mapped)
+  function parseProductsResponse(data) {
+    if (!data || !Array.isArray(data.rows)) return [];
+
+    const dimNames = (data.dimensionHeaders || []).map(h => h.name);
+    const metNames = (data.metricHeaders || []).map(h => h.name);
+
+    // Dimension indices (prefer itemName → fallback itemId)
+    const iItemName = dimNames.findIndex(n => n === "itemName");
+    const iItemId   = dimNames.findIndex(n => n === "itemId");
+
+    // Metric indices (support common GA4 item metrics)
+    const iViews     = metNames.findIndex(n => n === "itemViews");
+    const iCarts     = metNames.findIndex(n => n === "addToCarts");
+    // GA4 has multiple purchase-related metrics; try them in order
+    const iPurchQty  = metNames.findIndex(n => n === "itemPurchaseQuantity");
+    const iPurchAlt1 = metNames.findIndex(n => n === "itemsPurchased"); // some wrappers alias it
+    const iRevenue   = metNames.findIndex(n => n === "itemRevenue");
+
+    return data.rows.map((r, idx) => {
+      const name = iItemName >= 0
+        ? (r.dimensionValues?.[iItemName]?.value || "(unknown)")
+        : (iItemId >= 0 ? (r.dimensionValues?.[iItemId]?.value || "(unknown)") : `(row ${idx+1})`);
+
+      const views     = iViews     >= 0 ? Number(r.metricValues?.[iViews]?.value || 0) : 0;
+      const carts     = iCarts     >= 0 ? Number(r.metricValues?.[iCarts]?.value || 0) : 0;
+      const purchases = iPurchQty  >= 0 ? Number(r.metricValues?.[iPurchQty]?.value || 0)
+                        : iPurchAlt1 >= 0 ? Number(r.metricValues?.[iPurchAlt1]?.value || 0)
+                        : 0;
+      const revenue   = iRevenue   >= 0 ? Number(r.metricValues?.[iRevenue]?.value || 0) : 0;
+
+      return {
+        key: `p-${idx}`,
+        name,
+        id: iItemId >= 0 ? (r.dimensionValues?.[iItemId]?.value || "") : "",
+        views,
+        carts,
+        purchases,
+        revenue,
+      };
+    });
   }
-};
+
+  // Try products-lite first, then fallback to products (whichever you wired)
+  async function load() {
+    setLoading(true); setError(""); setRows([]); setDebug(null);
+    const payload = { propertyId, startDate, endDate, filters, limit: 100 };
+
+    const tryEndpoints = async () => {
+      try {
+        const d1 = await fetchJson("/api/ga4/products-lite", payload);
+        return { data: d1, which: "products-lite" };
+      } catch (e1) {
+        // fallback
+        const d2 = await fetchJson("/api/ga4/products", payload);
+        return { data: d2, which: "products" };
+      }
+    };
+
+    try {
+      const { data, which } = await tryEndpoints();
+      setDebug({ which, headers: {
+        dimensions: (data?.dimensionHeaders || []).map(h => h.name),
+        metrics:    (data?.metricHeaders || []).map(h => h.name),
+      }});
+
+      const parsed = parseProductsResponse(data);
+      if (!parsed.length) {
+        setError("No product rows returned. Check date range, filters, and GA4 e-commerce tagging.");
+      } else {
+        // sort by views desc by default
+        parsed.sort((a, b) => (b.views || 0) - (a.views || 0));
+        setRows(parsed);
+      }
+    } catch (e) {
+      setError(String(e?.message || e) || "Failed to load products");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const exportCsv = () => {
+    if (!rows.length) return;
+    downloadCsvGeneric(
+      `product_performance_${startDate}_to_${endDate}`,
+      rows.map(r => ({
+        name: r.name,
+        id: r.id,
+        views: r.views,
+        carts: r.carts,
+        purchases: r.purchases,
+        revenue: r.revenue,
+      })),
+      [
+        { header: "Item name/ID", key: "name" },
+        { header: "Item ID",      key: "id" },
+        { header: "Items viewed", key: "views" },
+        { header: "Items added to cart", key: "carts" },
+        { header: "Items purchased", key: "purchases" },
+        { header: "Item revenue", key: "revenue" },
+      ]
+    );
+  };
 
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Product performance</h3>
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+        <h3 style={{ margin: 0 }}>Product Performance</h3>
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId}
+          title={!propertyId ? "Enter a GA4 property ID first" : ""}
+        >
           {loading ? "Loading…" : "Load Products"}
         </button>
+
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{
-            kind: "products",
-            rows,
+            topic: "products",
             dateRange: { start: startDate, end: endDate },
             filters,
-            goals: [
-              "Identify products with high views but low purchase quantity",
-              "Find add-to-cart drop-offs",
-              "Propose at least 2 testable hypotheses to improve CVR/AOV",
-            ],
+            rows: rows.slice(0, 50).map(r => ({
+              name: r.name,
+              id: r.id,
+              views: r.views,
+              carts: r.carts,
+              purchases: r.purchases,
+              revenue: r.revenue,
+            })),
+            instructions:
+              "Identify SKUs with high views but low add-to-carts or purchases. Call out likely issues (pricing, imagery, PDP UX). Provide 2–3 testable hypotheses to improve add-to-cart rate and conversion.",
           }}
+          resetSignal={resetSignal}
         />
+
         <button
-          onClick={() =>
-            downloadCsvGeneric(
-              `products_${startDate}_to_${endDate}`,
-              rows.map(r => ({
-                name: r.name,
-                id: r.id,
-                itemsViewed: r.itemsViewed,
-                itemsAddedToCart: r.itemsAddedToCart,
-                itemsPurchased: r.itemsPurchased,
-                itemRevenue: r.itemRevenue,
-              })),
-              [
-                { header: "Item name", key: "name" },
-                { header: "Item ID", key: "id" },
-                { header: "Items viewed", key: "itemsViewed" },
-                { header: "Items added to cart", key: "itemsAddedToCart" },
-                { header: "Items purchased", key: "itemsPurchased" },
-                { header: "Item revenue", key: "itemRevenue" },
-              ]
-            )
-          }
+          onClick={exportCsv}
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!rows.length}
         >
           Download CSV
         </button>
+
+        {/* Small hint so users know filters apply here too */}
+        <span style={{ color: "#666", fontSize: 12 }}>
+          Respects global filters (Country / Channel Group).
+        </span>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && (
+        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
+          Error: {error}
+        </p>
+      )}
 
       {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1885,36 +1955,38 @@ const load = async () => {
             <thead>
               <tr>
                 <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>ID</th>
+                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item ID</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items viewed</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Add-to-carts</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items added to cart</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items purchased</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item revenue</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.id}-${i}`}>
+              {rows.map(r => (
+                <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsViewed.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsAddedToCart.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.itemsPurchased.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.itemRevenue || 0)}
-                  </td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id || "—"}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.carts.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchases.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " +
+                    "#eee" }}>{new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
 
-      {lastResponse && (
-        <details style={{ marginTop: 12 }}>
+      {/* Tiny debug block to help diagnose header mismatches without crashing */}
+      {debug && (
+        <details style={{ marginTop: 10 }}>
           <summary>Raw products response (debug)</summary>
-          <pre style={{ marginTop: 8, background: "#f8f8f8", padding: 12, borderRadius: 8, overflow: "auto" }}>
-{JSON.stringify(lastResponse, null, 2)}
+          <pre style={{ marginTop: 8, background: "#f8f8f8", padding: 12, borderRadius: 6, overflow: "auto" }}>
+{JSON.stringify(debug, null, 2)}
           </pre>
         </details>
       )}
