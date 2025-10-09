@@ -317,28 +317,6 @@ export default function Home() {
     });
   };
 
-  <SavedViews
-  startDate={startDate}
-  endDate={endDate}
-  countrySel={countrySel}
-  channelSel={channelSel}
-  comparePrev={comparePrev}
-  onApply={(view) => {
-    // Update selectors
-    setStartDate(view.startDate);
-    setEndDate(view.endDate);
-    setCountrySel(view.country || "All");
-    setChannelSel(view.channelGroup || "All");
-    setComparePrev(!!view.comparePrev);
-    // Sync appliedFilters too (so sections respect it)
-    setAppliedFilters({
-      country: view.country || "All",
-      channelGroup: view.channelGroup || "All",
-    });
-  }}
-  onRunReport={runReport}
-/>
-
   // Channel report (uses filters)
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
     return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
@@ -483,6 +461,30 @@ export default function Home() {
           </span>
         </div>
       </div>
+
+      {/* Saved Views */}
+<SavedViews
+  startDate={startDate}
+  endDate={endDate}
+  countrySel={countrySel}
+  channelSel={channelSel}
+  comparePrev={comparePrev}
+  onApply={(view) => {
+    // Update selectors
+    setStartDate(view.startDate);
+    setEndDate(view.endDate);
+    setCountrySel(view.country || "All");
+    setChannelSel(view.channelGroup || "All");
+    setComparePrev(!!view.comparePrev);
+
+    // Sync appliedFilters too (so sections respect it)
+    setAppliedFilters({
+      country: view.country || "All",
+      channelGroup: view.channelGroup || "All",
+    });
+  }}
+  onRunReport={runReport}
+/>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
 
@@ -637,13 +639,14 @@ export default function Home() {
       />
 
       {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
-       <Products
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
-    )}
+  <Products
+    propertyId={propertyId}
+    startDate={startDate}
+    endDate={endDate}
+    filters={appliedFilters}
+    resetSignal={refreshSignal}   // add this
+  />
+)}
 
       {/* Raw JSON (debug) */}
       {result ? (
