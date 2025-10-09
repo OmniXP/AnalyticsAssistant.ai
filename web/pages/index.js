@@ -1783,51 +1783,47 @@ function Products({ propertyId, startDate, endDate, filters }) {
   const [error, setError] = useState("");
   const [lastResponse, setLastResponse] = useState(null); // debug sample
 
-  const load = async () => {
-    setLoading(true); setError(""); setRows([]); setLastResponse(null);
+  // inside function Products(...) { ... }
+const load = async () => {
+  setLoading(true); setError(""); setRows([]); setLastResponse(null);
+  try {
+    const payload = { propertyId, startDate, endDate, filters, limit: 100 };
     try {
-      const payload = { propertyId, startDate, endDate, filters, limit: 50 };
-      const data = await fetchJson("/api/ga4/products", payload);
-
-      // If backend wraps under result, unwrap; otherwise use as-is
-      const maybe = data?.rows ? data : (data?.result || data);
-
-      // capture a tiny debug snapshot
-      setLastResponse({
-        metricHeaders: maybe?.metricHeaders || [],
-        dimensionHeaders: maybe?.dimensionHeaders || [],
-        sampleRows: (maybe?.rows || []).slice(0, 3),
-      });
-
-      const parsed = (data.rows || []).map((r, i) => ({
-       name: r.itemName || "(unknown)",
-       id: r.itemId || `row-${i}`,
-       views: Number(r.itemViews || 0),
-       addToCarts: Number(r.addToCarts || 0),
-       purchased: Number(r.itemsPurchased || 0),
-       revenue: Number(r.itemRevenue || 0),
+      const full = await fetchJson("/api/ga4/products", payload);
+      setLastResponse(full?.debug || null);
+      const parsed = (full?.rows || []).map((r, i) => ({
+        name: r.name, id: r.id || `row-${i}`,
+        itemsViewed: Number(r.itemViews || 0),
+        itemsAddedToCart: Number(r.addToCarts || 0),
+        itemsPurchased: Number(r.itemsPurchased || 0),
+        itemRevenue: Number(r.itemRevenue || 0),
       }));
+      if (!parsed.length) throw new Error("Empty product result");
       setRows(parsed);
-
-      // Optional: if the API returned a friendly note when there were no rows
-      if (data.note) {
-      // if you have a `setNote` state, set it here. Otherwise you can ignore this.
-      // setNote(data.note);
-      console.log("Products note:", data.note);
-    }
-
-      setRows(parsed);
-
+    } catch (primaryErr) {
+      // Fallback to lite (views + addToCarts)
+      const lite = await fetchJson("/api/ga4/products-lite", payload);
+      setLastResponse(lite?.debug || null);
+      const parsed = (lite?.rows || []).map((r, i) => ({
+        name: r.name, id: r.id || `row-${i}`,
+        itemsViewed: Number(r.itemViews || 0),
+        itemsAddedToCart: Number(r.addToCarts || 0),
+        itemsPurchased: Number(r.itemsPurchased ?? 0),
+        itemRevenue: Number(r.itemRevenue ?? 0),
+      }));
       if (!parsed.length) {
-        setError("No product rows returned. Check date range, filters, and GA4 e-commerce tagging.");
+        throw new Error("No product rows returned. Check date range and GA4 item tagging.");
       }
-    } catch (e) {
-      setLastResponse({ error: String(e?.message || e) });
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
+      setRows(parsed);
+      // Optional: surface that we used the fallback
+      setError("Showing Lite results (views + add-to-carts).");
     }
-  };
+  } catch (e) {
+    setError(String(e.message || e));
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <section style={{ marginTop: 28 }}>
