@@ -36,6 +36,55 @@ function decodeQuery() {
 const STORAGE_KEY = "insightgpt_preset_v2";
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
 
+/** -------- KPI Targets helpers & badge --------
+ * Expected (in localStorage):
+ *   {
+ *     sessionsTarget: number,
+ *     revenueTarget: number,
+ *     cvrTarget: number
+ *   }
+ * Stored under either "insightgpt_kpi_targets_v1" or "kpi_targets_v1"
+ */
+function loadKpiTargets() {
+  const keys = ["insightgpt_kpi_targets_v1", "kpi_targets_v1"];
+  for (const k of keys) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+  }
+  return {};
+}
+function pctToTarget(current, target) {
+  if (!target || target <= 0) return null;
+  return Math.round((current / target) * 100);
+}
+function TargetBadge({ label, current, target, currency = false }) {
+  if (target == null) return null;
+  const pct = pctToTarget(current, target);
+  if (pct == null) return null;
+  const ok = pct >= 100;
+  const val = currency
+    ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(target)
+    : Number(target).toLocaleString();
+  return (
+    <span
+      title={`${label} target: ${val} • Progress: ${pct}%`}
+      style={{
+        marginLeft: 8,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        background: ok ? "#e6f4ea" : "#fdecea",
+        color: ok ? "#137333" : "#b00020",
+        border: `1px solid ${ok ? "#b7e1cd" : "#f4c7c3"}`
+      }}
+    >
+      {`${pct}% to ${label} target`}
+    </span>
+  );
+}
+
 const COUNTRY_OPTIONS = [
   "All",
   "United Kingdom",
@@ -212,49 +261,6 @@ function safeStringify(value) {
   }
 }
 
-/* ===== KPI Targets helpers ===== */
-const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
-
-/** Render a compact green/red badge for delta vs target */
-function TargetBadge({ value, target, isPercent = false, higherIsBetter = true }) {
-  if (target == null || !Number.isFinite(target)) return null;
-  const safeVal = Number(value || 0);
-  const delta = safeVal - target;
-  const hit = higherIsBetter ? delta >= 0 : delta <= 0;
-
-  const pctDelta = target === 0 ? 0 : Math.round((delta / target) * 100);
-  const label = isPercent ? `${safeVal.toFixed(2)}%` : safeVal.toLocaleString();
-  const targetLabel = isPercent ? `${Number(target).toFixed(2)}%` : target.toLocaleString();
-  const deltaLabel = `${hit ? "+" : ""}${pctDelta}%`;
-
-  const bg = hit ? "#e6f4ea" : "#fde7e9";
-  const color = hit ? "#137333" : "#b00020";
-  const border = hit ? "#c7e6cd" : "#f3c0c6";
-
-  return (
-    <span
-      title={`Target: ${targetLabel} · ${deltaLabel} vs target`}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "2px 8px",
-        borderRadius: 999,
-        border: `1px solid ${border}`,
-        background: bg,
-        color,
-        fontSize: 12,
-        fontWeight: 600,
-        marginLeft: 8,
-        verticalAlign: "middle",
-      }}
-      aria-label={`Target ${targetLabel}, ${deltaLabel} vs target`}
-    >
-      {deltaLabel}
-    </span>
-  );
-}
-
 /* ============================== Page ============================== */
 export default function Home() {
   // Base controls
@@ -286,10 +292,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // KPI Targets (persisted)
-  const [kpiTargets, setKpiTargets] = useState({ sessions: null, revenue: null, cvr: null });
-
-  // Load from URL (if present) ONCE after mount
+  // Load from URL once
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
@@ -323,21 +326,6 @@ export default function Home() {
     } catch {}
   }, []);
 
-  // Load KPI targets (once)
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KPI_TARGETS_KEY);
-      if (raw) {
-        const v = JSON.parse(raw);
-        setKpiTargets({
-          sessions: Number.isFinite(v?.sessions) ? v.sessions : null,
-          revenue:  Number.isFinite(v?.revenue)  ? v.revenue  : null,
-          cvr:      Number.isFinite(v?.cvr)      ? v.cvr      : null,
-        });
-      }
-    } catch {}
-  }, []);
-
   // Save preset whenever these change
   useEffect(() => {
     try {
@@ -354,11 +342,6 @@ export default function Home() {
       );
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
-
-  // Persist KPI targets whenever they change
-  useEffect(() => {
-    try { localStorage.setItem(KPI_TARGETS_KEY, JSON.stringify(kpiTargets)); } catch {}
-  }, [kpiTargets]);
 
   const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
   const { rows: prevRows, totals: prevTotals } = useMemo(
@@ -500,9 +483,6 @@ export default function Home() {
         </button>
       </div>
 
-      {/* KPI Targets panel */}
-      <KpiTargetsPanel targets={kpiTargets} onChange={(next) => setKpiTargets(next)} />
-
       {/* Filters */}
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -520,35 +500,38 @@ export default function Home() {
           <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>Apply filters</button>
           {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
             <span style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
-              Filters active: {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}{appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}{appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
+              {`Filters active: `}
+              {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
+              {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
+              {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
             </span>
           )}
           <span style={{ color: "#666", fontSize: 12 }}>
             Filters apply when you run a section (e.g. GA4 Report / Load buttons).
           </span>
         </div>
-
-        {/* Saved Views */}
-        <SavedViews
-          startDate={startDate}
-          endDate={endDate}
-          countrySel={countrySel}
-          channelSel={channelSel}
-          comparePrev={comparePrev}
-          onApply={(view) => {
-            setStartDate(view.startDate);
-            setEndDate(view.endDate);
-            setCountrySel(view.country || "All");
-            setChannelSel(view.channelGroup || "All");
-            setComparePrev(!!view.comparePrev);
-            setAppliedFilters({
-              country: view.country || "All",
-              channelGroup: view.channelGroup || "All",
-            });
-          }}
-          onRunReport={runReport}
-        />
       </div>
+
+      {/* Saved Views */}
+      <SavedViews
+        startDate={startDate}
+        endDate={endDate}
+        countrySel={countrySel}
+        channelSel={channelSel}
+        comparePrev={comparePrev}
+        onApply={(view) => {
+          setStartDate(view.startDate);
+          setEndDate(view.endDate);
+          setCountrySel(view.country || "All");
+          setChannelSel(view.channelGroup || "All");
+          setComparePrev(!!view.comparePrev);
+          setAppliedFilters({
+            country: view.country || "All",
+            channelGroup: view.channelGroup || "All",
+          });
+        }}
+        onRunReport={runReport}
+      />
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
 
@@ -557,6 +540,12 @@ export default function Home() {
         <section style={{ marginTop: 24, background: "#f6f7f8", padding: 16, borderRadius: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
+            {/* KPI badge for Sessions (hero) */}
+            <TargetBadge
+              label="Sessions"
+              current={Number(totals?.sessions || 0)}
+              target={Number(loadKpiTargets()?.sessionsTarget)}
+            />
             <AiBlock
               asButton
               buttonLabel="Summarise with AI"
@@ -567,10 +556,7 @@ export default function Home() {
           </div>
 
           <ul style={{ marginTop: 12 }}>
-            <li>
-              <b>Total sessions:</b> {totals.sessions.toLocaleString()}
-              <TargetBadge value={totals.sessions} target={kpiTargets.sessions} higherIsBetter />
-            </li>
+            <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
             <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
             {top && (
               <li>
@@ -693,7 +679,6 @@ export default function Home() {
         endDate={endDate}
         filters={appliedFilters}
         resetSignal={refreshSignal}
-        kpiTargets={kpiTargets}
       />
 
       {/* Checkout funnel */}
@@ -802,7 +787,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
       const data = await fetchJson("/api/ga4/source-medium", {
         propertyId, startDate, endDate, filters, limit: 25,
       });
-      const parsed = (data.rows || []).map((r, i) => ({
+      const parsed = (data.rows || []).map((r) => ({
         source: r.dimensionValues?.[0]?.value || "(unknown)",
         medium: r.dimensionValues?.[1]?.value || "(unknown)",
         sessions: Number(r.metricValues?.[0]?.value || 0),
@@ -816,6 +801,13 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
     }
   };
 
+  // Totals + KPI badges
+  const totalSessions = useMemo(
+    () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
+    [rows]
+  );
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -823,6 +815,13 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Source / Medium"}
         </button>
+        {rows.length > 0 && (
+          <TargetBadge
+            label="Sessions"
+            current={totalSessions}
+            target={Number(kpiTargets?.sessionsTarget)}
+          />
+        )}
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
@@ -907,6 +906,12 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
     }
   };
 
+  const totalSessions = useMemo(
+    () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
+    [rows]
+  );
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -914,6 +919,13 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Campaigns"}
         </button>
+        {rows.length > 0 && (
+          <TargetBadge
+            label="Sessions"
+            current={totalSessions}
+            target={Number(kpiTargets?.sessionsTarget)}
+          />
+        )}
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
@@ -1217,6 +1229,12 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
 
   const visible = q ? rows.filter(r => r.name.toLowerCase().includes(q.toLowerCase())) : rows;
 
+  const totalSessions = useMemo(
+    () => visible.reduce((sum, r) => sum + (r.sessions || 0), 0),
+    [visible]
+  );
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1227,6 +1245,14 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
         </button>
 
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign name…" style={{ padding: 8, minWidth: 220 }} />
+
+        {visible.length > 0 && (
+          <TargetBadge
+            label="Sessions"
+            current={totalSessions}
+            target={Number(kpiTargets?.sessionsTarget)}
+          />
+        )}
 
         <AiBlock
           asButton
@@ -1561,7 +1587,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== E-commerce KPIs ============================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
@@ -1582,6 +1608,8 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
     }
   };
 
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1589,6 +1617,27 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
+        {/* KPI badges shown when totals loaded */}
+        {totals && (
+          <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <TargetBadge
+              label="Sessions"
+              current={Number(totals?.sessions || 0)}
+              target={Number(kpiTargets?.sessionsTarget)}
+            />
+            <TargetBadge
+              label="Revenue"
+              current={Number(totals?.revenue || 0)}
+              target={Number(kpiTargets?.revenueTarget)}
+              currency
+            />
+            <TargetBadge
+              label="CVR"
+              current={Number(totals?.cvr || 0)}
+              target={Number(kpiTargets?.cvrTarget)}
+            />
+          </div>
+        )}
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
@@ -1614,22 +1663,14 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
               <Tr label="Add-to-Cart (events)" value={totals.addToCarts} />
               <Tr label="Begin Checkout (events)" value={totals.beginCheckout} />
               <Tr label="Purchases (transactions)" value={totals.transactions} />
-              {/* Revenue with target badge */}
-              <tr>
-                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Revenue</td>
-                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)}
-                  <TargetBadge value={totals.revenue || 0} target={kpiTargets.revenue} higherIsBetter />
-                </td>
-              </tr>
-              {/* CVR with target badge */}
-              <tr>
-                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Conversion Rate (purchase / session)</td>
-                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                  {(totals.cvr || 0).toFixed(2)}%
-                  <TargetBadge value={totals.cvr || 0} target={kpiTargets.cvr} isPercent higherIsBetter />
-                </td>
-              </tr>
+              <Tr
+                label="Revenue"
+                value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)}
+              />
+              <Tr
+                label="Conversion Rate (purchase / session)"
+                value={`${(totals.cvr || 0).toFixed(2)}%`}
+              />
               <Tr
                 label="AOV (Revenue / Transactions)"
                 value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)}
@@ -1896,28 +1937,23 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [error, setError] = useState("");
   const [debug, setDebug] = useState(null);        // raw GA4 response
 
-  // Clear when dashboard context changes (Run report / Reset dashboard)
   useEffect(() => {
     setRows([]);
     setError("");
     setDebug(null);
   }, [resetSignal]);
 
-  // Parse GA4 runReport into product rows (dimension/metric headers robustly mapped)
   function parseProductsResponse(data) {
     if (!data || !Array.isArray(data.rows)) return [];
 
     const dimNames = (data.dimensionHeaders || []).map(h => h.name);
     const metNames = (data.metricHeaders || []).map(h => h.name);
 
-    // Dimension indices (prefer itemName → fallback itemId)
     const iItemName = dimNames.findIndex(n => n === "itemName");
     const iItemId   = dimNames.findIndex(n => n === "itemId");
 
-    // Metric indices (support common GA4 item metrics)
     const iViews     = metNames.findIndex(n => n === "itemViews");
     const iCarts     = metNames.findIndex(n => n === "addToCarts");
-    // GA4 has multiple purchase-related metrics; try them in order
     const iPurchQty  = metNames.findIndex(n => n === "itemPurchaseQuantity");
     const iPurchAlt1 = metNames.findIndex(n => n === "itemsPurchased");
     const iRevenue   = metNames.findIndex(n => n === "itemRevenue");
@@ -1946,7 +1982,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
     });
   }
 
-  // Try products-lite first, then fallback to products (whichever you wired)
   async function load() {
     setLoading(true); setError(""); setRows([]); setDebug(null);
     const payload = { propertyId, startDate, endDate, filters, limit: 100 };
@@ -1955,7 +1990,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
       try {
         const d1 = await fetchJson("/api/ga4/products-lite", payload);
         return { data: d1, which: "products-lite" };
-      } catch (e1) {
+      } catch {
         const d2 = await fetchJson("/api/ga4/products", payload);
         return { data: d2, which: "products" };
       }
@@ -2104,11 +2139,11 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ============================== Saved View ============================== */
+/* ============================== Saved Views ============================== */
 function SavedViews({
   startDate, endDate, countrySel, channelSel, comparePrev,
-  onApply,         // (view) => void
-  onRunReport,     // () => void
+  onApply,
+  onRunReport,
 }) {
   const [presets, setPresets] = useState([]);
   const [name, setName] = useState("");
@@ -2208,98 +2243,5 @@ function SavedViews({
         </p>
       )}
     </section>
-  );
-}
-
-/* ============================== KPI Targets Panel ============================== */
-function KpiTargetsPanel({ targets, onChange }) {
-  const [local, setLocal] = useState({
-    sessions: targets.sessions ?? "",
-    revenue: targets.revenue ?? "",
-    cvr: targets.cvr ?? "",
-  });
-  const [savedMsg, setSavedMsg] = useState("");
-
-  useEffect(() => {
-    setLocal({
-      sessions: targets.sessions ?? "",
-      revenue: targets.revenue ?? "",
-      cvr: targets.cvr ?? "",
-    });
-  }, [targets]);
-
-  const setField = (k, v) => setLocal(s => ({ ...s, [k]: v }));
-
-  const save = () => {
-    const next = {
-      sessions: local.sessions === "" ? null : Number(local.sessions),
-      revenue: local.revenue === "" ? null : Number(local.revenue),
-      cvr: local.cvr === "" ? null : Number(local.cvr), // percent value
-    };
-    onChange(next);
-    setSavedMsg("Saved!");
-    setTimeout(() => setSavedMsg(""), 1200);
-  };
-
-  const clearAll = () => {
-    const next = { sessions: null, revenue: null, cvr: null };
-    setLocal({ sessions: "", revenue: "", cvr: "" });
-    onChange(next);
-  };
-
-  return (
-    <details style={{ marginTop: 8 }}>
-      <summary style={{ cursor: "pointer" }}>
-        KPI Targets
-        {savedMsg && <span style={{ marginLeft: 8, color: "#137333", fontSize: 12 }}>{savedMsg}</span>}
-      </summary>
-      <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <label>
-          Sessions target&nbsp;
-          <input
-            type="number"
-            min="0"
-            placeholder="e.g. 50000"
-            value={local.sessions}
-            onChange={(e) => setField("sessions", e.target.value)}
-            style={{ padding: 6, minWidth: 120 }}
-          />
-        </label>
-        <label>
-          Revenue target (GBP)&nbsp;
-          <input
-            type="number"
-            min="0"
-            placeholder="e.g. 200000"
-            value={local.revenue}
-            onChange={(e) => setField("revenue", e.target.value)}
-            style={{ padding: 6, minWidth: 140 }}
-          />
-        </label>
-        <label>
-          CVR target (%)&nbsp;
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="e.g. 2.40"
-            value={local.cvr}
-            onChange={(e) => setField("cvr", e.target.value)}
-            style={{ padding: 6, minWidth: 100 }}
-          />
-        </label>
-
-        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }}>
-          Save targets
-        </button>
-        <button onClick={clearAll} style={{ padding: "8px 12px", cursor: "pointer" }}>
-          Clear
-        </button>
-
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Badges appear next to Sessions, Revenue and CVR when targets are set.
-        </span>
-      </div>
-    </details>
   );
 }
