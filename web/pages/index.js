@@ -34,9 +34,7 @@ function decodeQuery() {
 }
 
 const STORAGE_KEY = "insightgpt_preset_v2";
-
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
-
 
 const COUNTRY_OPTIONS = [
   "All",
@@ -214,6 +212,49 @@ function safeStringify(value) {
   }
 }
 
+/* ===== KPI Targets helpers ===== */
+const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
+
+/** Render a compact green/red badge for delta vs target */
+function TargetBadge({ value, target, isPercent = false, higherIsBetter = true }) {
+  if (target == null || !Number.isFinite(target)) return null;
+  const safeVal = Number(value || 0);
+  const delta = safeVal - target;
+  const hit = higherIsBetter ? delta >= 0 : delta <= 0;
+
+  const pctDelta = target === 0 ? 0 : Math.round((delta / target) * 100);
+  const label = isPercent ? `${safeVal.toFixed(2)}%` : safeVal.toLocaleString();
+  const targetLabel = isPercent ? `${Number(target).toFixed(2)}%` : target.toLocaleString();
+  const deltaLabel = `${hit ? "+" : ""}${pctDelta}%`;
+
+  const bg = hit ? "#e6f4ea" : "#fde7e9";
+  const color = hit ? "#137333" : "#b00020";
+  const border = hit ? "#c7e6cd" : "#f3c0c6";
+
+  return (
+    <span
+      title={`Target: ${targetLabel} · ${deltaLabel} vs target`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "2px 8px",
+        borderRadius: 999,
+        border: `1px solid ${border}`,
+        background: bg,
+        color,
+        fontSize: 12,
+        fontWeight: 600,
+        marginLeft: 8,
+        verticalAlign: "middle",
+      }}
+      aria-label={`Target ${targetLabel}, ${deltaLabel} vs target`}
+    >
+      {deltaLabel}
+    </span>
+  );
+}
+
 /* ============================== Page ============================== */
 export default function Home() {
   // Base controls
@@ -244,6 +285,9 @@ export default function Home() {
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // KPI Targets (persisted)
+  const [kpiTargets, setKpiTargets] = useState({ sessions: null, revenue: null, cvr: null });
 
   // Load from URL (if present) ONCE after mount
   useEffect(() => {
@@ -279,6 +323,21 @@ export default function Home() {
     } catch {}
   }, []);
 
+  // Load KPI targets (once)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(KPI_TARGETS_KEY);
+      if (raw) {
+        const v = JSON.parse(raw);
+        setKpiTargets({
+          sessions: Number.isFinite(v?.sessions) ? v.sessions : null,
+          revenue:  Number.isFinite(v?.revenue)  ? v.revenue  : null,
+          cvr:      Number.isFinite(v?.cvr)      ? v.cvr      : null,
+        });
+      }
+    } catch {}
+  }, []);
+
   // Save preset whenever these change
   useEffect(() => {
     try {
@@ -295,6 +354,11 @@ export default function Home() {
       );
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
+
+  // Persist KPI targets whenever they change
+  useEffect(() => {
+    try { localStorage.setItem(KPI_TARGETS_KEY, JSON.stringify(kpiTargets)); } catch {}
+  }, [kpiTargets]);
 
   const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
   const { rows: prevRows, totals: prevTotals } = useMemo(
@@ -436,6 +500,9 @@ export default function Home() {
         </button>
       </div>
 
+      {/* KPI Targets panel */}
+      <KpiTargetsPanel targets={kpiTargets} onChange={(next) => setKpiTargets(next)} />
+
       {/* Filters */}
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -460,31 +527,28 @@ export default function Home() {
             Filters apply when you run a section (e.g. GA4 Report / Load buttons).
           </span>
         </div>
+
+        {/* Saved Views */}
+        <SavedViews
+          startDate={startDate}
+          endDate={endDate}
+          countrySel={countrySel}
+          channelSel={channelSel}
+          comparePrev={comparePrev}
+          onApply={(view) => {
+            setStartDate(view.startDate);
+            setEndDate(view.endDate);
+            setCountrySel(view.country || "All");
+            setChannelSel(view.channelGroup || "All");
+            setComparePrev(!!view.comparePrev);
+            setAppliedFilters({
+              country: view.country || "All",
+              channelGroup: view.channelGroup || "All",
+            });
+          }}
+          onRunReport={runReport}
+        />
       </div>
-
-      {/* Saved Views */}
-<SavedViews
-  startDate={startDate}
-  endDate={endDate}
-  countrySel={countrySel}
-  channelSel={channelSel}
-  comparePrev={comparePrev}
-  onApply={(view) => {
-    // Update selectors
-    setStartDate(view.startDate);
-    setEndDate(view.endDate);
-    setCountrySel(view.country || "All");
-    setChannelSel(view.channelGroup || "All");
-    setComparePrev(!!view.comparePrev);
-
-    // Sync appliedFilters too (so sections respect it)
-    setAppliedFilters({
-      country: view.country || "All",
-      channelGroup: view.channelGroup || "All",
-    });
-  }}
-  onRunReport={runReport}
-/>
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
 
@@ -503,7 +567,10 @@ export default function Home() {
           </div>
 
           <ul style={{ marginTop: 12 }}>
-            <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
+            <li>
+              <b>Total sessions:</b> {totals.sessions.toLocaleString()}
+              <TargetBadge value={totals.sessions} target={kpiTargets.sessions} higherIsBetter />
+            </li>
             <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
             {top && (
               <li>
@@ -626,6 +693,7 @@ export default function Home() {
         endDate={endDate}
         filters={appliedFilters}
         resetSignal={refreshSignal}
+        kpiTargets={kpiTargets}
       />
 
       {/* Checkout funnel */}
@@ -639,14 +707,14 @@ export default function Home() {
       />
 
       {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
-  <Products
-    propertyId={propertyId}
-    startDate={startDate}
-    endDate={endDate}
-    filters={appliedFilters}
-    resetSignal={refreshSignal}   // add this
-  />
-)}
+        <Products
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          resetSignal={refreshSignal}
+        />
+      )}
 
       {/* Raw JSON (debug) */}
       {result ? (
@@ -1493,7 +1561,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== E-commerce KPIs ============================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
@@ -1546,9 +1614,26 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
               <Tr label="Add-to-Cart (events)" value={totals.addToCarts} />
               <Tr label="Begin Checkout (events)" value={totals.beginCheckout} />
               <Tr label="Purchases (transactions)" value={totals.transactions} />
-              <Tr label="Revenue" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} />
-              <Tr label="Conversion Rate (purchase / session)" value={`${(totals.cvr || 0).toFixed(2)}%`} />
-              <Tr label="AOV (Revenue / Transactions)" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)} />
+              {/* Revenue with target badge */}
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Revenue</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)}
+                  <TargetBadge value={totals.revenue || 0} target={kpiTargets.revenue} higherIsBetter />
+                </td>
+              </tr>
+              {/* CVR with target badge */}
+              <tr>
+                <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>Conversion Rate (purchase / session)</td>
+                <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                  {(totals.cvr || 0).toFixed(2)}%
+                  <TargetBadge value={totals.cvr || 0} target={kpiTargets.cvr} isPercent higherIsBetter />
+                </td>
+              </tr>
+              <Tr
+                label="AOV (Revenue / Transactions)"
+                value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)}
+              />
             </tbody>
           </table>
         </div>
@@ -1834,7 +1919,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
     const iCarts     = metNames.findIndex(n => n === "addToCarts");
     // GA4 has multiple purchase-related metrics; try them in order
     const iPurchQty  = metNames.findIndex(n => n === "itemPurchaseQuantity");
-    const iPurchAlt1 = metNames.findIndex(n => n === "itemsPurchased"); // some wrappers alias it
+    const iPurchAlt1 = metNames.findIndex(n => n === "itemsPurchased");
     const iRevenue   = metNames.findIndex(n => n === "itemRevenue");
 
     return data.rows.map((r, idx) => {
@@ -1871,7 +1956,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
         const d1 = await fetchJson("/api/ga4/products-lite", payload);
         return { data: d1, which: "products-lite" };
       } catch (e1) {
-        // fallback
         const d2 = await fetchJson("/api/ga4/products", payload);
         return { data: d2, which: "products" };
       }
@@ -1888,7 +1972,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
       if (!parsed.length) {
         setError("No product rows returned. Check date range, filters, and GA4 e-commerce tagging.");
       } else {
-        // sort by views desc by default
         parsed.sort((a, b) => (b.views || 0) - (a.views || 0));
         setRows(parsed);
       }
@@ -1965,7 +2048,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
           Download CSV
         </button>
 
-        {/* Small hint so users know filters apply here too */}
         <span style={{ color: "#666", fontSize: 12 }}>
           Respects global filters (Country / Channel Group).
         </span>
@@ -1998,8 +2080,9 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.carts.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchases.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " +
-                    "#eee" }}>{new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2009,7 +2092,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
         !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
       )}
 
-      {/* Tiny debug block to help diagnose header mismatches without crashing */}
       {debug && (
         <details style={{ marginTop: 10 }}>
           <summary>Raw products response (debug)</summary>
@@ -2024,18 +2106,14 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
 
 /* ============================== Saved View ============================== */
 function SavedViews({
-  // current values (used when saving a new view)
   startDate, endDate, countrySel, channelSel, comparePrev,
-
-  // actions we call when applying a view
-  onApply,         // (view) => void  -> should update selectors + appliedFilters + comparePrev
-  onRunReport,     // () => void      -> your existing runReport function
+  onApply,         // (view) => void
+  onRunReport,     // () => void
 }) {
   const [presets, setPresets] = useState([]);
   const [name, setName] = useState("");
   const [notice, setNotice] = useState("");
 
-  // Load existing presets
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SAVED_VIEWS_KEY);
@@ -2053,7 +2131,6 @@ function SavedViews({
     const trimmed = (name || "").trim();
     if (!trimmed) { setNotice("Give your view a name."); return; }
 
-    // If a preset with the same name exists, overwrite
     const next = [...presets.filter(p => p.name !== trimmed), {
       id: crypto?.randomUUID?.() || String(Date.now()),
       name: trimmed,
@@ -2131,5 +2208,98 @@ function SavedViews({
         </p>
       )}
     </section>
+  );
+}
+
+/* ============================== KPI Targets Panel ============================== */
+function KpiTargetsPanel({ targets, onChange }) {
+  const [local, setLocal] = useState({
+    sessions: targets.sessions ?? "",
+    revenue: targets.revenue ?? "",
+    cvr: targets.cvr ?? "",
+  });
+  const [savedMsg, setSavedMsg] = useState("");
+
+  useEffect(() => {
+    setLocal({
+      sessions: targets.sessions ?? "",
+      revenue: targets.revenue ?? "",
+      cvr: targets.cvr ?? "",
+    });
+  }, [targets]);
+
+  const setField = (k, v) => setLocal(s => ({ ...s, [k]: v }));
+
+  const save = () => {
+    const next = {
+      sessions: local.sessions === "" ? null : Number(local.sessions),
+      revenue: local.revenue === "" ? null : Number(local.revenue),
+      cvr: local.cvr === "" ? null : Number(local.cvr), // percent value
+    };
+    onChange(next);
+    setSavedMsg("Saved!");
+    setTimeout(() => setSavedMsg(""), 1200);
+  };
+
+  const clearAll = () => {
+    const next = { sessions: null, revenue: null, cvr: null };
+    setLocal({ sessions: "", revenue: "", cvr: "" });
+    onChange(next);
+  };
+
+  return (
+    <details style={{ marginTop: 8 }}>
+      <summary style={{ cursor: "pointer" }}>
+        KPI Targets
+        {savedMsg && <span style={{ marginLeft: 8, color: "#137333", fontSize: 12 }}>{savedMsg}</span>}
+      </summary>
+      <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <label>
+          Sessions target&nbsp;
+          <input
+            type="number"
+            min="0"
+            placeholder="e.g. 50000"
+            value={local.sessions}
+            onChange={(e) => setField("sessions", e.target.value)}
+            style={{ padding: 6, minWidth: 120 }}
+          />
+        </label>
+        <label>
+          Revenue target (GBP)&nbsp;
+          <input
+            type="number"
+            min="0"
+            placeholder="e.g. 200000"
+            value={local.revenue}
+            onChange={(e) => setField("revenue", e.target.value)}
+            style={{ padding: 6, minWidth: 140 }}
+          />
+        </label>
+        <label>
+          CVR target (%)&nbsp;
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="e.g. 2.40"
+            value={local.cvr}
+            onChange={(e) => setField("cvr", e.target.value)}
+            style={{ padding: 6, minWidth: 100 }}
+          />
+        </label>
+
+        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          Save targets
+        </button>
+        <button onClick={clearAll} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          Clear
+        </button>
+
+        <span style={{ color: "#666", fontSize: 12 }}>
+          Badges appear next to Sessions, Revenue and CVR when targets are set.
+        </span>
+      </div>
+    </details>
   );
 }
