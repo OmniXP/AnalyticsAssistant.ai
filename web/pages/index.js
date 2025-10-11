@@ -46,6 +46,7 @@ const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
  * Stored under either "insightgpt_kpi_targets_v1" or "kpi_targets_v1"
  */
 function loadKpiTargets() {
+  if (typeof window === "undefined") return {};
   const keys = ["insightgpt_kpi_targets_v1", "kpi_targets_v1"];
   for (const k of keys) {
     try {
@@ -54,6 +55,9 @@ function loadKpiTargets() {
     } catch {}
   }
   return {};
+}
+function saveKpiTargets(obj) {
+  try { localStorage.setItem("insightgpt_kpi_targets_v1", JSON.stringify(obj || {})); } catch {}
 }
 function pctToTarget(current, target) {
   if (!target || target <= 0) return null;
@@ -82,6 +86,122 @@ function TargetBadge({ label, current, target, currency = false }) {
     >
       {`${pct}% to ${label} target`}
     </span>
+  );
+}
+
+/** KPI Targets small panel (restored) */
+function KpiTargetsPanel({ open, onClose, onSaved }) {
+  const [sessionsTarget, setSessionsTarget] = useState("");
+  const [revenueTarget, setRevenueTarget]   = useState("");
+  const [cvrTarget, setCvrTarget]           = useState("");
+  const [notice, setNotice]                 = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    const t = loadKpiTargets();
+    setSessionsTarget(t?.sessionsTarget ?? "");
+    setRevenueTarget(t?.revenueTarget ?? "");
+    setCvrTarget(t?.cvrTarget ?? "");
+    setNotice("");
+  }, [open]);
+
+  const save = () => {
+    const obj = {
+      sessionsTarget: sessionsTarget === "" ? null : Number(sessionsTarget),
+      revenueTarget: revenueTarget === "" ? null : Number(revenueTarget),
+      cvrTarget: cvrTarget === "" ? null : Number(cvrTarget),
+    };
+    saveKpiTargets(obj);
+    setNotice("Saved!");
+    if (onSaved) onSaved(obj);
+    setTimeout(() => setNotice(""), 1200);
+  };
+
+  const reset = () => {
+    saveKpiTargets({});
+    setSessionsTarget("");
+    setRevenueTarget("");
+    setCvrTarget("");
+    setNotice("Targets cleared");
+    if (onSaved) onSaved({});
+    setTimeout(() => setNotice(""), 1200);
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: 12,
+        border: "1px solid #e5e5e5",
+        borderRadius: 8,
+        background: "#fbfbfb"
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: 16 }}>KPI Targets</h3>
+        {notice && <span style={{ color: "#137333", fontSize: 12 }}>{notice}</span>}
+        <button onClick={onClose} style={{ marginLeft: "auto", padding: "6px 10px", cursor: "pointer" }}>
+          Close
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12, marginTop: 10 }}>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 13, color: "#333" }}>Sessions target</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            value={sessionsTarget}
+            onChange={(e) => setSessionsTarget(e.target.value)}
+            placeholder="e.g. 200000"
+            style={{ padding: 8 }}
+          />
+        </label>
+
+        <label style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 13, color: "#333" }}>Revenue target (GBP)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            value={revenueTarget}
+            onChange={(e) => setRevenueTarget(e.target.value)}
+            placeholder="e.g. 500000"
+            style={{ padding: 8 }}
+          />
+        </label>
+
+        <label style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 13, color: "#333" }}>CVR target (%)</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={cvrTarget}
+            onChange={(e) => setCvrTarget(e.target.value)}
+            placeholder="e.g. 2.5"
+            style={{ padding: 8 }}
+          />
+        </label>
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          Save targets
+        </button>
+        <button onClick={reset} style={{ padding: "8px 12px", cursor: "pointer", color: "#b00020" }}>
+          Clear
+        </button>
+      </div>
+
+      <p style={{ marginTop: 10, color: "#444" }}>
+        Targets drive the green/red progress badges you see next to sections. Values are stored locally in your browser.
+      </p>
+    </div>
   );
 }
 
@@ -292,6 +412,10 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // KPI Targets panel toggle
+  const [showKpiPanel, setShowKpiPanel] = useState(false);
+  const [kpiVersion, setKpiVersion] = useState(0); // bump to refresh badges after save
+
   // Load from URL once
   useEffect(() => {
     try {
@@ -429,11 +553,16 @@ export default function Home() {
     } catch {}
   };
 
+  // bump to refresh badges when targets saved/cleared
+  const onKpiSaved = () => setKpiVersion(v => v + 1);
+
+  const kpiTargets = useMemo(() => loadKpiTargets(), [kpiVersion]);
+
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ marginBottom: 4 }}>InsightGPT (MVP)</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
-        Connect GA4, choose a date range, optionally apply filters, and view traffic & insights.
+        Connect GA4, choose a date range, optionally apply filters, and view traffic &amp; insights.
       </p>
 
       {/* Controls */}
@@ -478,10 +607,18 @@ export default function Home() {
           Compare vs previous period
         </label>
 
+        {/* Toggle KPI panel */}
+        <button onClick={() => setShowKpiPanel(s => !s)} style={{ padding: "8px 12px", cursor: "pointer" }}>
+          {showKpiPanel ? "Hide KPI Targets" : "Set KPI Targets"}
+        </button>
+
         <button onClick={resetDashboard} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
           Reset Dashboard
         </button>
       </div>
+
+      {/* KPI Targets panel (restored) */}
+      <KpiTargetsPanel open={showKpiPanel} onClose={() => setShowKpiPanel(false)} onSaved={onKpiSaved} />
 
       {/* Filters */}
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa" }}>
@@ -544,7 +681,7 @@ export default function Home() {
             <TargetBadge
               label="Sessions"
               current={Number(totals?.sessions || 0)}
-              target={Number(loadKpiTargets()?.sessionsTarget)}
+              target={Number(kpiTargets?.sessionsTarget)}
             />
             <AiBlock
               asButton
@@ -619,6 +756,7 @@ export default function Home() {
         endDate={endDate}
         filters={appliedFilters}
         resetSignal={refreshSignal}
+        kpiTargets={kpiTargets}
       />
 
       {/* Trends over time */}
@@ -635,6 +773,7 @@ export default function Home() {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
+        kpiTargets={kpiTargets}
       />
 
       {/* Campaign drill-down */}
@@ -651,6 +790,7 @@ export default function Home() {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
+        kpiTargets={kpiTargets}
       />
 
       {/* Top pages */}
@@ -679,6 +819,7 @@ export default function Home() {
         endDate={endDate}
         filters={appliedFilters}
         resetSignal={refreshSignal}
+        kpiTargets={kpiTargets}
       />
 
       {/* Checkout funnel */}
@@ -700,14 +841,6 @@ export default function Home() {
           resetSignal={refreshSignal}
         />
       )}
-
-      {/* ===== Premium: Anomaly Alerts ===== */}
-      <AnomalyAlerts
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
 
       {/* Raw JSON (debug) */}
       {result ? (
@@ -782,7 +915,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 }
 
 /* ============================== Source / Medium ============================== */
-function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
+function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -809,12 +942,10 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
     }
   };
 
-  // Totals + KPI badges
   const totalSessions = useMemo(
     () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [rows]
   );
-  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -890,7 +1021,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
 }
 
 /* ============================== Campaigns (overview) ============================== */
-function Campaigns({ propertyId, startDate, endDate, filters }) {
+function Campaigns({ propertyId, startDate, endDate, filters, kpiTargets }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -918,7 +1049,6 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
     () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [rows]
   );
-  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -1201,7 +1331,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== Campaigns Overview ============================== */
-function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
+function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets }) {
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [error, setError]       = useState("");
@@ -1241,7 +1371,6 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
     () => visible.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [visible]
   );
-  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -1326,7 +1455,8 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cvr.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " +
+                    "#eee" }}>{r.cvr.toFixed(2)}%</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
@@ -1595,7 +1725,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== E-commerce KPIs ============================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
@@ -1615,8 +1745,6 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
       setLoading(false);
     }
   };
-
-  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -2237,7 +2365,7 @@ function SavedViews({
                 Apply
               </button>
               <button onClick={() => apply(p, true)} style={{ padding: "6px 10px", cursor: "pointer" }}>
-                Apply & Run
+                Apply &amp; Run
               </button>
               <button onClick={() => remove(p)} style={{ padding: "6px 10px", cursor: "pointer", color: "#b00020" }}>
                 Delete
@@ -2249,325 +2377,6 @@ function SavedViews({
         <p style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
           No saved views yet. Set dates/filters, give it a name, then “Save current”.
         </p>
-      )}
-    </section>
-  );
-}
-
-/* ============================== Premium · Anomaly Alerts ============================== */
-const ANOMALY_SETTINGS_KEY = "insightgpt_anomaly_settings_v1";
-const PREMIUM_ENABLED = typeof window !== "undefined"
-  ? (window?.__NEXT_DATA__?.props?.pageProps?.premium ?? (process.env.NEXT_PUBLIC_PREMIUM_ENABLED === "true"))
-  : (process.env.NEXT_PUBLIC_PREMIUM_ENABLED === "true");
-
-function AnomalyAlerts({ propertyId, startDate, endDate, filters }) {
-  const [enabled, setEnabled] = useState(true);
-  const [sensitivity, setSensitivity] = useState(2.0); // z-score threshold
-  const [includeRevenue, setIncludeRevenue] = useState(true);
-  const [includeCVR, setIncludeCVR] = useState(true);
-
-  const [loading, setLoading] = useState(false);
-  const [anoms, setAnoms] = useState([]); // [{date,type,value,baseline,deltaPct,dir}]
-  const [summary, setSummary] = useState(null);
-  const [error, setError] = useState("");
-
-  // Load persisted settings
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(ANOMALY_SETTINGS_KEY);
-      if (!raw) return;
-      const s = JSON.parse(raw);
-      if (typeof s.enabled === "boolean") setEnabled(s.enabled);
-      if (typeof s.sensitivity === "number") setSensitivity(s.sensitivity);
-      if (typeof s.includeRevenue === "boolean") setIncludeRevenue(s.includeRevenue);
-      if (typeof s.includeCVR === "boolean") setIncludeCVR(s.includeCVR);
-    } catch {}
-  }, []);
-
-  const persist = (obj) => {
-    try {
-      const next = {
-        enabled,
-        sensitivity,
-        includeRevenue,
-        includeCVR,
-        ...obj
-      };
-      localStorage.setItem(ANOMALY_SETTINGS_KEY, JSON.stringify(next));
-    } catch {}
-  };
-
-  // Simple rolling baseline (excluding the test day)
-  function rollingStats(series, idx, windowSize = 7) {
-    const start = Math.max(0, idx - windowSize);
-    const end = idx - 1;
-    if (end < start) return { mean: null, stdev: null };
-    const slice = series.slice(start, end + 1).map(x => x.value).filter(Number.isFinite);
-    if (!slice.length) return { mean: null, stdev: null };
-    const mean = slice.reduce((a,b)=>a+b,0) / slice.length;
-    const variance = slice.reduce((a,b)=>a + Math.pow(b-mean,2),0) / slice.length;
-    const stdev = Math.sqrt(variance);
-    return { mean, stdev };
-  }
-
-  function zScore(value, mean, stdev) {
-    if (stdev == null || stdev === 0 || mean == null) return 0;
-    return (value - mean) / stdev;
-  }
-
-  async function runScan() {
-    setLoading(true); setError(""); setAnoms([]); setSummary(null);
-
-    if (!PREMIUM_ENABLED) {
-      setError("Anomaly Alerts is a premium feature.");
-      setLoading(false);
-      return;
-    }
-    if (!enabled) {
-      setError("Anomaly Alerts are disabled in settings.");
-      setLoading(false);
-      return;
-    }
-    if (!propertyId) {
-      setError("Enter a GA4 property ID first.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      // 1) Daily sessions timeseries
-      const tData = await fetchJson("/api/ga4/timeseries", {
-        propertyId, startDate, endDate, filters, granularity: "daily",
-      });
-      const series = (tData?.series || []).map(row => ({
-        date: row.period, // "YYYYMMDD"
-        value: Number(row.sessions || 0),
-      }));
-
-      const out = [];
-      for (let i = 0; i < series.length; i++) {
-        const { mean, stdev } = rollingStats(series, i, 7);
-        if (mean == null) continue; // not enough history
-        const v = series[i].value;
-        const z = zScore(v, mean, stdev);
-        const absZ = Math.abs(z);
-        if (absZ >= sensitivity) {
-          const deltaPct = mean ? Math.round(((v - mean) / mean) * 100) : 0;
-          out.push({
-            type: "Sessions",
-            date: series[i].date,
-            value: v,
-            baseline: Math.round(mean),
-            deltaPct,
-            dir: v >= mean ? "up" : "down",
-            z: Number(z.toFixed(2)),
-          });
-        }
-      }
-
-      // 2) Revenue & CVR deviation vs mean of period
-      let revAnom = null, cvrAnom = null;
-      if (includeRevenue || includeCVR) {
-        const eData = await fetchJson("/api/ga4/ecommerce-summary", {
-          propertyId, startDate, endDate, filters
-        });
-        const totals = eData?.totals || {};
-        const revenue = Number(totals.revenue || 0);
-        const sessions = Number(totals.sessions || 0);
-        const transactions = Number(totals.transactions || 0);
-        const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
-
-        // Build a reference using timeseries (sum revenue / cvr mean from series if provided)
-        // If timeseries included revenue/cvr per day we’d use it; fallback to compare vs KPI targets if present
-        const kpis = loadKpiTargets();
-
-        if (includeRevenue && kpis?.revenueTarget > 0) {
-          const pctToTarget = Math.round((revenue / kpis.revenueTarget) * 100);
-          if (pctToTarget < 80 || pctToTarget > 120) {
-            revAnom = {
-              type: "Revenue vs Target",
-              value: revenue,
-              baseline: kpis.revenueTarget,
-              deltaPct: Math.round(((revenue - kpis.revenueTarget) / kpis.revenueTarget) * 100),
-              dir: revenue >= kpis.revenueTarget ? "up" : "down"
-            };
-          }
-        }
-
-        if (includeCVR && kpis?.cvrTarget > 0) {
-          const pctToTarget = Math.round(((cvr || 0) / kpis.cvrTarget) * 100);
-          if (pctToTarget < 80 || pctToTarget > 120) {
-            cvrAnom = {
-              type: "CVR vs Target",
-              value: Number(cvr.toFixed(2)),
-              baseline: kpis.cvrTarget,
-              deltaPct: Math.round((((cvr || 0) - kpis.cvrTarget) / (kpis.cvrTarget || 1)) * 100),
-              dir: (cvr || 0) >= kpis.cvrTarget ? "up" : "down"
-            };
-          }
-        }
-      }
-
-      const all = [...out];
-      if (revAnom) all.push(revAnom);
-      if (cvrAnom) all.push(cvrAnom);
-
-      setAnoms(all);
-
-      // Quick summary for the card
-      if (all.length) {
-        const ups = all.filter(a => a.dir === "up").length;
-        const downs = all.filter(a => a.dir === "down").length;
-        setSummary(`${all.length} anomalies detected (${ups} up / ${downs} down)`);
-      } else {
-        setSummary("No anomalies detected at the selected sensitivity.");
-      }
-
-    } catch (e) {
-      setError(String(e?.message || e) || "Failed to run anomaly scan");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const disabled = !PREMIUM_ENABLED;
-
-  return (
-    <section style={{ marginTop: 28, border: "1px solid #eee", borderRadius: 8, padding: 16, background: "#fbfdff" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>
-          Anomaly Alerts (Sessions / Revenue / CVR)
-          {disabled && (
-            <span style={{ marginLeft: 8, fontSize: 12, background: "#fdecea", color: "#b00020", border: "1px solid #f4c7c3", padding: "2px 8px", borderRadius: 999 }}>
-              Premium
-            </span>
-          )}
-        </h3>
-
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => { setEnabled(e.target.checked); persist({ enabled: e.target.checked }); }}
-            disabled={disabled}
-          />
-          Enable alerts
-        </label>
-
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Sensitivity (z)
-          <input
-            type="number"
-            min={1}
-            max={4}
-            step={0.1}
-            value={sensitivity}
-            onChange={(e) => { const v = Number(e.target.value); setSensitivity(v); persist({ sensitivity: v }); }}
-            style={{ width: 70, padding: 6 }}
-            disabled={disabled}
-          />
-        </label>
-
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={includeRevenue}
-            onChange={(e) => { setIncludeRevenue(e.target.checked); persist({ includeRevenue: e.target.checked }); }}
-            disabled={disabled}
-          />
-          Check Revenue vs Target
-        </label>
-
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={includeCVR}
-            onChange={(e) => { setIncludeCVR(e.target.checked); persist({ includeCVR: e.target.checked }); }}
-            disabled={disabled}
-          />
-          Check CVR vs Target
-        </label>
-
-        <button
-          onClick={runScan}
-          style={{ padding: "8px 12px", cursor: disabled ? "not-allowed" : "pointer" }}
-          disabled={disabled || !propertyId || loading || !enabled}
-          title={!PREMIUM_ENABLED ? "Upgrade to enable Anomaly Alerts" : (!propertyId ? "Enter a GA4 property ID first" : "")}
-        >
-          {loading ? "Scanning…" : "Run Anomaly Scan"}
-        </button>
-      </div>
-
-      {!PREMIUM_ENABLED && (
-        <p style={{ marginTop: 10, color: "#444" }}>
-        This is a premium feature. Set <code>NEXT_PUBLIC_PREMIUM_ENABLED=&quot;true&quot;</code> to unlock in this build (or wire to your auth).
-       </p>
-
-      )}
-
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {summary && !error && <p style={{ marginTop: 12, color: "#333" }}>{summary}</p>}
-
-      {anoms.length > 0 && (
-        <div style={{ marginTop: 10, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Type</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Date / Period</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Baseline</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Δ vs Baseline</th>
-              </tr>
-            </thead>
-            <tbody>
-              {anoms.map((a, i) => (
-                <tr key={`${a.type}-${a.date || i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-                    {a.type}
-                    {a.z != null && typeof a.z === "number" && (
-                      <span style={{
-                        marginLeft: 8,
-                        padding: "2px 6px",
-                        borderRadius: 999,
-                        fontSize: 11,
-                        background: "#eef2ff",
-                        color: "#1f3a93",
-                        border: "1px solid #c7d2fe"
-                      }}>
-                        z={a.z}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>
-                    {a.date || "Period"}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {a.type.includes("Revenue")
-                      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
-                      : (a.type === "CVR vs Target"
-                          ? `${Number(a.value || 0).toFixed(2)}%`
-                          : Number(a.value || 0).toLocaleString())}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {a.type.includes("Revenue")
-                      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.baseline || 0)
-                      : (a.type === "CVR vs Target"
-                          ? `${Number(a.baseline || 0).toFixed(2)}%`
-                          : Number(a.baseline || 0).toLocaleString())}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee", color: a.dir === "up" ? "#137333" : "#b00020" }}>
-                    {a.deltaPct > 0 ? "+" : ""}{(a.deltaPct || 0)}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {!error && !anoms.length && summary && (
-        <p style={{ marginTop: 8, color: "#666" }}>No anomalies to show.</p>
       )}
     </section>
   );
