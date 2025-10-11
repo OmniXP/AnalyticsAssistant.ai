@@ -1,9 +1,9 @@
 /* eslint-disable @next/next/no-img-element */
 
-// /pages/index.js
+// pages/index.js
 import { useEffect, useMemo, useState } from "react";
 
-/* ============================== Helpers ============================== */
+/* ============================== Constants & Helpers ============================== */
 
 /** -------- Saved Views (URL helpers) -------- */
 function encodeQuery(state) {
@@ -33,8 +33,11 @@ function decodeQuery() {
   };
 }
 
+/** -------- Required storage keys (do not change) -------- */
 const STORAGE_KEY = "insightgpt_preset_v2";
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
+const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
+const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
 
 /** -------- KPI Targets helpers & badge --------
  * Expected (in localStorage):
@@ -43,33 +46,31 @@ const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
  *     revenueTarget: number,
  *     cvrTarget: number
  *   }
- * Stored under either "insightgpt_kpi_targets_v1" or "kpi_targets_v1"
  */
 function loadKpiTargets() {
-  if (typeof window === "undefined") return {};
-  const keys = ["insightgpt_kpi_targets_v1", "kpi_targets_v1"];
-  for (const k of keys) {
-    try {
-      const raw = localStorage.getItem(k);
-      if (raw) return JSON.parse(raw);
-    } catch {}
+  try {
+    const raw = localStorage.getItem(KPI_TARGETS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
   }
-  return {};
 }
-function saveKpiTargets(obj) {
-  try { localStorage.setItem("insightgpt_kpi_targets_v1", JSON.stringify(obj || {})); } catch {}
+function saveKpiTargets(next) {
+  try {
+    localStorage.setItem(KPI_TARGETS_KEY, JSON.stringify(next || {}));
+  } catch {}
 }
 function pctToTarget(current, target) {
   if (!target || target <= 0) return null;
   return Math.round((current / target) * 100);
 }
 function TargetBadge({ label, current, target, currency = false }) {
-  if (target == null) return null;
-  const pct = pctToTarget(current, target);
+  if (target == null || Number.isNaN(Number(target))) return null;
+  const pct = pctToTarget(Number(current || 0), Number(target));
   if (pct == null) return null;
   const ok = pct >= 100;
   const val = currency
-    ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(target)
+    ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(target) || 0)
     : Number(target).toLocaleString();
   return (
     <span
@@ -83,385 +84,70 @@ function TargetBadge({ label, current, target, currency = false }) {
         color: ok ? "#137333" : "#b00020",
         border: `1px solid ${ok ? "#b7e1cd" : "#f4c7c3"}`
       }}
+      aria-label={`${pct}% to ${label} target`}
     >
       {`${pct}% to ${label} target`}
     </span>
   );
 }
 
-/** KPI Targets small panel */
-function KpiTargetsPanel({ open, onClose, onSaved }) {
-  const [sessionsTarget, setSessionsTarget] = useState("");
-  const [revenueTarget, setRevenueTarget]   = useState("");
-  const [cvrTarget, setCvrTarget]           = useState("");
-  const [notice, setNotice]                 = useState("");
-
-  useEffect(() => {
-    if (!open) return;
-    const t = loadKpiTargets();
-    setSessionsTarget(t?.sessionsTarget ?? "");
-    setRevenueTarget(t?.revenueTarget ?? "");
-    setCvrTarget(t?.cvrTarget ?? "");
-    setNotice("");
-  }, [open]);
-
-  const save = () => {
-    const obj = {
-      sessionsTarget: sessionsTarget === "" ? null : Number(sessionsTarget),
-      revenueTarget: revenueTarget === "" ? null : Number(revenueTarget),
-      cvrTarget: cvrTarget === "" ? null : Number(cvrTarget),
-    };
-    saveKpiTargets(obj);
-    setNotice("Saved!");
-    onSaved?.(obj);
-    setTimeout(() => setNotice(""), 1200);
-  };
-
-  const reset = () => {
-    saveKpiTargets({});
-    setSessionsTarget("");
-    setRevenueTarget("");
-    setCvrTarget("");
-    setNotice("Targets cleared");
-    onSaved?.({});
-    setTimeout(() => setNotice(""), 1200);
-  };
-
-  if (!open) return null;
-
-  return (
-    <div
-      style={{
-        marginTop: 12,
-        padding: 12,
-        border: "1px solid #e5e5e5",
-        borderRadius: 8,
-        background: "#fbfbfb"
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0, fontSize: 16 }}>KPI Targets</h3>
-        {notice && <span style={{ color: "#137333", fontSize: 12 }}>{notice}</span>}
-        <button onClick={onClose} style={{ marginLeft: "auto", padding: "6px 10px", cursor: "pointer" }}>
-          Close
-        </button>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12, marginTop: 10 }}>
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 13, color: "#333" }}>Sessions target</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            min="0"
-            value={sessionsTarget}
-            onChange={(e) => setSessionsTarget(e.target.value)}
-            placeholder="e.g. 200000"
-            style={{ padding: 8 }}
-          />
-        </label>
-
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 13, color: "#333" }}>Revenue target (GBP)</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            min="0"
-            value={revenueTarget}
-            onChange={(e) => setRevenueTarget(e.target.value)}
-            placeholder="e.g. 500000"
-            style={{ padding: 8 }}
-          />
-        </label>
-
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 13, color: "#333" }}>CVR target (%)</span>
-          <input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            value={cvrTarget}
-            onChange={(e) => setCvrTarget(e.target.value)}
-            placeholder="e.g. 2.5"
-            style={{ padding: 8 }}
-          />
-        </label>
-      </div>
-
-      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }}>
-          Save targets
-        </button>
-        <button onClick={reset} style={{ padding: "8px 12px", cursor: "pointer", color: "#b00020" }}>
-          Clear
-        </button>
-      </div>
-
-      <p style={{ marginTop: 10, color: "#444" }}>
-        Targets drive the green/red progress badges you see next to sections. Values are stored locally in your browser.
-      </p>
-    </div>
-  );
-}
-
-/** ---------- Anomaly Alerts (Premium) ---------- */
-const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
-
+/** -------- Alerts config helpers --------
+ * Expected (in localStorage):
+ * {
+ *   enabled: boolean,
+ *   channels: { sessions: boolean, revenue: boolean, cvr: boolean },
+ *   sensitivity: number,     // z-score threshold (e.g., 2.0)
+ *   lookbackDays: number,    // e.g., 28
+ *   notifyInApp: boolean
+ * }
+ */
 function loadAlertsCfg() {
-  if (typeof window === "undefined") return {
-    enabled: false, metrics: { sessions: true, revenue: true, cvr: true },
-    sensitivity: "medium", email: ""
-  };
   try {
     const raw = localStorage.getItem(ALERTS_CFG_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { enabled: false, metrics: { sessions: true, revenue: true, cvr: true }, sensitivity: "medium", email: "" };
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 function saveAlertsCfg(cfg) {
-  try { localStorage.setItem(ALERTS_CFG_KEY, JSON.stringify(cfg || {})); } catch {}
+  try {
+    localStorage.setItem(ALERTS_CFG_KEY, JSON.stringify(cfg || {}));
+  } catch {}
 }
 
-// simple z-score anomaly on last data point
-function computeZ(last, series) {
-  if (!Array.isArray(series) || series.length < 8) return { z: 0, mean: 0, sd: 0 };
-  const vals = series.slice(0, -1); // exclude last from mean/sd
-  const n = vals.length;
-  const mean = vals.reduce((a, v) => a + v, 0) / n;
-  const sd = Math.sqrt(vals.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / n) || 0;
-  const z = sd ? (last - mean) / sd : 0;
-  return { z, mean, sd };
-}
-function zThresholdFromSensitivity(s) {
-  if (s === "high") return 2.0;     // more alerts
-  if (s === "low") return 3.0;      // fewer alerts
-  return 2.5;                       // medium
-}
-
-function AnomalyAlerts({ propertyId, startDate, endDate, filters }) {
-  const [open, setOpen] = useState(false);
-  const [cfg, setCfg] = useState(loadAlertsCfg);
-  const [loading, setLoading] = useState(false);
-  const [alerts, setAlerts] = useState([]); // [{metric, period, value, z, direction, mean, sd}]
-  const [error, setError] = useState("");
-
-  useEffect(() => { setCfg(loadAlertsCfg()); }, []);
-
-  const persist = (next) => { setCfg(next); saveAlertsCfg(next); };
-
-  async function runCheck() {
-    setLoading(true); setError(""); setAlerts([]);
-    try {
-      const data = await fetchJson("/api/ga4/timeseries", { propertyId, startDate, endDate, filters, granularity: "daily" });
-      const series = Array.isArray(data?.series) ? data.series : [];
-      if (series.length < 8) {
-        setError("Not enough data to run anomaly detection (need at least 8 days).");
-        setLoading(false);
-        return;
-      }
-
-      // Build arrays
-      const sessionsArr = series.map(r => Number(r.sessions || 0));
-      const revenueArr  = series.map(r => Number(r.revenue || 0));
-      const cvrArr      = series.map(r => {
-        const s = Number(r.sessions || 0);
-        const t = Number(r.transactions || 0);
-        return s > 0 ? (t / s) * 100 : 0;
-      });
-
-      const lastPeriod = series[series.length - 1]?.period || "";
-      const out = [];
-      const thr = zThresholdFromSensitivity(cfg.sensitivity);
-
-      if (cfg.metrics?.sessions) {
-        const last = sessionsArr[sessionsArr.length - 1];
-        const { z, mean, sd } = computeZ(last, sessionsArr);
-        if (Math.abs(z) >= thr) out.push({ metric: "Sessions", period: lastPeriod, value: last, z, direction: z >= 0 ? "up" : "down", mean, sd });
-      }
-      if (cfg.metrics?.revenue) {
-        const last = revenueArr[revenueArr.length - 1];
-        const { z, mean, sd } = computeZ(last, revenueArr);
-        if (Math.abs(z) >= thr) out.push({ metric: "Revenue", period: lastPeriod, value: last, z, direction: z >= 0 ? "up" : "down", mean, sd });
-      }
-      if (cfg.metrics?.cvr) {
-        const last = cvrArr[cvrArr.length - 1];
-        const { z, mean, sd } = computeZ(last, cvrArr);
-        if (Math.abs(z) >= thr) out.push({ metric: "CVR", period: lastPeriod, value: last, z, direction: z >= 0 ? "up" : "down", mean, sd });
-      }
-
-      setAlerts(out);
-    } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // expose a small badge (count) near the toggle button? we keep it inside panel for clarity
-  return (
-    <>
-      <button
-        onClick={() => setOpen(s => !s)}
-        style={{ padding: "8px 12px", cursor: "pointer" }}
-        disabled={!propertyId}
-        title={!propertyId ? "Enter a GA4 property ID first" : ""}
-      >
-        {open ? "Hide Anomaly Alerts" : "Anomaly Alerts (Premium)"}
-      </button>
-
-      {open && (
-        <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e5e5", borderRadius: 8, background: "#fbfbfb" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Anomaly Alerts</h3>
-            <span style={{ fontSize: 12, color: "#555" }}>
-              Premium monitoring for Sessions, Revenue, and CVR anomalies.
-            </span>
-            <button onClick={() => setOpen(false)} style={{ marginLeft: "auto", padding: "6px 10px", cursor: "pointer" }}>
-              Close
-            </button>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12, marginTop: 12 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={!!cfg.enabled}
-                onChange={(e) => persist({ ...cfg, enabled: e.target.checked })}
-              />
-              Enable monitoring
-            </label>
-
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13 }}>Sensitivity</span>
-              <select
-                value={cfg.sensitivity}
-                onChange={(e) => persist({ ...cfg, sensitivity: e.target.value })}
-                style={{ padding: 8 }}
-              >
-                <option value="low">Low (fewer alerts)</option>
-                <option value="medium">Medium</option>
-                <option value="high">High (more alerts)</option>
-              </select>
-            </div>
-
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="checkbox"
-                  checked={!!cfg.metrics?.sessions}
-                  onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, sessions: e.target.checked } })}
-                />
-                Sessions
-              </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="checkbox"
-                  checked={!!cfg.metrics?.revenue}
-                  onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, revenue: e.target.checked } })}
-                />
-                Revenue
-              </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="checkbox"
-                  checked={!!cfg.metrics?.cvr}
-                  onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, cvr: e.target.checked } })}
-                />
-                CVR
-              </label>
-            </div>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13 }}>Alert email (optional)</span>
-              <input
-                type="email"
-                placeholder="name@example.com"
-                value={cfg.email || ""}
-                onChange={(e) => persist({ ...cfg, email: e.target.value })}
-                style={{ padding: 8 }}
-              />
-              <span style={{ fontSize: 12, color: "#666" }}>
-                Email is stored locally. Hook your backend to actually send alerts.
-              </span>
-            </label>
-          </div>
-
-          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={runCheck} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-              {loading ? "Checking…" : "Check now"}
-            </button>
-            <span style={{ fontSize: 12, color: "#666" }}>
-              Uses latest daily data in your selected range and filters.
-            </span>
-          </div>
-
-          {error && <p style={{ color: "crimson", marginTop: 10, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-
-          <div style={{ marginTop: 12 }}>
-            <h4 style={{ margin: "0 0 6px 0" }}>Results</h4>
-            {alerts.length ? (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Period</th>
-                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
-                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Z-score</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Direction</th>
-                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Mean (ref)</th>
-                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>SD (ref)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {alerts.map((a, i) => (
-                      <tr key={`al-${i}`}>
-                        <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{a.metric}</td>
-                        <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{a.period}</td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                          {a.metric === "Revenue"
-                            ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
-                            : a.metric === "CVR"
-                              ? `${(a.value || 0).toFixed(2)}%`
-                              : (a.value || 0).toLocaleString()}
-                        </td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{a.z.toFixed(2)}</td>
-                        <td style={{ padding: 8, borderBottom: "1px solid #eee", color: a.direction === "up" ? "#137333" : "#b00020" }}>
-                          {a.direction === "up" ? "Up" : "Down"}
-                        </td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                          {a.metric === "Revenue"
-                            ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.mean || 0)
-                            : a.metric === "CVR"
-                              ? `${(a.mean || 0).toFixed(2)}%`
-                              : (a.mean || 0).toLocaleString()}
-                        </td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(a.sd || 0).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p style={{ color: "#666", marginTop: 4 }}>No anomalies flagged based on current sensitivity.</p>
-            )}
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ---------- Other helpers ---------- */
+/** -------- Select options -------- */
 const COUNTRY_OPTIONS = [
-  "All","United Kingdom","United States","Ireland","Germany","France","Spain","Italy","Netherlands","Australia","Canada","India",
+  "All",
+  "United Kingdom",
+  "United States",
+  "Ireland",
+  "Germany",
+  "France",
+  "Spain",
+  "Italy",
+  "Netherlands",
+  "Australia",
+  "Canada",
+  "India",
 ];
 
 const CHANNEL_GROUP_OPTIONS = [
-  "All","Direct","Organic Search","Paid Search","Organic Social","Paid Social","Email","Referral","Display","Video","Affiliates","Organic Shopping","Paid Shopping",
+  "All",
+  "Direct",
+  "Organic Search",
+  "Paid Search",
+  "Organic Social",
+  "Paid Social",
+  "Email",
+  "Referral",
+  "Display",
+  "Video",
+  "Affiliates",
+  "Organic Shopping",
+  "Paid Shopping",
 ];
 
+/** -------- Utilities -------- */
 function parseGa4Channels(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
   const rows = response.rows.map((r) => ({
@@ -495,7 +181,7 @@ function computePreviousRange(startStr, endStr) {
   const start = new Date(startStr);
   const end = new Date(endStr);
   const oneDay = 24 * 60 * 60 * 1000;
-  const days = Math.round((end - start) / oneDay) + 1;
+  const days = Math.round((end - start) / oneDay) + 1; // inclusive
   const prevEnd = new Date(start.getTime() - oneDay);
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
@@ -514,12 +200,17 @@ function downloadCsvChannels(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -531,12 +222,17 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `${filenamePrefix}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -552,6 +248,20 @@ function buildChannelPieUrl(rows) {
   };
   const encoded = encodeURIComponent(JSON.stringify(cfg));
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
+}
+
+/** QuickChart line chart URL */
+function buildLineChartUrl(series, granularity) {
+  if (!series?.length) return "";
+  const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
+  const sessions = series.map((d) => d.sessions);
+  const users = series.map((d) => d.users);
+  const cfg = {
+    type: "line",
+    data: { labels, datasets: [{ label: "Sessions", data: sessions }, { label: "Users", data: users }] },
+    options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
+  };
+  return `https://quickchart.io/chart?w=800&h=360&c=${encodeURIComponent(JSON.stringify(cfg))}`;
 }
 
 /** Unified fetch helper */
@@ -597,6 +307,38 @@ function safeStringify(value) {
   }
 }
 
+/** Date label helpers used by timeseries & alerts */
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function pad2(n) { return String(n).padStart(2, "0"); }
+function isoWeekStartUTC(year, week) {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const mondayWeek1 = new Date(jan4);
+  mondayWeek1.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const mondayTarget = new Date(mondayWeek1);
+  mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
+  return mondayTarget;
+}
+function formatYearWeekRange(s) {
+  const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
+  if (!m) return String(s || "");
+  const year = Number(m[1]); const week = Number(m[2]);
+  const start = isoWeekStartUTC(year, week);
+  const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
+  const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
+  const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
+  return `${startStr}–${endStr}`;
+}
+function formatYYYYMMDD(s) {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
+  if (!m) return String(s || "");
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
+}
+function displayPeriodLabel(raw, gran) {
+  return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
+}
+
 /* ============================== Page ============================== */
 export default function Home() {
   // Base controls
@@ -627,10 +369,6 @@ export default function Home() {
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // KPI Targets
-  const [showKpiPanel, setShowKpiPanel] = useState(false);
-  const [kpiVersion, setKpiVersion] = useState(0);
 
   // Load from URL once
   useEffect(() => {
@@ -683,11 +421,13 @@ export default function Home() {
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
-  const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
-  const { rows: prevRows, totals: prevTotals } = useMemo(
-    () => parseGa4Channels(prevResult),
-    [prevResult]
-  );
+  const channelsParsed = useMemo(() => parseGa4Channels(result), [result]);
+  const rows = channelsParsed.rows;
+  const totals = channelsParsed.totals;
+
+  const prevParsed = useMemo(() => parseGa4Channels(prevResult), [prevResult]);
+  const prevRows = prevParsed.rows;
+  const prevTotals = prevParsed.totals;
 
   const top = rows[0];
   const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
@@ -723,12 +463,14 @@ export default function Home() {
       });
       setResult(curr);
 
+      // Update URL to reflect the view we just ran
       try {
         const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
         const path = window.location.pathname + (qs ? `?${qs}` : "");
         window.history.replaceState(null, "", path);
       } catch {}
 
+      // Broadcast reset for sections & AI
       setRefreshSignal((n) => n + 1);
 
       if (comparePrev) {
@@ -760,15 +502,12 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setError("");
-    setDashKey((k) => k + 1);
+    setDashKey((k) => k + 1); // force remount of sections
     try {
       const path = window.location.pathname;
       window.history.replaceState(null, "", path);
     } catch {}
   };
-
-  const onKpiSaved = () => setKpiVersion(v => v + 1);
-  const kpiTargets = useMemo(() => loadKpiTargets(), [kpiVersion]);
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
@@ -779,11 +518,11 @@ export default function Home() {
 
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>
+        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }} aria-label="Connect Google Analytics">
           Connect Google Analytics
         </button>
 
-        <label>GA4 Property ID&nbsp;
+        <label htmlFor="property-id">GA4 Property ID&nbsp;
           <input
             id="property-id"
             name="property-id"
@@ -794,10 +533,10 @@ export default function Home() {
           />
         </label>
 
-        <label>Start date&nbsp;
+        <label htmlFor="start-date">Start date&nbsp;
           <input id="start-date" name="start-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 8 }} />
         </label>
-        <label>End date&nbsp;
+        <label htmlFor="end-date">End date&nbsp;
           <input id="end-date" name="end-date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8 }} />
         </label>
 
@@ -819,32 +558,21 @@ export default function Home() {
           Compare vs previous period
         </label>
 
-        {/* Toggles for premium & targets */}
-        <button onClick={() => setShowKpiPanel(s => !s)} style={{ padding: "8px 12px", cursor: "pointer" }}>
-          {showKpiPanel ? "Hide KPI Targets" : "Set KPI Targets"}
-        </button>
-
-        {/* Anomaly Alerts button lives here */}
-        <AnomalyAlerts propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
-
         <button onClick={resetDashboard} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
           Reset Dashboard
         </button>
       </div>
 
-      {/* KPI Targets panel */}
-      <KpiTargetsPanel open={showKpiPanel} onClose={() => setShowKpiPanel(false)} onSaved={onKpiSaved} />
-
       {/* Filters */}
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <b>Filters:</b>
-          <label>Country&nbsp;
+          <label htmlFor="country-filter">Country&nbsp;
             <select id="country-filter" value={countrySel} onChange={(e) => setCountrySel(e.target.value)} style={{ padding: 8 }}>
               {COUNTRY_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           </label>
-          <label>Channel Group&nbsp;
+          <label htmlFor="channel-filter">Channel Group&nbsp;
             <select id="channel-filter" value={channelSel} onChange={(e) => setChannelSel(e.target.value)} style={{ padding: 8 }}>
               {CHANNEL_GROUP_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
             </select>
@@ -863,6 +591,9 @@ export default function Home() {
           </span>
         </div>
       </div>
+
+      {/* KPI Targets Panel (always visible; persists to insightgpt_kpi_targets_v1) */}
+      <KpiTargetsPanel />
 
       {/* Saved Views */}
       <SavedViews
@@ -892,10 +623,11 @@ export default function Home() {
         <section style={{ marginTop: 24, background: "#f6f7f8", padding: 16, borderRadius: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
+            {/* KPI badge for Sessions (hero) */}
             <TargetBadge
               label="Sessions"
               current={Number(totals?.sessions || 0)}
-              target={Number(kpiTargets?.sessionsTarget)}
+              target={Number(loadKpiTargets()?.sessionsTarget)}
             />
             <AiBlock
               asButton
@@ -953,6 +685,7 @@ export default function Home() {
           </div>
 
           <div style={{ marginTop: 16 }}>
+            {/* Using <img> with ESLint disabled at file top to avoid extra next/image config for remote charts */}
             <img
               src={buildChannelPieUrl(rows)}
               alt="Channel share chart"
@@ -962,6 +695,16 @@ export default function Home() {
         </section>
       )}
 
+      {/* Premium: Anomaly Alerts (Sessions / Revenue / CVR) */}
+      <AnomalyAlerts
+        key={`alerts-${dashKey}`}
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+        resetSignal={refreshSignal}
+      />
+
       {/* Source / Medium */}
       <SourceMedium
         key={`sm-${dashKey}`}
@@ -970,7 +713,6 @@ export default function Home() {
         endDate={endDate}
         filters={appliedFilters}
         resetSignal={refreshSignal}
-        kpiTargets={kpiTargets}
       />
 
       {/* Trends over time */}
@@ -987,7 +729,6 @@ export default function Home() {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
-        kpiTargets={kpiTargets}
       />
 
       {/* Campaign drill-down */}
@@ -1004,7 +745,6 @@ export default function Home() {
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
-        kpiTargets={kpiTargets}
       />
 
       {/* Top pages */}
@@ -1033,7 +773,6 @@ export default function Home() {
         endDate={endDate}
         filters={appliedFilters}
         resetSignal={refreshSignal}
-        kpiTargets={kpiTargets}
       />
 
       {/* Checkout funnel */}
@@ -1066,6 +805,358 @@ export default function Home() {
         </details>
       ) : null}
     </main>
+  );
+}
+
+/* ============================== KPI Targets Panel ============================== */
+function KpiTargetsPanel() {
+  const [targets, setTargets] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
+  const [savedNote, setSavedNote] = useState("");
+
+  useEffect(() => {
+    try {
+      const existing = loadKpiTargets();
+      setTargets({
+        sessionsTarget: existing.sessionsTarget ?? "",
+        revenueTarget: existing.revenueTarget ?? "",
+        cvrTarget: existing.cvrTarget ?? "",
+      });
+    } catch {}
+  }, []);
+
+  const save = () => {
+    const out = {
+      sessionsTarget: Number(targets.sessionsTarget) || 0,
+      revenueTarget: Number(targets.revenueTarget) || 0,
+      cvrTarget: Number(targets.cvrTarget) || 0,
+    };
+    saveKpiTargets(out);
+    setSavedNote("Saved!");
+    setTimeout(() => setSavedNote(""), 1200);
+  };
+
+  return (
+    <section style={{ marginTop: 12, padding: 12, border: "1px dashed #e0e0e0", borderRadius: 8, background: "#fbfbfb" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: 16 }}>KPI Targets</h3>
+        <label htmlFor="kpi-sessions" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          Sessions&nbsp;
+          <input
+            id="kpi-sessions"
+            type="number"
+            inputMode="numeric"
+            value={targets.sessionsTarget}
+            onChange={(e) => setTargets((t) => ({ ...t, sessionsTarget: e.target.value }))}
+            style={{ padding: 6, width: 140 }}
+            placeholder="e.g. 50000"
+          />
+        </label>
+        <label htmlFor="kpi-revenue" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          Revenue (GBP)&nbsp;
+          <input
+            id="kpi-revenue"
+            type="number"
+            inputMode="numeric"
+            step="0.01"
+            value={targets.revenueTarget}
+            onChange={(e) => setTargets((t) => ({ ...t, revenueTarget: e.target.value }))}
+            style={{ padding: 6, width: 160 }}
+            placeholder="e.g. 250000"
+          />
+        </label>
+        <label htmlFor="kpi-cvr" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          CVR %&nbsp;
+          <input
+            id="kpi-cvr"
+            type="number"
+            inputMode="numeric"
+            step="0.01"
+            value={targets.cvrTarget}
+            onChange={(e) => setTargets((t) => ({ ...t, cvrTarget: e.target.value }))}
+            style={{ padding: 6, width: 120 }}
+            placeholder="e.g. 2.5"
+          />
+        </label>
+        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }} aria-label="Save KPI Targets">
+          Save targets
+        </button>
+        {savedNote && <span style={{ color: "#137333", fontSize: 12 }}>{savedNote}</span>}
+        <span style={{ color: "#666", fontSize: 12 }}>
+          These targets drive progress badges across the dashboard.
+        </span>
+      </div>
+    </section>
+  );
+}
+
+/* ============================== Anomaly Alerts (Premium) ============================== */
+function AnomalyAlerts({ propertyId, startDate, endDate, filters, resetSignal }) {
+  // Config state
+  const [cfg, setCfg] = useState({
+    enabled: false,
+    channels: { sessions: true, revenue: true, cvr: true },
+    sensitivity: 2.0,
+    lookbackDays: 28,
+    notifyInApp: true,
+  });
+  const [loading, setLoading] = useState(false);
+  const [granularity, setGranularity] = useState("daily"); // daily only for alerts
+  const [series, setSeries] = useState([]); // [{ period, sessions, users, transactions, revenue }]
+  const [alerts, setAlerts] = useState([]); // derived anomalies
+  const [error, setError] = useState("");
+
+  // Reset on dashboard reset/run
+  useEffect(() => {
+    setSeries([]);
+    setAlerts([]);
+    setError("");
+  }, [resetSignal]);
+
+  // Load existing cfg
+  useEffect(() => {
+    const stored = loadAlertsCfg();
+    if (stored && typeof stored === "object") {
+      setCfg((c) => ({
+        enabled: !!stored.enabled,
+        channels: {
+          sessions: !!stored?.channels?.sessions,
+          revenue: !!stored?.channels?.revenue,
+          cvr: !!stored?.channels?.cvr,
+        },
+        sensitivity: Number(stored.sensitivity || 2.0),
+        lookbackDays: Math.max(7, Number(stored.lookbackDays || 28)),
+        notifyInApp: stored.notifyInApp !== false,
+      }));
+    }
+  }, []);
+
+  const persistCfg = (next) => {
+    setCfg(next);
+    saveAlertsCfg(next);
+  };
+
+  // Fetch timeseries for anomaly detection
+  const loadSeries = async () => {
+    if (!propertyId) { setError("Enter a GA4 property ID first."); return; }
+    setLoading(true); setError(""); setSeries([]); setAlerts([]);
+    try {
+      const data = await fetchJson("/api/ga4/timeseries", { propertyId, startDate, endDate, filters, granularity: "daily" });
+      const s = Array.isArray(data?.series) ? data.series : [];
+      setSeries(s);
+      setAlerts(detectAnomalies(s, cfg));
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Simple anomaly detection using rolling mean/std (excluding the point)
+  function detectAnomalies(s, config) {
+    if (!Array.isArray(s) || s.length === 0) return [];
+    const lookback = Math.max(7, Number(config.lookbackDays || 28));
+    const z = Math.max(1.0, Number(config.sensitivity || 2.0));
+
+    const pts = s.map((d) => {
+      const sess = Number(d.sessions || 0);
+      const rev = Number(d.revenue || 0);
+      const tx = Number(d.transactions || 0);
+      const cvr = (Number(d.sessions || 0) > 0 && Number(d.transactions || 0) >= 0)
+        ? (tx / sess) * 100
+        : 0;
+      return { period: d.period, sessions: sess, revenue: rev, transactions: tx, cvr };
+    });
+
+    const metrics = [
+      config.channels.sessions ? "sessions" : null,
+      config.channels.revenue ? "revenue" : null,
+      config.channels.cvr ? "cvr" : null,
+    ].filter(Boolean);
+
+    const out = [];
+
+    for (let i = 0; i < pts.length; i++) {
+      for (const m of metrics) {
+        const start = Math.max(0, i - lookback);
+        const window = pts.slice(start, i).map((x) => Number(x[m] || 0)).filter((n) => Number.isFinite(n));
+        if (window.length < 7) continue; // need enough history
+
+        const mean = window.reduce((a, b) => a + b, 0) / window.length;
+        const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
+        const std = Math.sqrt(variance);
+        const val = Number(pts[i][m] || 0);
+
+        let isAnom = false;
+        let direction = "neutral";
+        if (std === 0) {
+          // If std is zero, treat any non-equal value as anomaly
+          isAnom = Math.abs(val - mean) > 0;
+          direction = val > mean ? "high" : "low";
+        } else {
+          const zScore = (val - mean) / std;
+          isAnom = Math.abs(zScore) >= z;
+          direction = zScore > 0 ? "high" : "low";
+        }
+
+        if (isAnom) {
+          out.push({
+            period: pts[i].period,
+            metric: m,
+            value: val,
+            baseline: Number.isFinite(mean) ? mean : 0,
+            std,
+            direction,
+          });
+        }
+      }
+    }
+
+    // Sort newest first (if periods are sortable strings like YYYYMMDD)
+    out.sort((a, b) => String(b.period).localeCompare(String(a.period)));
+    return out;
+  }
+
+  const kpiTargets = loadKpiTargets(); // for contextual info in the panel
+
+  return (
+    <section style={{ marginTop: 28, padding: 16, border: "1px solid #eee", borderRadius: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Anomaly Alerts (Premium)</h3>
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) => persistCfg({ ...cfg, enabled: e.target.checked })}
+          />
+          Enable alerts
+        </label>
+
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Sensitivity (z)
+            <input
+              type="number"
+              step="0.1"
+              min={1}
+              value={cfg.sensitivity}
+              onChange={(e) => persistCfg({ ...cfg, sensitivity: Number(e.target.value || 2.0) })}
+              style={{ width: 70, padding: 6 }}
+            />
+          </label>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Lookback (days)
+            <input
+              type="number"
+              min={7}
+              value={cfg.lookbackDays}
+              onChange={(e) => persistCfg({ ...cfg, lookbackDays: Math.max(7, Number(e.target.value || 28)) })}
+              style={{ width: 90, padding: 6 }}
+            />
+          </label>
+        </div>
+
+        <div role="group" aria-label="Metrics to monitor" style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={cfg.channels.sessions}
+              onChange={(e) => persistCfg({ ...cfg, channels: { ...cfg.channels, sessions: e.target.checked } })}
+            />
+            Sessions
+          </label>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={cfg.channels.revenue}
+              onChange={(e) => persistCfg({ ...cfg, channels: { ...cfg.channels, revenue: e.target.checked } })}
+            />
+            Revenue
+          </label>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={cfg.channels.cvr}
+              onChange={(e) => persistCfg({ ...cfg, channels: { ...cfg.channels, cvr: e.target.checked } })}
+            />
+            CVR
+          </label>
+        </div>
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={cfg.notifyInApp}
+            onChange={(e) => persistCfg({ ...cfg, notifyInApp: e.target.checked })}
+          />
+          Notify in app
+        </label>
+
+        <button
+          onClick={loadSeries}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !cfg.enabled || !propertyId}
+          title={!propertyId ? "Enter a GA4 property ID first" : ""}
+        >
+          {loading ? "Checking…" : "Run check now"}
+        </button>
+
+        {/* Context note using targets (non-blocking) */}
+        <span style={{ color: "#666", fontSize: 12 }}>
+          Targets: Sessions {Number(kpiTargets?.sessionsTarget || 0).toLocaleString()} · Revenue {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(kpiTargets?.revenueTarget || 0))} · CVR {(Number(kpiTargets?.cvrTarget || 0)).toFixed(2)}%
+        </span>
+      </div>
+
+      {error && <p style={{ color: "crimson", marginTop: 10, whiteSpace: "pre-wrap" }}>{error}</p>}
+
+      {/* Alerts table */}
+      <div style={{ marginTop: 12, overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 640 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Period</th>
+              <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
+              <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
+              <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Baseline</th>
+              <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Std Dev</th>
+              <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Direction</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alerts.length > 0 ? alerts.map((a, idx) => {
+              const label = displayPeriodLabel(a.period, granularity);
+              const isRevenue = a.metric === "revenue";
+              const valueCell = isRevenue
+                ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
+                : (a.metric === "cvr" ? `${(a.value || 0).toFixed(2)}%` : Number(a.value || 0).toLocaleString());
+
+              const baseCell = isRevenue
+                ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.baseline || 0)
+                : (a.metric === "cvr" ? `${(a.baseline || 0).toFixed(2)}%` : Number(a.baseline || 0).toLocaleString());
+
+              return (
+                <tr key={`alert-${idx}`}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", textTransform: "uppercase" }}>{a.metric}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{valueCell}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{baseCell}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(a.std || 0).toFixed(2)}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", color: a.direction === "high" ? "#137333" : "#b00020" }}>
+                    {a.direction}
+                  </td>
+                </tr>
+              );
+            }) : (
+              <tr>
+                <td colSpan={6} style={{ padding: 12, textAlign: "center", color: "#666" }}>
+                  {cfg.enabled ? "No anomalies detected yet. Click \"Run check now\" after loading a timeseries." : "Enable alerts and run a check to see anomalies here."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -1129,9 +1220,8 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 }
 
 /* ============================== Source / Medium ============================== */
-function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
+function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  thead
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
@@ -1157,10 +1247,12 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, kp
     }
   };
 
+  // Totals + KPI badges
   const totalSessions = useMemo(
     () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [rows]
   );
+  const kpiTargets = loadKpiTargets(); // compute on render; it is cheap
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -1203,7 +1295,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, kp
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1236,7 +1328,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, kp
 }
 
 /* ============================== Campaigns (overview) ============================== */
-function Campaigns({ propertyId, startDate, endDate, filters, kpiTargets }) {
+function Campaigns({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -1264,6 +1356,7 @@ function Campaigns({ propertyId, startDate, endDate, filters, kpiTargets }) {
     () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [rows]
   );
+  const kpiTargets = loadKpiTargets();
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -1304,7 +1397,7 @@ function Campaigns({ propertyId, startDate, endDate, filters, kpiTargets }) {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1409,6 +1502,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
           onChange={(e) => setCampaign(e.target.value)}
           placeholder="Type exact campaign name…"
           style={{ padding: 8, minWidth: 260 }}
+          aria-label="Campaign name"
         />
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId || !campaign}>
           {loading ? "Loading…" : "Load Campaign Details"}
@@ -1422,18 +1516,22 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
             kind: "campaign-detail",
             campaign,
             totals,
-            breakdowns: { sourceMedium: srcMed, adContent: content, term },
+            breakdowns: {
+              sourceMedium: srcMed,
+              adContent: content,
+              term,
+            },
             dateRange: { start: startDate, end: endDate },
             filters,
           }}
         />
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {totals && (
         <div style={{ marginTop: 12 }}>
-          <b>Totals for &ldquo;{campaign}&rdquo;:</b>{" "}
+          <b>Totals for “{campaign}”:</b>{" "}
           Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} ·
           Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} ·
@@ -1535,18 +1633,18 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       )}
 
       {!error && !loading && !totals && (
-        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click &ldquo;Load Campaign Details&rdquo;.</p>
+        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click {"\""}Load Campaign Details{"\""}.</p>
       )}
     </section>
   );
 }
 
 /* ============================== Campaigns Overview ============================== */
-function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets }) {
+function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [error, setError]       = useState("");
-  const [q, setQ]               = useState("");
+  const [q, setQ]               = useState(""); // client-side search
 
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
@@ -1582,6 +1680,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets
     () => visible.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [visible]
   );
+  const kpiTargets = loadKpiTargets();
 
   return (
     <section style={{ marginTop: 28 }}>
@@ -1592,7 +1691,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets
           {loading ? "Loading…" : "Load Campaigns"}
         </button>
 
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign name…" style={{ padding: 8, minWidth: 220 }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign name…" style={{ padding: 8, minWidth: 220 }} aria-label="Search campaign name" />
 
         {visible.length > 0 && (
           <TargetBadge
@@ -1640,7 +1739,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {visible.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1740,7 +1839,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {rows.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1883,6 +1982,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             onChange={(e) => setMinSessions(Number(e.target.value))}
             style={{ width: 160 }}
             disabled={!rows.length}
+            aria-label="Minimum sessions filter"
           />
           <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
             {minSessions}
@@ -1896,7 +1996,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         )}
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {filtered.length > 0 ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1935,7 +2035,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
 }
 
 /* ============================== E-commerce KPIs ============================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
@@ -1956,6 +2056,8 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
     }
   };
 
+  const kpiTargets = loadKpiTargets();
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1963,6 +2065,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
+        {/* KPI badges shown when totals loaded */}
         {totals && (
           <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <TargetBadge
@@ -1992,7 +2095,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
         />
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
       {!error && totals && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: 560 }}>
@@ -2075,7 +2178,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
         />
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {steps ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -2114,50 +2217,6 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  function pad2(n) { return String(n).padStart(2, "0"); }
-  function isoWeekStartUTC(year, week) {
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay() || 7;
-    const mondayWeek1 = new Date(jan4);
-    mondayWeek1.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
-    const mondayTarget = new Date(mondayWeek1);
-    mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
-    return mondayTarget;
-  }
-  function formatYearWeekRange(s) {
-    const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
-    if (!m) return String(s || "");
-    const year = Number(m[1]); const week = Number(m[2]);
-    const start = isoWeekStartUTC(year, week);
-    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
-    const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
-    const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
-    return `${startStr}–${endStr}`;
-  }
-  function formatYYYYMMDD(s) {
-    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
-    if (!m) return String(s || "");
-    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-    return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
-  }
-  function displayPeriodLabel(raw, gran) {
-    return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
-  }
-
-  function buildLineChartUrl(series) {
-    if (!series?.length) return "";
-    const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
-    const sessions = series.map((d) => d.sessions);
-    const users = series.map((d) => d.users);
-    const cfg = {
-      type: "line",
-      data: { labels, datasets: [{ label: "Sessions", data: sessions }, { label: "Users", data: users }] },
-      options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
-    };
-    return `https://quickchart.io/chart?w=800&h=360&c=${encodeURIComponent(JSON.stringify(cfg))}`;
-  }
-
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
     try {
@@ -2179,7 +2238,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Granularity
-          <select value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
+          <select value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }} aria-label="Granularity">
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
           </select>
@@ -2228,13 +2287,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>}
 
       {hasRows ? (
         <>
           <div style={{ marginTop: 12 }}>
             <img
-              src={buildLineChartUrl(rows)}
+              src={buildLineChartUrl(rows, granularity)}
               alt="Sessions & Users trend"
               style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
             />
@@ -2278,9 +2337,9 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 /* ============================== Product Performance ============================== */
 function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState([]);            // [{ name, id, views, carts, purchases, revenue }]
   const [error, setError] = useState("");
-  const [debug, setDebug] = useState(null);
+  const [debug, setDebug] = useState(null);        // raw GA4 response
 
   useEffect(() => {
     setRows([]);
@@ -2553,6 +2612,7 @@ function SavedViews({
           onChange={(e) => setName(e.target.value)}
           placeholder="Name this view (e.g. UK · Organic · Sep)"
           style={{ padding: 8, minWidth: 260 }}
+          aria-label="Saved view name"
         />
         <button onClick={saveCurrent} style={{ padding: "8px 12px", cursor: "pointer" }}>
           Save current
@@ -2584,7 +2644,7 @@ function SavedViews({
         </div>
       ) : (
         <p style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
-          No saved views yet. Set dates/filters, give it a name, then &ldquo;Save current&rdquo;.
+          No saved views yet. Set dates/filters, give it a name, then {"\""}Save current{"\""}.
         </p>
       )}
     </section>
