@@ -2500,8 +2500,9 @@ function AnomalyAlerts({ propertyId, startDate, endDate, filters }) {
 
       {!PREMIUM_ENABLED && (
         <p style={{ marginTop: 10, color: "#444" }}>
-          This is a premium feature. Set <code>NEXT_PUBLIC_PREMIUM_ENABLED="true"</code> to unlock in this build (or wire to your auth).
-        </p>
+        This is a premium feature. Set <code>NEXT_PUBLIC_PREMIUM_ENABLED=&quot;true&quot;</code> to unlock in this build (or wire to your auth).
+       </p>
+
       )}
 
       {error && <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
