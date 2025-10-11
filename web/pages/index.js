@@ -89,7 +89,7 @@ function TargetBadge({ label, current, target, currency = false }) {
   );
 }
 
-/** KPI Targets small panel (restored) */
+/** KPI Targets small panel */
 function KpiTargetsPanel({ open, onClose, onSaved }) {
   const [sessionsTarget, setSessionsTarget] = useState("");
   const [revenueTarget, setRevenueTarget]   = useState("");
@@ -113,7 +113,7 @@ function KpiTargetsPanel({ open, onClose, onSaved }) {
     };
     saveKpiTargets(obj);
     setNotice("Saved!");
-    if (onSaved) onSaved(obj);
+    onSaved?.(obj);
     setTimeout(() => setNotice(""), 1200);
   };
 
@@ -123,7 +123,7 @@ function KpiTargetsPanel({ open, onClose, onSaved }) {
     setRevenueTarget("");
     setCvrTarget("");
     setNotice("Targets cleared");
-    if (onSaved) onSaved({});
+    onSaved?.({});
     setTimeout(() => setNotice(""), 1200);
   };
 
@@ -205,35 +205,261 @@ function KpiTargetsPanel({ open, onClose, onSaved }) {
   );
 }
 
+/** ---------- Anomaly Alerts (Premium) ---------- */
+const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
+
+function loadAlertsCfg() {
+  if (typeof window === "undefined") return {
+    enabled: false, metrics: { sessions: true, revenue: true, cvr: true },
+    sensitivity: "medium", email: ""
+  };
+  try {
+    const raw = localStorage.getItem(ALERTS_CFG_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { enabled: false, metrics: { sessions: true, revenue: true, cvr: true }, sensitivity: "medium", email: "" };
+}
+function saveAlertsCfg(cfg) {
+  try { localStorage.setItem(ALERTS_CFG_KEY, JSON.stringify(cfg || {})); } catch {}
+}
+
+// simple z-score anomaly on last data point
+function computeZ(last, series) {
+  if (!Array.isArray(series) || series.length < 8) return { z: 0, mean: 0, sd: 0 };
+  const vals = series.slice(0, -1); // exclude last from mean/sd
+  const n = vals.length;
+  const mean = vals.reduce((a, v) => a + v, 0) / n;
+  const sd = Math.sqrt(vals.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / n) || 0;
+  const z = sd ? (last - mean) / sd : 0;
+  return { z, mean, sd };
+}
+function zThresholdFromSensitivity(s) {
+  if (s === "high") return 2.0;     // more alerts
+  if (s === "low") return 3.0;      // fewer alerts
+  return 2.5;                       // medium
+}
+
+function AnomalyAlerts({ propertyId, startDate, endDate, filters }) {
+  const [open, setOpen] = useState(false);
+  const [cfg, setCfg] = useState(loadAlertsCfg);
+  const [loading, setLoading] = useState(false);
+  const [alerts, setAlerts] = useState([]); // [{metric, period, value, z, direction, mean, sd}]
+  const [error, setError] = useState("");
+
+  useEffect(() => { setCfg(loadAlertsCfg()); }, []);
+
+  const persist = (next) => { setCfg(next); saveAlertsCfg(next); };
+
+  async function runCheck() {
+    setLoading(true); setError(""); setAlerts([]);
+    try {
+      const data = await fetchJson("/api/ga4/timeseries", { propertyId, startDate, endDate, filters, granularity: "daily" });
+      const series = Array.isArray(data?.series) ? data.series : [];
+      if (series.length < 8) {
+        setError("Not enough data to run anomaly detection (need at least 8 days).");
+        setLoading(false);
+        return;
+      }
+
+      // Build arrays
+      const sessionsArr = series.map(r => Number(r.sessions || 0));
+      const revenueArr  = series.map(r => Number(r.revenue || 0));
+      const cvrArr      = series.map(r => {
+        const s = Number(r.sessions || 0);
+        const t = Number(r.transactions || 0);
+        return s > 0 ? (t / s) * 100 : 0;
+      });
+
+      const lastPeriod = series[series.length - 1]?.period || "";
+      const out = [];
+      const thr = zThresholdFromSensitivity(cfg.sensitivity);
+
+      if (cfg.metrics?.sessions) {
+        const last = sessionsArr[sessionsArr.length - 1];
+        const { z, mean, sd } = computeZ(last, sessionsArr);
+        if (Math.abs(z) >= thr) out.push({ metric: "Sessions", period: lastPeriod, value: last, z, direction: z >= 0 ? "up" : "down", mean, sd });
+      }
+      if (cfg.metrics?.revenue) {
+        const last = revenueArr[revenueArr.length - 1];
+        const { z, mean, sd } = computeZ(last, revenueArr);
+        if (Math.abs(z) >= thr) out.push({ metric: "Revenue", period: lastPeriod, value: last, z, direction: z >= 0 ? "up" : "down", mean, sd });
+      }
+      if (cfg.metrics?.cvr) {
+        const last = cvrArr[cvrArr.length - 1];
+        const { z, mean, sd } = computeZ(last, cvrArr);
+        if (Math.abs(z) >= thr) out.push({ metric: "CVR", period: lastPeriod, value: last, z, direction: z >= 0 ? "up" : "down", mean, sd });
+      }
+
+      setAlerts(out);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // expose a small badge (count) near the toggle button? we keep it inside panel for clarity
+  return (
+    <>
+      <button
+        onClick={() => setOpen(s => !s)}
+        style={{ padding: "8px 12px", cursor: "pointer" }}
+        disabled={!propertyId}
+        title={!propertyId ? "Enter a GA4 property ID first" : ""}
+      >
+        {open ? "Hide Anomaly Alerts" : "Anomaly Alerts (Premium)"}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e5e5", borderRadius: 8, background: "#fbfbfb" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <h3 style={{ margin: 0, fontSize: 16 }}>Anomaly Alerts</h3>
+            <span style={{ fontSize: 12, color: "#555" }}>
+              Premium monitoring for Sessions, Revenue, and CVR anomalies.
+            </span>
+            <button onClick={() => setOpen(false)} style={{ marginLeft: "auto", padding: "6px 10px", cursor: "pointer" }}>
+              Close
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12, marginTop: 12 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={!!cfg.enabled}
+                onChange={(e) => persist({ ...cfg, enabled: e.target.checked })}
+              />
+              Enable monitoring
+            </label>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 13 }}>Sensitivity</span>
+              <select
+                value={cfg.sensitivity}
+                onChange={(e) => persist({ ...cfg, sensitivity: e.target.value })}
+                style={{ padding: 8 }}
+              >
+                <option value="low">Low (fewer alerts)</option>
+                <option value="medium">Medium</option>
+                <option value="high">High (more alerts)</option>
+              </select>
+            </div>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={!!cfg.metrics?.sessions}
+                  onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, sessions: e.target.checked } })}
+                />
+                Sessions
+              </label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={!!cfg.metrics?.revenue}
+                  onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, revenue: e.target.checked } })}
+                />
+                Revenue
+              </label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={!!cfg.metrics?.cvr}
+                  onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, cvr: e.target.checked } })}
+                />
+                CVR
+              </label>
+            </div>
+
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 13 }}>Alert email (optional)</span>
+              <input
+                type="email"
+                placeholder="name@example.com"
+                value={cfg.email || ""}
+                onChange={(e) => persist({ ...cfg, email: e.target.value })}
+                style={{ padding: 8 }}
+              />
+              <span style={{ fontSize: 12, color: "#666" }}>
+                Email is stored locally. Hook your backend to actually send alerts.
+              </span>
+            </label>
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={runCheck} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
+              {loading ? "Checking…" : "Check now"}
+            </button>
+            <span style={{ fontSize: 12, color: "#666" }}>
+              Uses latest daily data in your selected range and filters.
+            </span>
+          </div>
+
+          {error && <p style={{ color: "crimson", marginTop: 10, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+          <div style={{ marginTop: 12 }}>
+            <h4 style={{ margin: "0 0 6px 0" }}>Results</h4>
+            {alerts.length ? (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Period</th>
+                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
+                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Z-score</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Direction</th>
+                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Mean (ref)</th>
+                      <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>SD (ref)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alerts.map((a, i) => (
+                      <tr key={`al-${i}`}>
+                        <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{a.metric}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{a.period}</td>
+                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                          {a.metric === "Revenue"
+                            ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
+                            : a.metric === "CVR"
+                              ? `${(a.value || 0).toFixed(2)}%`
+                              : (a.value || 0).toLocaleString()}
+                        </td>
+                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{a.z.toFixed(2)}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #eee", color: a.direction === "up" ? "#137333" : "#b00020" }}>
+                          {a.direction === "up" ? "Up" : "Down"}
+                        </td>
+                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                          {a.metric === "Revenue"
+                            ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.mean || 0)
+                            : a.metric === "CVR"
+                              ? `${(a.mean || 0).toFixed(2)}%`
+                              : (a.mean || 0).toLocaleString()}
+                        </td>
+                        <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(a.sd || 0).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p style={{ color: "#666", marginTop: 4 }}>No anomalies flagged based on current sensitivity.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ---------- Other helpers ---------- */
 const COUNTRY_OPTIONS = [
-  "All",
-  "United Kingdom",
-  "United States",
-  "Ireland",
-  "Germany",
-  "France",
-  "Spain",
-  "Italy",
-  "Netherlands",
-  "Australia",
-  "Canada",
-  "India",
+  "All","United Kingdom","United States","Ireland","Germany","France","Spain","Italy","Netherlands","Australia","Canada","India",
 ];
 
 const CHANNEL_GROUP_OPTIONS = [
-  "All",
-  "Direct",
-  "Organic Search",
-  "Paid Search",
-  "Organic Social",
-  "Paid Social",
-  "Email",
-  "Referral",
-  "Display",
-  "Video",
-  "Affiliates",
-  "Organic Shopping",
-  "Paid Shopping",
+  "All","Direct","Organic Search","Paid Search","Organic Social","Paid Social","Email","Referral","Display","Video","Affiliates","Organic Shopping","Paid Shopping",
 ];
 
 function parseGa4Channels(response) {
@@ -269,7 +495,7 @@ function computePreviousRange(startStr, endStr) {
   const start = new Date(startStr);
   const end = new Date(endStr);
   const oneDay = 24 * 60 * 60 * 1000;
-  const days = Math.round((end - start) / oneDay) + 1; // inclusive
+  const days = Math.round((end - start) / oneDay) + 1;
   const prevEnd = new Date(start.getTime() - oneDay);
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
@@ -288,17 +514,12 @@ function downloadCsvChannels(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
-
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -310,17 +531,12 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n");
-
   const filename = `${filenamePrefix}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -412,9 +628,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // KPI Targets panel toggle
+  // KPI Targets
   const [showKpiPanel, setShowKpiPanel] = useState(false);
-  const [kpiVersion, setKpiVersion] = useState(0); // bump to refresh badges after save
+  const [kpiVersion, setKpiVersion] = useState(0);
 
   // Load from URL once
   useEffect(() => {
@@ -507,14 +723,12 @@ export default function Home() {
       });
       setResult(curr);
 
-      // Update URL to reflect the view we just ran
       try {
         const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
         const path = window.location.pathname + (qs ? `?${qs}` : "");
         window.history.replaceState(null, "", path);
       } catch {}
 
-      // Broadcast reset for sections & AI
       setRefreshSignal((n) => n + 1);
 
       if (comparePrev) {
@@ -546,16 +760,14 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setError("");
-    setDashKey((k) => k + 1); // force remount of sections
+    setDashKey((k) => k + 1);
     try {
       const path = window.location.pathname;
       window.history.replaceState(null, "", path);
     } catch {}
   };
 
-  // bump to refresh badges when targets saved/cleared
   const onKpiSaved = () => setKpiVersion(v => v + 1);
-
   const kpiTargets = useMemo(() => loadKpiTargets(), [kpiVersion]);
 
   return (
@@ -607,17 +819,20 @@ export default function Home() {
           Compare vs previous period
         </label>
 
-        {/* Toggle KPI panel */}
+        {/* Toggles for premium & targets */}
         <button onClick={() => setShowKpiPanel(s => !s)} style={{ padding: "8px 12px", cursor: "pointer" }}>
           {showKpiPanel ? "Hide KPI Targets" : "Set KPI Targets"}
         </button>
+
+        {/* Anomaly Alerts button lives here */}
+        <AnomalyAlerts propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
         <button onClick={resetDashboard} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
           Reset Dashboard
         </button>
       </div>
 
-      {/* KPI Targets panel (restored) */}
+      {/* KPI Targets panel */}
       <KpiTargetsPanel open={showKpiPanel} onClose={() => setShowKpiPanel(false)} onSaved={onKpiSaved} />
 
       {/* Filters */}
@@ -677,7 +892,6 @@ export default function Home() {
         <section style={{ marginTop: 24, background: "#f6f7f8", padding: 16, borderRadius: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
-            {/* KPI badge for Sessions (hero) */}
             <TargetBadge
               label="Sessions"
               current={Number(totals?.sessions || 0)}
@@ -917,6 +1131,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 /* ============================== Source / Medium ============================== */
 function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, kpiTargets }) {
   const [loading, setLoading] = useState(false);
+  thead
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
@@ -1207,11 +1422,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
             kind: "campaign-detail",
             campaign,
             totals,
-            breakdowns: {
-              sourceMedium: srcMed,
-              adContent: content,
-              term,
-            },
+            breakdowns: { sourceMedium: srcMed, adContent: content, term },
             dateRange: { start: startDate, end: endDate },
             filters,
           }}
@@ -1222,7 +1433,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
 
       {totals && (
         <div style={{ marginTop: 12 }}>
-          <b>Totals for “{campaign}”:</b>{" "}
+          <b>Totals for &ldquo;{campaign}&rdquo;:</b>{" "}
           Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} ·
           Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} ·
@@ -1324,7 +1535,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       )}
 
       {!error && !loading && !totals && (
-        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click “Load Campaign Details”.</p>
+        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click &ldquo;Load Campaign Details&rdquo;.</p>
       )}
     </section>
   );
@@ -1335,7 +1546,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [error, setError]       = useState("");
-  const [q, setQ]               = useState(""); // client-side search
+  const [q, setQ]               = useState("");
 
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
@@ -1455,8 +1666,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, kpiTargets
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid " +
-                    "#eee" }}>{r.cvr.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cvr.toFixed(2)}%</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
@@ -1753,7 +1963,6 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, k
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
-        {/* KPI badges shown when totals loaded */}
         {totals && (
           <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <TargetBadge
@@ -2069,9 +2278,9 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 /* ============================== Product Performance ============================== */
 function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);            // [{ name, id, views, carts, purchases, revenue }]
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
-  const [debug, setDebug] = useState(null);        // raw GA4 response
+  const [debug, setDebug] = useState(null);
 
   useEffect(() => {
     setRows([]);
@@ -2375,7 +2584,7 @@ function SavedViews({
         </div>
       ) : (
         <p style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
-          No saved views yet. Set dates/filters, give it a name, then “Save current”.
+          No saved views yet. Set dates/filters, give it a name, then &ldquo;Save current&rdquo;.
         </p>
       )}
     </section>
