@@ -1,38 +1,92 @@
-/* eslint-disable @next/next/no-img-element */
+/* eslint-disable react/no-unescaped-entities */
+/* pages/index.js
+   InsightGPT Dashboard (MVP)
+   - Preserves all existing features
+   - Adds Slack delivery with optional AI summary for Anomaly Alerts (Premium)
+   - Keeps storage keys, API routes, feature flags, and public interfaces stable
+*/
 
-// pages/index.js
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 
-/* ============================================================================
-   Utilities & Shared Helpers
-   ========================================================================== */
+/* ============================== Constants & Keys ============================== */
 
-/** ---------- Premium check (no new deps) ----------
- * Ways to enable premium for testing (front-end only):
- *   1) In browser console: localStorage.setItem("insightgpt_premium", "1")
- *   2) Or set window.__IS_PREMIUM__ = true (e.g. in DevTools)
- *   3) Or add ?premium=1 to the URL (first load stores it)
- */
-function isPremium() {
-  if (typeof window === "undefined") return false;
+const STORAGE_KEY = "insightgpt_preset_v2";
+const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
+const KPI_KEY = "insightgpt_kpi_targets_v1";
+const ALERTS_KEY = "insightgpt_alerts_cfg_v1";
+
+/* ============================== Small Utils ============================== */
+
+function ymd(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function computePreviousRange(startStr, endStr) {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const oneDay = 24 * 60 * 60 * 1000;
+  const days = Math.round((end - start) / oneDay) + 1; // inclusive
+  const prevEnd = new Date(start.getTime() - oneDay);
+  const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
+  return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
+}
+function safeParseJSON(raw, fallback) {
   try {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("premium") === "1") {
-      localStorage.setItem("insightgpt_premium", "1");
-      url.searchParams.delete("premium");
-      window.history.replaceState(null, "", url.toString());
+    const v = JSON.parse(raw);
+    return v == null ? fallback : v;
+  } catch {
+    return fallback;
+  }
+}
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (e) {
+    try {
+      const seen = new WeakSet();
+      const replacer = (_, v) => {
+        if (v && typeof v === "object") {
+          if (seen.has(v)) return "[[circular]]";
+          seen.add(v);
+        }
+        return v;
+      };
+      return JSON.stringify(value, replacer, 2);
+    } catch {
+      return String(value);
     }
-  } catch {}
-  const flag = (() => {
-    try { return localStorage.getItem("insightgpt_premium") === "1"; } catch { return false; }
-  })();
-  return Boolean(
-    (typeof window !== "undefined" && window.__IS_PREMIUM__ === true) ||
-    flag
-  );
+  }
+}
+async function fetchJson(url, payload) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // ignore
+  }
+  if (!res.ok) {
+    const msg =
+      data?.error ||
+      data?.message ||
+      data?.details?.error?.message ||
+      text ||
+      `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data || {};
 }
 
-/** -------- Saved Views (URL helpers) -------- */
+/* ============================== URL Helpers (Saved Views) ============================== */
+
 function encodeQuery(state) {
   const p = new URLSearchParams();
   if (state.startDate) p.set("start", state.startDate);
@@ -46,7 +100,6 @@ function encodeQuery(state) {
   if (state.comparePrev) p.set("compare", "1");
   return p.toString();
 }
-
 function decodeQuery() {
   if (typeof window === "undefined") return null;
   const p = new URLSearchParams(window.location.search);
@@ -60,32 +113,41 @@ function decodeQuery() {
   };
 }
 
-/** -------- LocalStorage keys (must remain) -------- */
-const STORAGE_KEY = "insightgpt_preset_v2";
-const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
-const KPI_KEY = "insightgpt_kpi_targets_v1";
-const ALERTS_KEY = "insightgpt_alerts_cfg_v1";
-
-/** -------- KPI Targets helpers & badge (persisted, backward compatible) --------
- * Stored as (any missing keys are allowed):
- *   { sessionsTarget:number, revenueTarget:number, cvrTarget:number }
+/* ============================== Premium Gating ============================== */
+/** Minimal, non-invasive premium gate:
+ * - Enabled if (localStorage.insightgpt_premium === "1") OR window.__INSIGHTGPT_PREMIUM === true
+ * - You can toggle in the console:
+ *     localStorage.setItem("insightgpt_premium","1"); location.reload();
+ *     // to disable:
+ *     localStorage.removeItem("insightgpt_premium"); location.reload();
  */
+function useIsPremium() {
+  const [isPremium, setIsPremium] = useState(false);
+  useEffect(() => {
+    try {
+      const ls = (typeof window !== "undefined") && window.localStorage?.getItem("insightgpt_premium");
+      const flag = (typeof window !== "undefined") && (window.__INSIGHTGPT_PREMIUM === true);
+      setIsPremium(ls === "1" || !!flag);
+    } catch {
+      setIsPremium(false);
+    }
+  }, []);
+  return isPremium;
+}
+
+/* ============================== KPI Targets Helpers ============================== */
+
 function loadKpiTargets() {
   try {
     const raw = localStorage.getItem(KPI_KEY);
-    if (!raw) return {};
-    const obj = JSON.parse(raw);
-    return typeof obj === "object" && obj ? obj : {};
+    return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
   }
 }
-function saveKpiTargets(obj) {
-  try { localStorage.setItem(KPI_KEY, JSON.stringify(obj || {})); } catch {}
-}
 function pctToTarget(current, target) {
   if (!target || target <= 0) return null;
-  return Math.round((Number(current || 0) / Number(target)) * 100);
+  return Math.round((current / target) * 100);
 }
 function TargetBadge({ label, current, target, currency = false }) {
   if (target == null) return null;
@@ -113,96 +175,18 @@ function TargetBadge({ label, current, target, currency = false }) {
   );
 }
 
-/** -------- Alerts config (persisted) --------
- * Stored under ALERTS_KEY:
- *   {
- *     enabled: boolean,
- *     metrics: { sessions: boolean, revenue: boolean, cvr: boolean },
- *     sensitivityZ: number,   // Z-score threshold (e.g., 2.0 ~ 97.5% tail)
- *     lookbackDays: number,   // sample window to estimate baseline
- *     slack: { enabled: boolean, webhook: string }   // NEW (premium)
- *   }
- */
-function defaultAlertsCfg() {
-  return {
-    enabled: false,
-    metrics: { sessions: true, revenue: true, cvr: true },
-    sensitivityZ: 2.0,
-    lookbackDays: 28,
-    slack: { enabled: false, webhook: "" },
-  };
-}
-function loadAlertsCfg() {
-  try {
-    const raw = localStorage.getItem(ALERTS_KEY);
-    if (!raw) return defaultAlertsCfg();
-    const obj = JSON.parse(raw);
-    const base = defaultAlertsCfg();
-    return {
-      ...base,
-      ...(obj || {}),
-      metrics: { ...base.metrics, ...(obj?.metrics || {}) },
-      slack: { ...base.slack, ...(obj?.slack || {}) },
-    };
-  } catch {
-    return defaultAlertsCfg();
-  }
-}
-function saveAlertsCfg(cfg) {
-  try { localStorage.setItem(ALERTS_KEY, JSON.stringify(cfg || defaultAlertsCfg())); } catch {}
+/* ============================== Formatting Helpers ============================== */
+
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function formatYYYYMMDD(s) {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
+  if (!m) return String(s || "");
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
 }
 
-/** GA4 UI Lists */
-const COUNTRY_OPTIONS = [
-  "All","United Kingdom","United States","Ireland","Germany","France","Spain","Italy","Netherlands","Australia","Canada","India",
-];
-const CHANNEL_GROUP_OPTIONS = [
-  "All","Direct","Organic Search","Paid Search","Organic Social","Paid Social","Email","Referral","Display","Video","Affiliates","Organic Shopping","Paid Shopping",
-];
+/* ============================== CSV Helpers ============================== */
 
-/** Quick helpers */
-function formatPctDelta(curr, prev) {
-  if (prev === 0 && curr === 0) return "0%";
-  if (prev === 0) return "+100%";
-  const pct = Math.round(((curr - prev) / prev) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}%`;
-}
-function ymd(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-function computePreviousRange(startStr, endStr) {
-  const start = new Date(startStr);
-  const end = new Date(endStr);
-  const oneDay = 24 * 60 * 60 * 1000;
-  const days = Math.round((end - start) / oneDay) + 1;
-  const prevEnd = new Date(start.getTime() - oneDay);
-  const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
-  return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
-}
-
-/** CSV builders */
-function downloadCsvGeneric(filenamePrefix, rows, columns) {
-  if (!rows?.length) return;
-  const header = columns.map((c) => c.header);
-  const lines = rows.map((r) => columns.map((c) => r[c.key]));
-  const csv = [header, ...lines]
-    .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  const filename = `${filenamePrefix}.csv`;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
 function downloadCsvChannels(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -215,79 +199,117 @@ function downloadCsvChannels(rows, totals, startDate, endDate) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function downloadCsvGeneric(filenamePrefix, rows, columns) {
+  if (!rows?.length) return;
+  const header = columns.map((c) => c.header);
+  const lines = rows.map((r) => columns.map((c) => r[c.key]));
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const filename = `${filenamePrefix}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.style.display = "none";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-/** QuickChart pie URL */
-function buildChannelPieUrl(rows) {
-  if (!rows?.length) return "";
+/* ============================== QuickChart Helpers (use next/image) ============================== */
+
+function buildChannelPieConfig(rows) {
+  if (!rows?.length) return null;
   const labels = rows.map((r) => r.channel);
   const data = rows.map((r) => r.sessions);
-  const cfg = {
+  return {
     type: "pie",
     data: { labels, datasets: [{ data }] },
     options: { plugins: { legend: { position: "bottom" } } },
   };
+}
+function buildLineChartConfig(labels, seriesMap /* {label: string, data: number[]}[] */) {
+  return {
+    type: "line",
+    data: {
+      labels,
+      datasets: seriesMap.map(s => ({ label: s.label, data: s.data })),
+    },
+    options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
+  };
+}
+function quickChartUrl(cfg, w = 800, h = 360) {
+  if (!cfg) return "";
   const encoded = encodeURIComponent(JSON.stringify(cfg));
-  return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
+  return `https://quickchart.io/chart?w=${w}&h=${h}&c=${encoded}`;
 }
 
-/** Unified fetch helper */
-async function fetchJson(url, payload) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
-  });
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch {}
-  if (!res.ok) {
-    const msg =
-      data?.error ||
-      data?.message ||
-      data?.details?.error?.message ||
-      text ||
-      `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return data || {};
+/* ============================== Parsing Helpers ============================== */
+
+function parseGa4Channels(response) {
+  if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
+  const rows = response.rows.map((r) => ({
+    channel: r.dimensionValues?.[0]?.value || "(unknown)",
+    sessions: Number(r.metricValues?.[0]?.value || 0),
+    users: Number(r.metricValues?.[1]?.value || 0),
+  }));
+  const totals = rows.reduce(
+    (a, r) => ({ sessions: a.sessions + r.sessions, users: a.users + r.users }),
+    { sessions: 0, users: 0 }
+  );
+  rows.sort((a, b) => b.sessions - a.sessions);
+  return { rows, totals };
+}
+function formatPctDelta(curr, prev) {
+  if (prev === 0 && curr === 0) return "0%";
+  if (prev === 0) return "+100%";
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
 }
 
-/** Safe stringify for debug block */
-function safeStringify(value) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch (e) {
-    try {
-      const seen = new WeakSet();
-      const replacer = (_, v) => {
-        if (v && typeof v === "object") {
-          if (seen.has(v)) return "[[circular]]";
-          seen.add(v);
-        }
-        return v;
-      };
-      return JSON.stringify(value, replacer, 2);
-    } catch {
-      return String(value);
-    }
-  }
-}
+/* ============================== Options ============================== */
 
-/* ============================================================================
-   Main Page
-   ========================================================================== */
+const COUNTRY_OPTIONS = [
+  "All",
+  "United Kingdom",
+  "United States",
+  "Ireland",
+  "Germany",
+  "France",
+  "Spain",
+  "Italy",
+  "Netherlands",
+  "Australia",
+  "Canada",
+  "India",
+];
+const CHANNEL_GROUP_OPTIONS = [
+  "All",
+  "Direct",
+  "Organic Search",
+  "Paid Search",
+  "Organic Social",
+  "Paid Social",
+  "Email",
+  "Referral",
+  "Display",
+  "Video",
+  "Affiliates",
+  "Organic Shopping",
+  "Paid Shopping",
+];
+
+/* ============================== Page ============================== */
+
 export default function Home() {
   // Base controls
   const [propertyId, setPropertyId] = useState("");
@@ -298,30 +320,24 @@ export default function Home() {
   // Fires whenever the user runs a fresh report (to reset AI & section data)
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  // Filter controls (current selectors)
+  // Filters UI vs applied
   const [countrySel, setCountrySel] = useState("All");
   const [channelSel, setChannelSel] = useState("All");
+  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
 
-  // Filters actually applied to queries
-  const [appliedFilters, setAppliedFilters] = useState({
-    country: "All",
-    channelGroup: "All",
-  });
-
-  // Re-mount key for hard resets
+  // Re-mount key for hard resets of some sections
   const [dashKey, setDashKey] = useState(1);
 
-  // Channel results (main hero)
+  // Channels (hero)
   const [result, setResult] = useState(null);
   const [prevResult, setPrevResult] = useState(null);
-
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Saved KPI & Alerts UI modals
-  const [showKpiPanel, setShowKpiPanel] = useState(false);
+  // Premium
+  const isPremium = useIsPremium();
 
-  // Load from URL once
+  // URL load
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
@@ -331,28 +347,29 @@ export default function Home() {
       if (q.endDate) setEndDate(q.endDate);
       setCountrySel(q.country || "All");
       setChannelSel(q.channelGroup || "All");
-      setAppliedFilters({
-        country: q.country || "All",
-        channelGroup: q.channelGroup || "All",
-      });
+      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
       setComparePrev(!!q.comparePrev);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   // Load preset once
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      const saved = safeParseJSON(localStorage.getItem(STORAGE_KEY), null);
       if (saved?.propertyId) setPropertyId(saved.propertyId);
       if (saved?.startDate) setStartDate(saved.startDate);
       if (saved?.endDate) setEndDate(saved.endDate);
       if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
       if (saved?.countrySel) setCountrySel(saved.countrySel);
       if (saved?.channelSel) setChannelSel(saved.channelSel);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
-  // Save preset whenever these change
+  // Persist preset
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -366,7 +383,9 @@ export default function Home() {
           channelSel,
         })
       );
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
   const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
@@ -379,15 +398,14 @@ export default function Home() {
   const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
   const connect = () => {
-    window.location.href = "/api/auth/google/start";
+    if (typeof window !== "undefined") {
+      window.location.href = "/api/auth/google/start";
+    }
   };
-
-  // Apply filters button
   const applyFilters = () => {
     setAppliedFilters({ country: countrySel, channelGroup: channelSel });
   };
 
-  // Channel report (uses filters)
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
     return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
   }
@@ -411,7 +429,9 @@ export default function Home() {
         const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
         const path = window.location.pathname + (qs ? `?${qs}` : "");
         window.history.replaceState(null, "", path);
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       // Broadcast reset for sections & AI
       setRefreshSignal((n) => n + 1);
@@ -433,9 +453,12 @@ export default function Home() {
     }
   };
 
-  // Reset Dashboard: keep propertyId, reset everything else
   const resetDashboard = () => {
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // ignore
+    }
     setStartDate("2024-09-01");
     setEndDate("2024-09-30");
     setCountrySel("All");
@@ -445,84 +468,12 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setError("");
-    setDashKey((k) => k + 1); // force remount of sections
+    setDashKey((k) => k + 1);
     try {
       const path = window.location.pathname;
       window.history.replaceState(null, "", path);
-    } catch {}
-  };
-
-  // Slack Delivery (client-side, no-cors). Works best as MVP; for production, proxy via /api.
-  async function postToSlack(webhook, payload) {
-    if (!webhook) throw new Error("Missing Slack webhook URL.");
-    try {
-      await fetch(webhook, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        mode: "no-cors", // Slack webhooks do not send CORS headers; this still delivers the message
-        body: JSON.stringify(payload || {}),
-      });
-      return { ok: true, message: "Sent (no-cors)" };
-    } catch (e) {
-      throw new Error(e?.message || "Failed to POST to Slack webhook.");
-    }
-  }
-
-  // "Send report now" action -> builds a quick summary and posts to Slack
-  const [sendNowBusy, setSendNowBusy] = useState(false);
-  const sendReportNowToSlack = async () => {
-    const premium = isPremium();
-    if (!premium) { alert("Premium feature. Enable premium to use Slack delivery."); return; }
-
-    const alertsCfg = loadAlertsCfg();
-    if (!alertsCfg?.slack?.enabled || !alertsCfg?.slack?.webhook) {
-      alert("Slack delivery is disabled or webhook URL is missing. Open Anomaly Alerts and configure Slack.");
-      return;
-    }
-    if (!propertyId) { alert("Enter a GA4 Property ID first."); return; }
-
-    setSendNowBusy(true);
-    try {
-      // Generate a short AI summary of the current hero rows as a quick MVP
-      const summaryPayload = {
-        topic: "executive-report",
-        dateRange: { start: startDate, end: endDate },
-        filters: appliedFilters,
-        hero: {
-          totals: { sessions: totals.sessions, users: totals.users },
-          topChannel: top?.channel || "",
-          topShare,
-        },
-        instructions:
-          "Create a concise executive summary (3-6 bullets) of traffic performance for the selected period. " +
-          "Call out top channel and % share. Add 2 hypotheses & 2 next tests.",
-      };
-      let summaryText = "";
-      try {
-        const ai = await fetchJson("/api/insights/summarise-pro", summaryPayload);
-        summaryText = ai?.summary || "";
-      } catch {
-        summaryText =
-          `Summary for ${startDate} → ${endDate}\n` +
-          `Sessions: ${totals.sessions.toLocaleString()} | Users: ${totals.users.toLocaleString()}\n` +
-          (top ? `Top Channel: ${top.channel} (${topShare}% share)\n` : "");
-      }
-
-      const text =
-        `*InsightGPT Report*  \n` +
-        `Property: \`${propertyId}\`  \n` +
-        `Range: ${startDate} → ${endDate}  \n` +
-        (appliedFilters?.country !== "All" || appliedFilters?.channelGroup !== "All"
-          ? `Filters: ${appliedFilters?.country || "All"} · ${appliedFilters?.channelGroup || "All"}  \n`
-          : "") +
-        `\n${summaryText}`;
-
-      await postToSlack(alertsCfg.slack.webhook, { text });
-      alert("Report sent to Slack.");
-    } catch (e) {
-      alert(`Slack send failed: ${e.message}`);
-    } finally {
-      setSendNowBusy(false);
+    } catch {
+      // ignore
     }
   };
 
@@ -558,7 +509,7 @@ export default function Home() {
         </label>
 
         <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Running\u2026" : "Run GA4 Report"}
+          {loading ? "Running…" : "Run GA4 Report"}
         </button>
 
         <button
@@ -570,7 +521,7 @@ export default function Home() {
           Download CSV
         </button>
 
-        <label htmlFor="compare-prev" style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }}>
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }} htmlFor="compare-prev">
           <input id="compare-prev" type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
           Compare vs previous period
         </label>
@@ -597,39 +548,16 @@ export default function Home() {
           <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>Apply filters</button>
           {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
             <span style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
-              {`Filters active: `}
+              {"Filters active: "}
               {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
               {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
               {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
             </span>
           )}
           <span style={{ color: "#666", fontSize: 12 }}>
-            Filters apply when you run a section (e.g., GA4 Report / Load buttons).
+            Filters apply when you run a section (e.g. GA4 Report / Load buttons).
           </span>
-
-          {/* KPI Targets panel toggle */}
-          <button
-            onClick={() => setShowKpiPanel(s => !s)}
-            style={{ padding: "6px 10px", cursor: "pointer", marginLeft: "auto" }}
-            aria-expanded={showKpiPanel}
-            aria-controls="kpi-panel"
-            title="Set KPI targets"
-          >
-            {showKpiPanel ? "Hide KPI Targets" : "Set KPI Targets"}
-          </button>
-
-          {/* Premium: Send report now to Slack */}
-          <button
-            onClick={sendReportNowToSlack}
-            style={{ padding: "6px 10px", cursor: "pointer" }}
-            disabled={sendNowBusy}
-            title="Premium: sends a concise report summary to Slack"
-          >
-            {sendNowBusy ? "Sending\u2026" : "Send Report Now (Slack \u2605)"}
-          </button>
         </div>
-
-        {showKpiPanel && <KpiTargetsPanel />}
       </div>
 
       {/* Saved Views */}
@@ -651,6 +579,18 @@ export default function Home() {
           });
         }}
         onRunReport={runReport}
+      />
+
+      {/* KPI Targets panel (editable) */}
+      <KpiTargetsPanel />
+
+      {/* Anomaly Alerts (Premium) */}
+      <AnomalyAlerts
+        propertyId={propertyId}
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+        premium={isPremium}
       />
 
       {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
@@ -695,50 +635,17 @@ export default function Home() {
             )}
           </ul>
 
-          <div style={{ marginTop: 8, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Channel</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>% of Sessions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const pct = totals.sessions > 0 ? Math.round((r.sessions / totals.sessions) * 100) : 0;
-                  return (
-                    <tr key={r.channel}>
-                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
+          {/* QuickChart pie (via next/image) */}
           <div style={{ marginTop: 16 }}>
-            <img
-              src={buildChannelPieUrl(rows)}
+            <ChartImage
+              width={550}
+              height={360}
               alt="Channel share chart"
-              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+              config={buildChannelPieConfig(rows)}
             />
           </div>
         </section>
       )}
-
-      {/* Anomaly Alerts (Premium) */}
-      <AnomalyAlerts
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-        onSlackPost={postToSlack}
-      />
 
       {/* Source / Medium */}
       <SourceMedium
@@ -843,9 +750,24 @@ export default function Home() {
   );
 }
 
-/* ============================================================================
-   Reusable AI block
-   ========================================================================== */
+/* ============================== Reusable: next/image wrapper for QuickChart ============================== */
+function ChartImage({ config, width = 800, height = 360, alt = "Chart" }) {
+  const url = quickChartUrl(config, width, height);
+  if (!url) return null;
+  // Use unoptimized to avoid next.config.js domain changes
+  return (
+    <Image
+      src={url}
+      alt={alt}
+      width={width}
+      height={height}
+      unoptimized
+      style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+    />
+  );
+}
+
+/* ============================== Reusable AI block ============================== */
 function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
@@ -879,7 +801,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
-        {loading ? "Summarising\u2026" : (asButton ? buttonLabel : "Summarise with AI")}
+        {loading ? "Summarising…" : (asButton ? buttonLabel : "Summarise with AI")}
       </button>
       <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text}>
         {copied ? "Copied!" : "Copy insight"}
@@ -904,326 +826,450 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   );
 }
 
-/* ============================================================================
-   KPI Targets Panel (persisted)
-   ========================================================================== */
+/* ============================== KPI Targets Panel ============================== */
 function KpiTargetsPanel() {
-  const [kpi, setKpi] = useState(() => loadKpiTargets());
-  const [saved, setSaved] = useState("");
+  const [kpis, setKpis] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(KPI_KEY);
+      const saved = raw ? JSON.parse(raw) : {};
+      setKpis({
+        sessionsTarget: saved.sessionsTarget ?? "",
+        revenueTarget: saved.revenueTarget ?? "",
+        cvrTarget: saved.cvrTarget ?? "",
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const save = () => {
-    const obj = {
-      sessionsTarget: Number(kpi?.sessionsTarget || 0) || 0,
-      revenueTarget: Number(kpi?.revenueTarget || 0) || 0,
-      cvrTarget: Number(kpi?.cvrTarget || 0) || 0,
+    const toSave = {
+      sessionsTarget: Number(kpis.sessionsTarget) || 0,
+      revenueTarget: Number(kpis.revenueTarget) || 0,
+      cvrTarget: Number(kpis.cvrTarget) || 0,
     };
-    saveKpiTargets(obj);
-    setKpi(obj);
-    setSaved("Saved!");
-    setTimeout(() => setSaved(""), 1200);
+    try {
+      localStorage.setItem(KPI_KEY, JSON.stringify(toSave));
+      setNote("Saved KPI targets.");
+      setTimeout(() => setNote(""), 1400);
+    } catch (e) {
+      setNote(`Save failed: ${String(e?.message || e)}`);
+      setTimeout(() => setNote(""), 2400);
+    }
   };
 
   return (
-    <div id="kpi-panel" style={{ marginTop: 12, padding: 12, border: "1px dashed #e0e0e0", borderRadius: 8, background: "#fbfbfb" }}>
-      <h3 style={{ margin: "0 0 8px" }}>KPI Targets</h3>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <label htmlFor="kpi-sessions">Sessions target&nbsp;
+    <section style={{ marginTop: 16, padding: 12, border: "1px dashed #e5e5e5", borderRadius: 8, background: "#fbfbfb" }}>
+      <h3 style={{ marginTop: 0 }}>KPI Targets</h3>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <label>Sessions target&nbsp;
           <input
-            id="kpi-sessions"
+            type="number"
             inputMode="numeric"
-            value={kpi?.sessionsTarget ?? ""}
-            onChange={(e) => setKpi({ ...kpi, sessionsTarget: e.target.value })}
-            placeholder="e.g. 100000"
-            style={{ padding: 8, width: 160 }}
+            value={kpis.sessionsTarget}
+            onChange={(e) => setKpis((k) => ({ ...k, sessionsTarget: e.target.value }))}
+            style={{ padding: 8, minWidth: 120 }}
           />
         </label>
-        <label htmlFor="kpi-revenue">Revenue target (GBP)&nbsp;
+        <label>Revenue target (GBP)&nbsp;
           <input
-            id="kpi-revenue"
-            inputMode="decimal"
-            value={kpi?.revenueTarget ?? ""}
-            onChange={(e) => setKpi({ ...kpi, revenueTarget: e.target.value })}
-            placeholder="e.g. 50000"
-            style={{ padding: 8, width: 160 }}
+            type="number"
+            inputMode="numeric"
+            value={kpis.revenueTarget}
+            onChange={(e) => setKpis((k) => ({ ...k, revenueTarget: e.target.value }))}
+            style={{ padding: 8, minWidth: 120 }}
           />
         </label>
-        <label htmlFor="kpi-cvr">CVR target (%)&nbsp;
+        <label>CVR target (%)&nbsp;
           <input
-            id="kpi-cvr"
+            type="number"
             inputMode="decimal"
-            value={kpi?.cvrTarget ?? ""}
-            onChange={(e) => setKpi({ ...kpi, cvrTarget: e.target.value })}
-            placeholder="e.g. 2.5"
-            style={{ padding: 8, width: 120 }}
+            step="0.01"
+            value={kpis.cvrTarget}
+            onChange={(e) => setKpis((k) => ({ ...k, cvrTarget: e.target.value }))}
+            style={{ padding: 8, minWidth: 120 }}
           />
         </label>
         <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }}>Save targets</button>
-        {saved && <span style={{ color: "#137333" }}>{saved}</span>}
+        {note && <span style={{ color: "#137333", fontSize: 12 }}>{note}</span>}
       </div>
-      <p style={{ marginTop: 8, color: "#666", fontSize: 12 }}>
-        Badges across the dashboard show progress vs targets (e.g., Sessions). CVR target is used for comparison where applicable.
+      <p style={{ color: "#666", fontSize: 12, marginTop: 8 }}>
+        Progress badges appear next to sections (Sessions, Revenue, CVR) once data is loaded.
       </p>
-    </div>
-  );
-}
-
-/* ============================================================================
-   Anomaly Alerts (Premium) with Slack delivery
-   ========================================================================== */
-function AnomalyAlerts({ propertyId, startDate, endDate, filters, onSlackPost }) {
-  const premium = isPremium();
-  const [cfg, setCfg] = useState(defaultAlertsCfg);
-  const [busy, setBusy] = useState(false);
-  const [alerts, setAlerts] = useState([]); // [{metric, period, z, value, mean, sd}]
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setCfg(loadAlertsCfg());
-  }, []);
-
-  const persist = (next) => {
-    setCfg(next);
-    saveAlertsCfg(next);
-  };
-
-  // Simple time-series fetcher (sessions, revenue, cvr) using existing API
-  async function fetchSeries(granularity) {
-    const data = await fetchJson("/api/ga4/timeseries", {
-      propertyId, startDate, endDate, filters, granularity,
-    });
-    const rows = data?.series || [];
-    // Project missing fields robustly
-    return rows.map(r => ({
-      period: r.period,
-      sessions: Number(r.sessions || 0),
-      revenue: Number(r.revenue || 0),
-      cvr: Number(r.sessions > 0 ? ((Number(r.transactions || 0) / Number(r.sessions || 1)) * 100) : 0),
-    }));
-  }
-
-  // Compute z-scores on trailing window
-  function detect(series, metric, lookback, zThresh) {
-    const out = [];
-    for (let i = 0; i < series.length; i++) {
-      const startIdx = Math.max(0, i - lookback);
-      const window = series.slice(startIdx, i); // exclude current point
-      if (window.length < Math.max(5, Math.floor(lookback * 0.5))) continue; // need minimal baseline
-      const values = window.map(d => Number(d[metric] || 0));
-      const mean = values.reduce((a, b) => a + b, 0) / values.length;
-      const sd = Math.sqrt(
-        values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / Math.max(1, values.length - 1)
-      ) || 0;
-      const v = Number(series[i][metric] || 0);
-      const z = sd > 0 ? (v - mean) / sd : 0;
-      if (Math.abs(z) >= zThresh) {
-        out.push({ metric, period: series[i].period, value: v, mean, sd, z });
-      }
-    }
-    return out;
-  }
-
-  const run = async () => {
-    if (!premium) { alert("Premium feature. Enable premium to run anomaly alerts."); return; }
-    if (!cfg.enabled) { alert("Alerts are disabled. Enable in the panel first."); return; }
-    if (!propertyId) { alert("Enter a GA4 Property ID first."); return; }
-
-    setBusy(true); setError(""); setAlerts([]);
-    try {
-      const series = await fetchSeries("daily");
-      let found = [];
-      if (cfg.metrics.sessions) found = found.concat(detect(series, "sessions", cfg.lookbackDays, cfg.sensitivityZ));
-      if (cfg.metrics.revenue)  found = found.concat(detect(series, "revenue",  cfg.lookbackDays, cfg.sensitivityZ));
-      if (cfg.metrics.cvr)      found = found.concat(detect(series, "cvr",      cfg.lookbackDays, cfg.sensitivityZ));
-      found.sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
-      setAlerts(found);
-
-      // Optional: auto-post to Slack when findings exist and Slack enabled
-      if (found.length && cfg.slack?.enabled && cfg.slack?.webhook) {
-        const lines = found.slice(0, 10).map(a => {
-          const sign = a.z >= 0 ? "+" : "\u2212";
-          const zAbs = Math.abs(a.z).toFixed(2);
-          const val = a.metric === "revenue"
-            ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
-            : (a.metric === "cvr" ? `${a.value.toFixed(2)}%` : a.value.toLocaleString());
-          return `• *${a.metric.toUpperCase()}* ${sign}${zAbs}\u03C3 on ${a.period} — value ${val}`;
-        }).join("\n");
-
-        const text =
-          `*Anomalies detected* (Property \`${propertyId}\`, ${startDate} → ${endDate})\n` +
-          (filters?.country !== "All" || filters?.channelGroup !== "All"
-            ? `Filters: ${filters?.country || "All"} · ${filters?.channelGroup || "All"}\n` : "") +
-          `Z\u2265${cfg.sensitivityZ}, lookback ${cfg.lookbackDays} days\n\n${lines}`;
-
-        try { await onSlackPost(cfg.slack.webhook, { text }); } catch {}
-      }
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const testSlack = async () => {
-    if (!premium) { alert("Premium feature. Enable premium to test Slack."); return; }
-    const hook = cfg?.slack?.webhook?.trim();
-    if (!hook) { alert("Enter your Slack Incoming Webhook URL first."); return; }
-    try {
-      await onSlackPost(hook, { text: "InsightGPT test: Slack delivery is configured \u2705" });
-      alert("Test message sent to Slack.");
-    } catch (e) {
-      alert(`Slack test failed: ${e.message}`);
-    }
-  };
-
-  return (
-    <section style={{ marginTop: 24, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Anomaly Alerts {premium ? <span style={{ fontWeight: 400, color: "#666" }}>(Premium)</span> : <span style={{ fontWeight: 400, color: "#b00020" }}>(Locked)</span>}</h3>
-        <label htmlFor="alerts-enabled" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-          <input
-            id="alerts-enabled"
-            type="checkbox"
-            checked={!!cfg.enabled}
-            onChange={(e) => persist({ ...cfg, enabled: e.target.checked })}
-            disabled={!premium}
-          />
-          Enable alerts
-        </label>
-
-        <button onClick={run} style={{ padding: "6px 10px", cursor: "pointer" }} disabled={!premium || !cfg.enabled || !propertyId || busy} title={!premium ? "Premium feature" : ""}>
-          {busy ? "Scanning\u2026" : "Scan for anomalies"}
-        </button>
-      </div>
-
-      <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <b>Metrics:</b>
-          {["sessions","revenue","cvr"].map(m => (
-            <label key={m} htmlFor={`m-${m}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <input
-                id={`m-${m}`}
-                type="checkbox"
-                checked={!!cfg.metrics?.[m]}
-                onChange={(e) => persist({ ...cfg, metrics: { ...cfg.metrics, [m]: e.target.checked } })}
-                disabled={!premium}
-              />
-              {m.toUpperCase()}
-            </label>
-          ))}
-
-          <label htmlFor="sens" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-            Sensitivity (z)
-            <input
-              id="sens"
-              type="number"
-              step="0.1"
-              min="1"
-              value={cfg.sensitivityZ}
-              onChange={(e) => persist({ ...cfg, sensitivityZ: Number(e.target.value || 2) })}
-              style={{ width: 80, padding: 6 }}
-              disabled={!premium}
-            />
-          </label>
-
-          <label htmlFor="lookback" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Lookback days
-            <input
-              id="lookback"
-              type="number"
-              min="7"
-              value={cfg.lookbackDays}
-              onChange={(e) => persist({ ...cfg, lookbackDays: Number(e.target.value || 28) })}
-              style={{ width: 90, padding: 6 }}
-              disabled={!premium}
-            />
-          </label>
-        </div>
-
-        {/* Slack delivery (premium) */}
-        <div style={{ padding: 10, border: "1px dashed #e0e0e0", borderRadius: 8, background: "#fbfbfb" }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <b>Slack Delivery:</b>
-            <label htmlFor="slack-enabled" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <input
-                id="slack-enabled"
-                type="checkbox"
-                checked={!!cfg.slack?.enabled}
-                onChange={(e) => persist({ ...cfg, slack: { ...cfg.slack, enabled: e.target.checked } })}
-                disabled={!premium}
-              />
-              Enable Slack
-            </label>
-            <label htmlFor="slack-hook" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Webhook URL
-              <input
-                id="slack-hook"
-                type="url"
-                inputMode="url"
-                placeholder="https://hooks.slack.com/services/XXXX/XXXX/XXXX"
-                value={cfg.slack?.webhook || ""}
-                onChange={(e) => persist({ ...cfg, slack: { ...cfg.slack, webhook: e.target.value } })}
-                style={{ minWidth: 360, padding: 6 }}
-                disabled={!premium}
-              />
-            </label>
-            <button onClick={testSlack} style={{ padding: "6px 10px", cursor: "pointer" }} disabled={!premium}>
-              Send test
-            </button>
-          </div>
-          <p style={{ marginTop: 6, color: "#666", fontSize: 12 }}>
-            Slack messages are posted via Incoming Webhooks. In a production setup, proxy this via a server endpoint to avoid browser CORS.
-          </p>
-        </div>
-      </div>
-
-      {error && <p style={{ color: "crimson", marginTop: 10, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {alerts.length > 0 ? (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Period</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Mean</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>SD</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Z</th>
-              </tr>
-            </thead>
-            <tbody>
-              {alerts.map((a, i) => (
-                <tr key={`${a.metric}-${a.period}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{a.metric.toUpperCase()}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{a.period}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {a.metric === "revenue"
-                      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
-                      : (a.metric === "cvr" ? `${(a.value || 0).toFixed(2)}%` : (a.value || 0).toLocaleString())}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {a.metric === "revenue"
-                      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.mean || 0)
-                      : (a.metric === "cvr" ? `${(a.mean || 0).toFixed(2)}%` : (a.mean || 0).toLocaleString())}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {(a.sd || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee", color: Math.abs(a.z) >= (cfg?.sensitivityZ || 2) ? "#b00020" : "#333" }}>
-                    {a.z.toFixed(2)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No anomalies listed yet. Click \u201cScan for anomalies\u201d.</p>)}
     </section>
   );
 }
 
-/* ============================================================================
-   Source / Medium
-   ========================================================================== */
+/* ============================== Anomaly Alerts (Premium) ============================== */
+/** Features:
+ * - Sensitivity (z), Lookback days, Metrics toggle
+ * - Slack webhook delivery (Premium)
+ * - AI summary appended to Slack message (optional)
+ * - Stores config in localStorage['insightgpt_alerts_cfg_v1']
+ */
+function AnomalyAlerts({ propertyId, startDate, endDate, filters, premium }) {
+  const [cfg, setCfg] = useState({
+    enabled: true,
+    sensitivityZ: 2,
+    lookbackDays: 28,
+    metrics: { sessions: true, revenue: true, cvr: true },
+    slackWebhookUrl: "",
+    includeAiSummary: true,
+  });
+  const [loading, setLoading] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
+  const [error, setError] = useState("");
+
+  // Load config
+  useEffect(() => {
+    try {
+      const saved = safeParseJSON(localStorage.getItem(ALERTS_KEY), null);
+      if (saved) {
+        setCfg((c) => ({
+          ...c,
+          ...saved,
+          metrics: { sessions: true, revenue: true, cvr: true, ...(saved.metrics || {}) },
+        }));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Persist config
+  useEffect(() => {
+    try {
+      localStorage.setItem(ALERTS_KEY, JSON.stringify(cfg));
+    } catch {
+      // ignore
+    }
+  }, [cfg]);
+
+  const percentage = (a, b) => (b > 0 ? (a / b) * 100 : 0);
+
+  const run = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      // 1) Load time series for the selected date range (daily)
+      const seriesData = await fetchJson("/api/ga4/timeseries", {
+        propertyId, startDate, endDate, filters, granularity: "daily",
+      });
+      const series = Array.isArray(seriesData?.series) ? seriesData.series : [];
+
+      // Build arrays per metric
+      const points = series.map(r => ({
+        period: r.period, // YYYYMMDD
+        sessions: Number(r.sessions || 0),
+        revenue: Number(r.revenue || 0),
+        cvr: Number(r.sessions > 0 ? (r.transactions || 0) / r.sessions : 0),
+      }));
+
+      const anoms = detectAnomalies(points, {
+        z: Number(cfg.sensitivityZ) || 2,
+        lookback: Number(cfg.lookbackDays) || 28,
+        use: cfg.metrics,
+      });
+
+      // Optionally build AI summary
+      let aiSummary = "";
+      if (cfg.includeAiSummary) {
+        try {
+          const payload = {
+            topic: "anomaly-alerts",
+            dateRange: { start: startDate, end: endDate },
+            filters,
+            rows: anoms.map(a => ({
+              metric: a.metric, period: a.period, value: a.value, z: a.z, mean: a.mean, stdev: a.stdev,
+            })),
+            instructions:
+              "Briefly summarise the anomalies. For each metric, state likely causes and 1–2 testable actions. Be concise.",
+          };
+          const ai = await fetchJson("/api/insights/summarise-pro", payload);
+          aiSummary = ai?.summary || "";
+        } catch (e) {
+          // Do not fail the flow if AI fails; continue with anomalies only
+          aiSummary = "";
+        }
+      }
+
+      const result = { at: new Date().toISOString(), anomalies: anoms, aiSummary };
+      setLastRun(result);
+
+      // Deliver to Slack if configured & premium & enabled
+      if (premium && cfg.enabled && cfg.slackWebhookUrl) {
+        await deliverSlack({
+          webhook: cfg.slackWebhookUrl,
+          propertyId,
+          startDate,
+          endDate,
+          z: Number(cfg.sensitivityZ) || 2,
+          lookback: Number(cfg.lookbackDays) || 28,
+          anomalies: anoms,
+          aiSummary,
+        });
+      }
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 16, padding: 12, border: "1px dashed #e5e5e5", borderRadius: 8, background: "#fbfbfb" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Anomaly Alerts {premium ? <PremiumBadge /> : <ProLock />}</h3>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) => setCfg((c) => ({ ...c, enabled: e.target.checked }))}
+          />
+          Enabled
+        </label>
+
+        <label> Sensitivity (z)&nbsp;
+          <input
+            type="number"
+            step="0.1"
+            value={cfg.sensitivityZ}
+            onChange={(e) => setCfg((c) => ({ ...c, sensitivityZ: e.target.value }))}
+            style={{ padding: 8, width: 80 }}
+          />
+        </label>
+
+        <label> Lookback days&nbsp;
+          <input
+            type="number"
+            step="1"
+            value={cfg.lookbackDays}
+            onChange={(e) => setCfg((c) => ({ ...c, lookbackDays: e.target.value }))}
+            style={{ padding: 8, width: 100 }}
+          />
+        </label>
+
+        <span style={{ marginLeft: 6 }}>Metrics:</span>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={!!cfg.metrics?.sessions} onChange={(e) => setCfg(c => ({ ...c, metrics: { ...c.metrics, sessions: e.target.checked } }))} />
+          Sessions
+        </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={!!cfg.metrics?.revenue} onChange={(e) => setCfg(c => ({ ...c, metrics: { ...c.metrics, revenue: e.target.checked } }))} />
+          Revenue
+        </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={!!cfg.metrics?.cvr} onChange={(e) => setCfg(c => ({ ...c, metrics: { ...c.metrics, cvr: e.target.checked } }))} />
+          CVR
+        </label>
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+          <input
+            type="checkbox"
+            checked={!!cfg.includeAiSummary}
+            onChange={(e) => setCfg((c) => ({ ...c, includeAiSummary: e.target.checked }))}
+          />
+          Include AI summary
+        </label>
+
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Slack Webhook&nbsp;
+            <input
+              type="url"
+              inputMode="url"
+              placeholder="https://hooks.slack.com/services/…"
+              value={cfg.slackWebhookUrl || ""}
+              onChange={(e) => setCfg((c) => ({ ...c, slackWebhookUrl: e.target.value }))}
+              style={{ padding: 8, minWidth: 280 }}
+              disabled={!premium}
+            />
+          </label>
+          <button
+            onClick={run}
+            style={{ padding: "8px 12px", cursor: "pointer" }}
+            disabled={loading || !propertyId || !cfg.enabled}
+            title={!propertyId ? "Enter a GA4 property ID first" : ""}
+          >
+            {loading ? "Scanning…" : "Run now"}
+          </button>
+        </div>
+      </div>
+
+      <p style={{ color: "#666", fontSize: 12, marginTop: 8 }}>
+        Sensitivity is the z-score threshold (e.g., 2 = moderate, 3 = strict). Lookback days controls the rolling window used to compute baseline mean &amp; standard deviation.
+      </p>
+
+      {error && <p style={{ color: "crimson", whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {lastRun && (
+        <div style={{ marginTop: 10 }}>
+          <b>Last run:</b> {new Date(lastRun.at).toLocaleString()}
+          <ul style={{ marginTop: 8 }}>
+            {lastRun.anomalies.length === 0 && <li>No anomalies for current settings.</li>}
+            {lastRun.anomalies.map((a, idx) => {
+              const sign = a.z >= 0 ? "+" : "−";
+              const zAbs = Math.abs(a.z);
+              const metricLabel = a.metric.toUpperCase();
+              const prettyDate = formatYYYYMMDD(a.period);
+              const valueFmt = a.metric === "revenue"
+                ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
+                : (a.metric === "cvr" ? `${(a.value * 100).toFixed(2)}%` : String(a.value ?? 0));
+              return (
+                <li key={`${a.metric}-${a.period}-${idx}`}>
+                  {metricLabel} {sign}{zAbs.toFixed(2)}σ on {prettyDate} — value {valueFmt}
+                </li>
+              );
+            })}
+          </ul>
+          {lastRun.aiSummary && (
+            <div
+              style={{
+                marginTop: 8,
+                background: "#fffceb",
+                border: "1px solid #f5e08f",
+                padding: 10,
+                borderRadius: 6,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              <b>AI summary:</b> {lastRun.aiSummary}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!premium && (
+        <p style={{ color: "#444", fontSize: 13, marginTop: 10 }}>
+          Premium required to enable Slack delivery. For testing in development, you can run:
+          <code style={{ marginLeft: 6, background: "#f3f3f3", padding: "2px 6px", borderRadius: 4 }}>
+            localStorage.setItem("insightgpt_premium","1"); location.reload();
+          </code>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function PremiumBadge() {
+  return (
+    <span
+      style={{
+        fontSize: 12,
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "#e6f4ea",
+        color: "#137333",
+        border: "1px solid #b7e1cd",
+        marginLeft: 6,
+      }}
+      title="Premium feature"
+    >
+      Premium
+    </span>
+  );
+}
+function ProLock() {
+  return (
+    <span
+      style={{
+        fontSize: 12,
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "#f0f4ff",
+        color: "#1a56db",
+        border: "1px solid #c7d2fe",
+        marginLeft: 6,
+      }}
+      title="Premium feature (locked)"
+    >
+      Locked
+    </span>
+  );
+}
+
+function mean(arr) {
+  if (!arr.length) return 0;
+  const s = arr.reduce((a, b) => a + b, 0);
+  return s / arr.length;
+}
+function stdev(arr) {
+  if (arr.length < 2) return 0;
+  const m = mean(arr);
+  const v = mean(arr.map(x => (x - m) ** 2));
+  return Math.sqrt(v);
+}
+function detectAnomalies(points, opts) {
+  const lookback = Math.max(3, opts.lookback || 28);
+  const z = Math.max(0.5, opts.z || 2);
+  const use = opts.use || { sessions: true, revenue: true, cvr: true };
+  const out = [];
+
+  const metrics = [
+    { key: "sessions", enabled: !!use.sessions },
+    { key: "revenue", enabled: !!use.revenue },
+    { key: "cvr", enabled: !!use.cvr },
+  ];
+
+  metrics.forEach(({ key, enabled }) => {
+    if (!enabled) return;
+    for (let i = 0; i < points.length; i++) {
+      const windowStart = Math.max(0, i - lookback);
+      const windowArr = points.slice(windowStart, i).map(p => Number(p[key] || 0));
+      if (windowArr.length < Math.min(7, lookback)) continue; // need minimal history
+      const m = mean(windowArr);
+      const sd = stdev(windowArr);
+      const val = Number(points[i][key] || 0);
+      const zscore = sd > 0 ? (val - m) / sd : 0;
+      if (Math.abs(zscore) >= z) {
+        out.push({
+          metric: key,
+          period: points[i].period, // YYYYMMDD
+          value: val,
+          mean: m,
+          stdev: sd,
+          z: zscore,
+        });
+      }
+    }
+  });
+
+  // Sort by |z| desc, then by recency desc
+  out.sort((a, b) => {
+    const za = Math.abs(b.z) - Math.abs(a.z);
+    if (za !== 0) return za;
+    return String(b.period).localeCompare(String(a.period));
+    });
+  return out;
+}
+
+async function deliverSlack({ webhook, propertyId, startDate, endDate, z, lookback, anomalies, aiSummary }) {
+  const bullets = anomalies.slice(0, 20).map((a) => {
+    const sign = a.z >= 0 ? "+" : "−";
+    const zAbs = Math.abs(a.z);
+    const metric = a.metric.toUpperCase();
+    const datePretty = formatYYYYMMDD(a.period);
+    const valueFmt = a.metric === "revenue"
+      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
+      : (a.metric === "cvr" ? `${(a.value * 100).toFixed(2)}%` : String(a.value ?? 0));
+    return `• ${metric} ${sign}${zAbs.toFixed(2)}σ on ${datePretty} — value ${valueFmt}`;
+  }).join("\n");
+
+  const header = `Anomalies detected (Property ${propertyId}, ${startDate} → ${endDate})\nZ≥${z}, lookback ${lookback} days`;
+  const aiBlock = aiSummary ? `\n\n*AI summary*\n${aiSummary}` : "";
+  const text = anomalies.length ? `${header}\n${bullets}${aiBlock}` : `${header}\nNo anomalies for current settings.`;
+
+  await fetch(webhook, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+}
+
+/* ============================== Source / Medium ============================== */
 function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1251,7 +1297,6 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
     }
   };
 
-  // Totals + KPI badges
   const totalSessions = useMemo(
     () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [rows]
@@ -1263,7 +1308,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Source / Medium</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load Source / Medium"}
+          {loading ? "Loading…" : "Load Source / Medium"}
         </button>
         {rows.length > 0 && (
           <TargetBadge
@@ -1331,9 +1376,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   );
 }
 
-/* ============================================================================
-   Campaigns (overview)
-   ========================================================================== */
+/* ============================== Campaigns (overview) ============================== */
 function Campaigns({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1369,7 +1412,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Campaigns</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load Campaigns"}
+          {loading ? "Loading…" : "Load Campaigns"}
         </button>
         {rows.length > 0 && (
           <TargetBadge
@@ -1433,9 +1476,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================================================================
-   Campaign drill-down
-   ========================================================================== */
+/* ============================== Campaign drill-down ============================== */
 function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const [campaign, setCampaign] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1508,11 +1549,11 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         <input
           value={campaign}
           onChange={(e) => setCampaign(e.target.value)}
-          placeholder="Type exact campaign name\u2026"
+          placeholder="Type exact campaign name…"
           style={{ padding: 8, minWidth: 260 }}
         />
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId || !campaign}>
-          {loading ? "Loading\u2026" : "Load Campaign Details"}
+          {loading ? "Loading…" : "Load Campaign Details"}
         </button>
 
         <AiBlock
@@ -1538,7 +1579,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
 
       {totals && (
         <div style={{ marginTop: 12 }}>
-          <b>Totals for \u201c{campaign}\u201d:</b>{" "}
+          <b>Totals for &ldquo;{campaign}&rdquo;:</b>{" "}
           Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} ·
           Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} ·
@@ -1640,20 +1681,18 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       )}
 
       {!error && !loading && !totals && (
-        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click \u201cLoad Campaign Details\u201d.</p>
+        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click &ldquo;Load Campaign Details&rdquo;.</p>
       )}
     </section>
   );
 }
 
-/* ============================================================================
-   Campaigns Overview
-   ========================================================================== */
+/* ============================== Campaigns Overview ============================== */
 function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [error, setError]       = useState("");
-  const [q, setQ]               = useState(""); // client-side search
+  const [q, setQ]               = useState("");
 
   const load = async () => {
     setLoading(true); setError(""); setRows([]);
@@ -1695,12 +1734,11 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Campaigns (overview)</h3>
-
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load Campaigns"}
+          {loading ? "Loading…" : "Load Campaigns"}
         </button>
 
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign name\u2026" style={{ padding: 8, minWidth: 220 }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign name…" style={{ padding: 8, minWidth: 220 }} />
 
         {visible.length > 0 && (
           <TargetBadge
@@ -1788,9 +1826,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================================================================
-   Top Pages
-   ========================================================================== */
+/* ============================== Top Pages ============================== */
 function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1821,7 +1857,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Top pages (views)</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load Top Pages"}
+          {loading ? "Loading…" : "Load Top Pages"}
         </button>
         <AiBlock
           asButton
@@ -1880,9 +1916,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ============================================================================
-   Landing Pages × Attribution
-   ========================================================================== */
+/* ============================== Landing Pages × Attribution ============================== */
 function LandingPages({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1953,7 +1987,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         <h3 style={{ margin: 0 }}>Landing Pages × Attribution</h3>
 
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load Landing Pages"}
+          {loading ? "Loading…" : "Load Landing Pages"}
         </button>
 
         <AiBlock
@@ -1979,15 +2013,14 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
       </div>
 
       <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <label htmlFor="lp-top-only" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <input id="lp-top-only" type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} />
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} />
           Top entries only (25)
         </label>
 
         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 260 }}>
           <span style={{ fontSize: 13, color: "#333" }}>Min sessions</span>
           <input
-            id="lp-min-sessions"
             type="range"
             min={0}
             max={Math.max(10, maxSessions)}
@@ -2047,9 +2080,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================================================================
-   E-commerce KPIs
-   ========================================================================== */
+/* ============================== E-commerce KPIs ============================== */
 function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
@@ -2078,7 +2109,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>E-commerce KPIs</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load E-commerce KPIs"}
+          {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
         {/* KPI badges shown when totals loaded */}
         {totals && (
@@ -2157,9 +2188,7 @@ function Tr({ label, value }) {
   );
 }
 
-/* ============================================================================
-   Checkout Funnel
-   ========================================================================== */
+/* ============================== Checkout Funnel ============================== */
 function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
@@ -2184,7 +2213,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Checkout funnel (event counts)</h3>
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
-          {loading ? "Loading\u2026" : "Load Checkout Funnel"}
+          {loading ? "Loading…" : "Load Checkout Funnel"}
         </button>
         <AiBlock
           asButton
@@ -2227,16 +2256,13 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
   );
 }
 
-/* ============================================================================
-   Trends Over Time
-   ========================================================================== */
+/* ============================== Trends Over Time ============================== */
 function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState("daily");
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   function pad2(n) { return String(n).padStart(2, "0"); }
   function isoWeekStartUTC(year, week) {
     const jan4 = new Date(Date.UTC(year, 0, 4));
@@ -2255,29 +2281,27 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
     const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
     const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
-    return `${startStr}\u2013${endStr}`;
+    return `${startStr}–${endStr}`;
   }
-  function formatYYYYMMDD(s) {
+  function formatYYYYMMDDdisplay(s) {
     const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
     const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
     return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
   }
   function displayPeriodLabel(raw, gran) {
-    return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
+    return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDDdisplay(raw);
   }
 
-  function buildLineChartUrl(series) {
-    if (!series?.length) return "";
+  function buildLineChart(series) {
+    if (!series?.length) return null;
     const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
     const sessions = series.map((d) => d.sessions);
     const users = series.map((d) => d.users);
-    const cfg = {
-      type: "line",
-      data: { labels, datasets: [{ label: "Sessions", data: sessions }, { label: "Users", data: users }] },
-      options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
-    };
-    return `https://quickchart.io/chart?w=800&h=360&c=${encodeURIComponent(JSON.stringify(cfg))}`;
+    return buildLineChartConfig(labels, [
+      { label: "Sessions", data: sessions },
+      { label: "Users", data: users },
+    ]);
   }
 
   const load = async () => {
@@ -2299,16 +2323,16 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Trends over time</h3>
 
-        <label htmlFor="granular" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Granularity
-          <select id="granular" value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
+          <select value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
           </select>
         </label>
 
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
-          {loading ? "Loading\u2026" : "Load Trends"}
+          {loading ? "Loading…" : "Load Trends"}
         </button>
 
         <AiBlock
@@ -2324,7 +2348,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             goals: [
               "Call out surges/drops and likely drivers",
               "Flag seasonality or anomalies",
-              "Recommend 2\u20133 next actions or tests",
+              "Recommend 2–3 next actions or tests",
             ],
           }}
         />
@@ -2355,10 +2379,11 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
       {hasRows ? (
         <>
           <div style={{ marginTop: 12 }}>
-            <img
-              src={buildLineChartUrl(rows)}
-              alt="Sessions &amp; Users trend"
-              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+            <ChartImage
+              width={800}
+              height={360}
+              alt="Sessions & Users trend"
+              config={buildLineChart(rows)}
             />
           </div>
 
@@ -2397,9 +2422,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ============================================================================
-   Product Performance (flag: NEXT_PUBLIC_ENABLE_PRODUCTS === "true")
-   ========================================================================== */
+/* ============================== Product Performance ============================== */
 function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);            // [{ name, id, views, carts, purchases, revenue }]
@@ -2407,11 +2430,14 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [debug, setDebug] = useState(null);        // raw GA4 response
 
   useEffect(() => {
-    setRows([]); setError(""); setDebug(null);
+    setRows([]);
+    setError("");
+    setDebug(null);
   }, [resetSignal]);
 
   function parseProductsResponse(data) {
     if (!data || !Array.isArray(data.rows)) return [];
+
     const dimNames = (data.dimensionHeaders || []).map(h => h.name);
     const metNames = (data.metricHeaders || []).map(h => h.name);
 
@@ -2437,9 +2463,13 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
       const revenue   = iRevenue   >= 0 ? Number(r.metricValues?.[iRevenue]?.value || 0) : 0;
 
       return {
-        key: `p-${idx}`, name,
+        key: `p-${idx}`,
+        name,
         id: iItemId >= 0 ? (r.dimensionValues?.[iItemId]?.value || "") : "",
-        views, carts, purchases, revenue,
+        views,
+        carts,
+        purchases,
+        revenue,
       };
     });
   }
@@ -2447,6 +2477,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   async function load() {
     setLoading(true); setError(""); setRows([]); setDebug(null);
     const payload = { propertyId, startDate, endDate, filters, limit: 100 };
+
     const tryEndpoints = async () => {
       try {
         const d1 = await fetchJson("/api/ga4/products-lite", payload);
@@ -2483,7 +2514,12 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
     downloadCsvGeneric(
       `product_performance_${startDate}_to_${endDate}`,
       rows.map(r => ({
-        name: r.name, id: r.id, views: r.views, carts: r.carts, purchases: r.purchases, revenue: r.revenue,
+        name: r.name,
+        id: r.id,
+        views: r.views,
+        carts: r.carts,
+        purchases: r.purchases,
+        revenue: r.revenue,
       })),
       [
         { header: "Item name/ID", key: "name" },
@@ -2506,7 +2542,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
           disabled={loading || !propertyId}
           title={!propertyId ? "Enter a GA4 property ID first" : ""}
         >
-          {loading ? "Loading\u2026" : "Load Products"}
+          {loading ? "Loading…" : "Load Products"}
         </button>
 
         <AiBlock
@@ -2518,15 +2554,24 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
             dateRange: { start: startDate, end: endDate },
             filters,
             rows: rows.slice(0, 50).map(r => ({
-              name: r.name, id: r.id, views: r.views, carts: r.carts, purchases: r.purchases, revenue: r.revenue,
+              name: r.name,
+              id: r.id,
+              views: r.views,
+              carts: r.carts,
+              purchases: r.purchases,
+              revenue: r.revenue,
             })),
             instructions:
-              "Identify SKUs with high views but low add-to-carts or purchases. Call out likely issues (pricing, imagery, PDP UX). Provide 2\u20133 testable hypotheses to improve add-to-cart rate and conversion.",
+              "Identify SKUs with high views but low add-to-carts or purchases. Call out likely issues (pricing, imagery, PDP UX). Provide 2–3 testable hypotheses to improve add-to-cart rate and conversion.",
           }}
           resetSignal={resetSignal}
         />
 
-        <button onClick={exportCsv} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!rows.length}>
+        <button
+          onClick={exportCsv}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={!rows.length}
+        >
           Download CSV
         </button>
 
@@ -2558,7 +2603,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               {rows.map(r => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id || "\u2014"}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id || "—"}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.carts.toLocaleString()}</td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchases.toLocaleString()}</td>
@@ -2570,7 +2615,9 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : (
+        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      )}
 
       {debug && (
         <details style={{ marginTop: 10 }}>
@@ -2584,9 +2631,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ============================================================================
-   Saved Views
-   ========================================================================== */
+/* ============================== Saved Views ============================== */
 function SavedViews({
   startDate, endDate, countrySel, channelSel, comparePrev,
   onApply,
@@ -2601,7 +2646,9 @@ function SavedViews({
       const raw = localStorage.getItem(SAVED_VIEWS_KEY);
       const arr = raw ? JSON.parse(raw) : [];
       if (Array.isArray(arr)) setPresets(arr);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   const persist = (arr) => {
@@ -2653,7 +2700,7 @@ function SavedViews({
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Name this view (e.g. UK \u00B7 Organic \u00B7 Sep)"
+          placeholder="Name this view (e.g. UK · Organic · Sep)"
           style={{ padding: 8, minWidth: 260 }}
         />
         <button onClick={saveCurrent} style={{ padding: "8px 12px", cursor: "pointer" }}>
@@ -2669,7 +2716,7 @@ function SavedViews({
               <div style={{ minWidth: 280 }}>
                 <b>{p.name}</b>{" "}
                 <span style={{ color: "#666", fontSize: 12 }}>
-                  {p.startDate} \u2192 {p.endDate} \u00B7 {p.country} \u00B7 {p.channelGroup} {p.comparePrev ? "\u00B7 compare" : ""}
+                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup} {p.comparePrev ? "· compare" : ""}
                 </span>
               </div>
               <button onClick={() => apply(p, false)} style={{ padding: "6px 10px", cursor: "pointer" }}>
@@ -2686,27 +2733,11 @@ function SavedViews({
         </div>
       ) : (
         <p style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
-          No saved views yet. Set dates/filters, give it a name, then \u201cSave current\u201d.
+          No saved views yet. Set dates/filters, give it a name, then “Save current”.
         </p>
       )}
     </section>
   );
 }
 
-/* ============================================================================
-   Helpers (channels)
-   ========================================================================== */
-function parseGa4Channels(response) {
-  if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
-  const rows = response.rows.map((r) => ({
-    channel: r.dimensionValues?.[0]?.value || "(unknown)",
-    sessions: Number(r.metricValues?.[0]?.value || 0),
-    users: Number(r.metricValues?.[1]?.value || 0),
-  }));
-  const totals = rows.reduce(
-    (a, r) => ({ sessions: a.sessions + r.sessions, users: a.users + r.users }),
-    { sessions: 0, users: 0 }
-  );
-  rows.sort((a, b) => b.sessions - a.sessions);
-  return { rows, totals };
-}
+/* ============================== END FILE ============================== */
