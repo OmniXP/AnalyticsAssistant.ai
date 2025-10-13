@@ -1,23 +1,119 @@
-/* eslint-disable react/no-unescaped-entities */
-/* pages/index.js
-   InsightGPT Dashboard (MVP)
-   - Preserves all existing features
-   - Adds Slack delivery with optional AI summary for Anomaly Alerts (Premium)
-   - Keeps storage keys, API routes, feature flags, and public interfaces stable
-*/
+/* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+// pages/index.js
+import { useEffect, useMemo, useState, useRef } from "react";
 import Image from "next/image";
 
-/* ============================== Constants & Keys ============================== */
+/* ============================================================================
+   Helpers & Constants
+   ========================================================================== */
 
+/** -------- URL helpers for Saved Views (unchanged public interface) -------- */
+function encodeQuery(state) {
+  const p = new URLSearchParams();
+  if (state.startDate) p.set("start", state.startDate);
+  if (state.endDate) p.set("end", state.endDate);
+  if (state.appliedFilters?.country && state.appliedFilters.country !== "All") {
+    p.set("country", state.appliedFilters.country);
+  }
+  if (state.appliedFilters?.channelGroup && state.appliedFilters.channelGroup !== "All") {
+    p.set("channel", state.appliedFilters.channelGroup);
+  }
+  if (state.comparePrev) p.set("compare", "1");
+  if (state.premium) p.set("premium", "1");
+  return p.toString();
+}
+
+function decodeQuery() {
+  if (typeof window === "undefined") return null;
+  const p = new URLSearchParams(window.location.search);
+  const q = Object.fromEntries(p.entries());
+  return {
+    startDate: q.start || null,
+    endDate: q.end || null,
+    country: q.country || "All",
+    channelGroup: q.channel || "All",
+    comparePrev: q.compare === "1",
+    premium: q.premium === "1",
+  };
+}
+
+/** -------- Local Storage Keys (do not change) -------- */
 const STORAGE_KEY = "insightgpt_preset_v2";
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
 const KPI_KEY = "insightgpt_kpi_targets_v1";
 const ALERTS_KEY = "insightgpt_alerts_cfg_v1";
 
-/* ============================== Small Utils ============================== */
+/** -------- KPI Targets helpers & badge --------
+ * Expected shape in localStorage under KPI_KEY:
+ *   {
+ *     sessionsTarget: number,
+ *     revenueTarget: number,
+ *     cvrTarget: number
+ *   }
+ */
+function loadKpiTargets() {
+  try {
+    const raw = localStorage.getItem(KPI_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+function pctToTarget(current, target) {
+  const t = Number(target);
+  if (!t || t <= 0) return null;
+  return Math.round((Number(current || 0) / t) * 100);
+}
+function TargetBadge({ label, current, target, currency = false }) {
+  if (target == null) return null;
+  const pct = pctToTarget(current, target);
+  if (pct == null) return null;
+  const ok = pct >= 100;
+  const val = currency
+    ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(target) || 0)
+    : Number(target).toLocaleString();
+  return (
+    <span
+      title={`${label} target: ${val} • Progress: ${pct}%`}
+      style={{
+        marginLeft: 8,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        background: ok ? "#e6f4ea" : "#fdecea",
+        color: ok ? "#137333" : "#b00020",
+        border: `1px solid ${ok ? "#b7e1cd" : "#f4c7c3"}`,
+        whiteSpace: "nowrap",
+      }}
+      aria-label={`${pct}% to ${label} target`}
+    >
+      {`${pct}% to ${label} target`}
+    </span>
+  );
+}
 
+/** -------- Misc helpers -------- */
+function parseGa4Channels(response) {
+  if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
+  const rows = response.rows.map((r) => ({
+    channel: r.dimensionValues?.[0]?.value || "(unknown)",
+    sessions: Number(r.metricValues?.[0]?.value || 0),
+    users: Number(r.metricValues?.[1]?.value || 0),
+  }));
+  const totals = rows.reduce(
+    (a, r) => ({ sessions: a.sessions + r.sessions, users: a.users + r.users }),
+    { sessions: 0, users: 0 }
+  );
+  rows.sort((a, b) => b.sessions - a.sessions);
+  return { rows, totals };
+}
+function formatPctDelta(curr, prev) {
+  if (prev === 0 && curr === 0) return "0%";
+  if (prev === 0 && curr > 0) return "+100%";
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
 function ymd(d) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -33,33 +129,81 @@ function computePreviousRange(startStr, endStr) {
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
   return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
 }
-function safeParseJSON(raw, fallback) {
-  try {
-    const v = JSON.parse(raw);
-    return v == null ? fallback : v;
-  } catch {
-    return fallback;
-  }
+
+/** -------- CSV helpers -------- */
+function downloadCsvChannels(rows, totals, startDate, endDate) {
+  if (!rows?.length) return;
+  const header = ["Channel", "Sessions", "Users", "% of Sessions"];
+  const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
+  const lines = rows.map((r) => {
+    const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
+    return [r.channel, r.sessions, r.users, `${pct}%`];
+  });
+  lines.push(["Total", totals.sessions, totals.users, ""]);
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
-function safeStringify(value) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch (e) {
-    try {
-      const seen = new WeakSet();
-      const replacer = (_, v) => {
-        if (v && typeof v === "object") {
-          if (seen.has(v)) return "[[circular]]";
-          seen.add(v);
-        }
-        return v;
-      };
-      return JSON.stringify(value, replacer, 2);
-    } catch {
-      return String(value);
-    }
-  }
+
+function downloadCsvGeneric(filenamePrefix, rows, columns) {
+  if (!rows?.length) return;
+  const header = columns.map((c) => c.header);
+  const lines = rows.map((r) => columns.map((c) => r[c.key]));
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const filename = `${filenamePrefix}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
+
+/** -------- QuickChart URLs (kept using <img>, eslint rule disabled at file top) -------- */
+function buildChannelPieUrl(rows) {
+  if (!rows?.length) return "";
+  const labels = rows.map((r) => r.channel);
+  const data = rows.map((r) => r.sessions);
+  const cfg = {
+    type: "pie",
+    data: { labels, datasets: [{ data }] },
+    options: { plugins: { legend: { position: "bottom" } } },
+  };
+  const encoded = encodeURIComponent(JSON.stringify(cfg));
+  return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
+}
+function buildLineChartUrl({ labels, datasets, width = 800, height = 360, title = "" }) {
+  const cfg = {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      plugins: { legend: { position: "bottom" }, title: title ? { display: true, text: title } : undefined },
+      scales: { y: { beginAtZero: true } },
+    },
+  };
+  return `https://quickchart.io/chart?w=${width}&h=${height}&c=${encodeURIComponent(JSON.stringify(cfg))}`;
+}
+
+/** -------- Unified fetch helper -------- */
 async function fetchJson(url, payload) {
   const res = await fetch(url, {
     method: "POST",
@@ -85,198 +229,66 @@ async function fetchJson(url, payload) {
   return data || {};
 }
 
-/* ============================== URL Helpers (Saved Views) ============================== */
-
-function encodeQuery(state) {
-  const p = new URLSearchParams();
-  if (state.startDate) p.set("start", state.startDate);
-  if (state.endDate) p.set("end", state.endDate);
-  if (state.appliedFilters?.country && state.appliedFilters.country !== "All") {
-    p.set("country", state.appliedFilters.country);
-  }
-  if (state.appliedFilters?.channelGroup && state.appliedFilters.channelGroup !== "All") {
-    p.set("channel", state.appliedFilters.channelGroup);
-  }
-  if (state.comparePrev) p.set("compare", "1");
-  return p.toString();
-}
-function decodeQuery() {
-  if (typeof window === "undefined") return null;
-  const p = new URLSearchParams(window.location.search);
-  const q = Object.fromEntries(p.entries());
-  return {
-    startDate: q.start || null,
-    endDate: q.end || null,
-    country: q.country || "All",
-    channelGroup: q.channel || "All",
-    comparePrev: q.compare === "1",
-  };
-}
-
-/* ============================== Premium Gating ============================== */
-/** Minimal, non-invasive premium gate:
- * - Enabled if (localStorage.insightgpt_premium === "1") OR window.__INSIGHTGPT_PREMIUM === true
- * - You can toggle in the console:
- *     localStorage.setItem("insightgpt_premium","1"); location.reload();
- *     // to disable:
- *     localStorage.removeItem("insightgpt_premium"); location.reload();
- */
-function useIsPremium() {
-  const [isPremium, setIsPremium] = useState(false);
-  useEffect(() => {
-    try {
-      const ls = (typeof window !== "undefined") && window.localStorage?.getItem("insightgpt_premium");
-      const flag = (typeof window !== "undefined") && (window.__INSIGHTGPT_PREMIUM === true);
-      setIsPremium(ls === "1" || !!flag);
-    } catch {
-      setIsPremium(false);
-    }
-  }, []);
-  return isPremium;
-}
-
-/* ============================== KPI Targets Helpers ============================== */
-
-function loadKpiTargets() {
+/** -------- Safe stringify for debug block -------- */
+function safeStringify(value) {
   try {
-    const raw = localStorage.getItem(KPI_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
+    return JSON.stringify(value, null, 2);
+  } catch (e) {
+    try {
+      const seen = new WeakSet();
+      const replacer = (_, v) => {
+        if (v && typeof v === "object") {
+          if (seen.has(v)) return "[[circular]]";
+          seen.add(v);
+        }
+        return v;
+      };
+      return JSON.stringify(value, replacer, 2);
+    } catch {
+      return String(value);
+    }
   }
 }
-function pctToTarget(current, target) {
-  if (!target || target <= 0) return null;
-  return Math.round((current / target) * 100);
-}
-function TargetBadge({ label, current, target, currency = false }) {
-  if (target == null) return null;
-  const pct = pctToTarget(current, target);
-  if (pct == null) return null;
-  const ok = pct >= 100;
-  const val = currency
-    ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(target)
-    : Number(target).toLocaleString();
-  return (
-    <span
-      title={`${label} target: ${val} • Progress: ${pct}%`}
-      style={{
-        marginLeft: 8,
-        padding: "2px 8px",
-        borderRadius: 999,
-        fontSize: 12,
-        background: ok ? "#e6f4ea" : "#fdecea",
-        color: ok ? "#137333" : "#b00020",
-        border: `1px solid ${ok ? "#b7e1cd" : "#f4c7c3"}`
-      }}
-    >
-      {`${pct}% to ${label} target`}
-    </span>
-  );
+
+/** -------- Premium gating helpers (front-end dev/test only) -------- */
+function detectPremium() {
+  try {
+    if (typeof window === "undefined") return false;
+    const q = decodeQuery();
+    if (q?.premium) return true;
+    const ls = localStorage.getItem("insightgpt_premium");
+    if (ls && ls === "true") return true;
+  } catch {
+    // ignore
+  }
+  return false;
 }
 
-/* ============================== Formatting Helpers ============================== */
-
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-function formatYYYYMMDD(s) {
-  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
-  if (!m) return String(s || "");
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-  return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
+/** -------- Formatting helpers -------- */
+function isoToYYYYMMDD(s) {
+  // Accept GA4 date strings (YYYYMMDD) or ISO YYYY-MM-DD; output YYYY-MM-DD
+  if (!s) return "";
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // Fallback: try Date parse
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return String(s);
+  return ymd(d);
+}
+function clampStr(s, maxLen) {
+  const str = String(s || "");
+  return str.length > maxLen ? `${str.slice(0, maxLen - 1)}…` : str;
+}
+function sanitizeForSlack(s) {
+  return String(s || "")
+    .replace(/\r/g, "")
+    .replace(/[^\S\n]+/g, " ") // collapse spaces, keep newlines
+    .replace(/[\u0000-\u001F\u007F]/g, ""); // strip control chars
 }
 
-/* ============================== CSV Helpers ============================== */
-
-function downloadCsvChannels(rows, totals, startDate, endDate) {
-  if (!rows?.length) return;
-  const header = ["Channel", "Sessions", "Users", "% of Sessions"];
-  const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
-  const lines = rows.map((r) => {
-    const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
-    return [r.channel, r.sessions, r.users, `${pct}%`];
-  });
-  lines.push(["Total", totals.sessions, totals.users, ""]);
-  const csv = [header, ...lines]
-    .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-
-  const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-function downloadCsvGeneric(filenamePrefix, rows, columns) {
-  if (!rows?.length) return;
-  const header = columns.map((c) => c.header);
-  const lines = rows.map((r) => columns.map((c) => r[c.key]));
-  const csv = [header, ...lines]
-    .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-
-  const filename = `${filenamePrefix}.csv`;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display = "none";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-/* ============================== QuickChart Helpers (use next/image) ============================== */
-
-function buildChannelPieConfig(rows) {
-  if (!rows?.length) return null;
-  const labels = rows.map((r) => r.channel);
-  const data = rows.map((r) => r.sessions);
-  return {
-    type: "pie",
-    data: { labels, datasets: [{ data }] },
-    options: { plugins: { legend: { position: "bottom" } } },
-  };
-}
-function buildLineChartConfig(labels, seriesMap /* {label: string, data: number[]}[] */) {
-  return {
-    type: "line",
-    data: {
-      labels,
-      datasets: seriesMap.map(s => ({ label: s.label, data: s.data })),
-    },
-    options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
-  };
-}
-function quickChartUrl(cfg, w = 800, h = 360) {
-  if (!cfg) return "";
-  const encoded = encodeURIComponent(JSON.stringify(cfg));
-  return `https://quickchart.io/chart?w=${w}&h=${h}&c=${encoded}`;
-}
-
-/* ============================== Parsing Helpers ============================== */
-
-function parseGa4Channels(response) {
-  if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
-  const rows = response.rows.map((r) => ({
-    channel: r.dimensionValues?.[0]?.value || "(unknown)",
-    sessions: Number(r.metricValues?.[0]?.value || 0),
-    users: Number(r.metricValues?.[1]?.value || 0),
-  }));
-  const totals = rows.reduce(
-    (a, r) => ({ sessions: a.sessions + r.sessions, users: a.users + r.users }),
-    { sessions: 0, users: 0 }
-  );
-  rows.sort((a, b) => b.sessions - a.sessions);
-  return { rows, totals };
-}
-function formatPctDelta(curr, prev) {
-  if (prev === 0 && curr === 0) return "0%";
-  if (prev === 0) return "+100%";
-  const pct = Math.round(((curr - prev) / prev) * 100);
-  return `${pct > 0 ? "+" : ""}${pct}%`;
-}
-
-/* ============================== Options ============================== */
+/* ============================================================================
+   Page: InsightGPT
+   ========================================================================== */
 
 const COUNTRY_OPTIONS = [
   "All",
@@ -292,6 +304,7 @@ const COUNTRY_OPTIONS = [
   "Canada",
   "India",
 ];
+
 const CHANNEL_GROUP_OPTIONS = [
   "All",
   "Direct",
@@ -308,8 +321,6 @@ const CHANNEL_GROUP_OPTIONS = [
   "Paid Shopping",
 ];
 
-/* ============================== Page ============================== */
-
 export default function Home() {
   // Base controls
   const [propertyId, setPropertyId] = useState("");
@@ -317,38 +328,51 @@ export default function Home() {
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
 
+  // Premium flag (front-end only)
+  const [isPremium, setIsPremium] = useState(false);
+
   // Fires whenever the user runs a fresh report (to reset AI & section data)
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  // Filters UI vs applied
+  // Filter controls (current selectors)
   const [countrySel, setCountrySel] = useState("All");
   const [channelSel, setChannelSel] = useState("All");
-  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
 
-  // Re-mount key for hard resets of some sections
+  // Filters actually applied to queries
+  const [appliedFilters, setAppliedFilters] = useState({
+    country: "All",
+    channelGroup: "All",
+  });
+
+  // Re-mount key for hard resets
   const [dashKey, setDashKey] = useState(1);
 
-  // Channels (hero)
+  // Channel results (main hero)
   const [result, setResult] = useState(null);
   const [prevResult, setPrevResult] = useState(null);
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Premium
-  const isPremium = useIsPremium();
-
-  // URL load
+  // Load from URL once & premium detection
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
       const q = decodeQuery();
       if (!q) return;
+
       if (q.startDate) setStartDate(q.startDate);
       if (q.endDate) setEndDate(q.endDate);
+
       setCountrySel(q.country || "All");
       setChannelSel(q.channelGroup || "All");
-      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
+      setAppliedFilters({
+        country: q.country || "All",
+        channelGroup: q.channelGroup || "All",
+      });
+
       setComparePrev(!!q.comparePrev);
+      setIsPremium(detectPremium());
     } catch {
       // ignore
     }
@@ -357,7 +381,7 @@ export default function Home() {
   // Load preset once
   useEffect(() => {
     try {
-      const saved = safeParseJSON(localStorage.getItem(STORAGE_KEY), null);
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
       if (saved?.propertyId) setPropertyId(saved.propertyId);
       if (saved?.startDate) setStartDate(saved.startDate);
       if (saved?.endDate) setEndDate(saved.endDate);
@@ -369,7 +393,7 @@ export default function Home() {
     }
   }, []);
 
-  // Persist preset
+  // Save preset whenever these change
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -388,6 +412,7 @@ export default function Home() {
     }
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
+  // Parse channel results
   const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
   const { rows: prevRows, totals: prevTotals } = useMemo(
     () => parseGa4Channels(prevResult),
@@ -398,14 +423,18 @@ export default function Home() {
   const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
   const connect = () => {
-    if (typeof window !== "undefined") {
-      window.location.href = "/api/auth/google/start";
-    }
-  };
-  const applyFilters = () => {
-    setAppliedFilters({ country: countrySel, channelGroup: channelSel });
+    window.location.href = "/api/auth/google/start";
   };
 
+  // Apply filters button
+  const applyFilters = () => {
+    setAppliedFilters({
+      country: countrySel,
+      channelGroup: channelSel,
+    });
+  };
+
+  // Channel report (uses filters)
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
     return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
   }
@@ -424,9 +453,15 @@ export default function Home() {
       });
       setResult(curr);
 
-      // Update URL to reflect the view we just ran
+      // Update URL to reflect the view we just ran (include premium flag if present)
       try {
-        const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+        const qs = encodeQuery({
+          startDate,
+          endDate,
+          appliedFilters,
+          comparePrev,
+          premium: isPremium,
+        });
         const path = window.location.pathname + (qs ? `?${qs}` : "");
         window.history.replaceState(null, "", path);
       } catch {
@@ -453,6 +488,7 @@ export default function Home() {
     }
   };
 
+  // Reset Dashboard: keep propertyId, reset everything else
   const resetDashboard = () => {
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -468,7 +504,7 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setError("");
-    setDashKey((k) => k + 1);
+    setDashKey((k) => k + 1); // force remount of sections
     try {
       const path = window.location.pathname;
       window.history.replaceState(null, "", path);
@@ -478,7 +514,14 @@ export default function Home() {
   };
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
+    <main
+      style={{
+        padding: 24,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        maxWidth: 1100,
+        margin: "0 auto",
+      }}
+    >
       <h1 style={{ marginBottom: 4 }}>InsightGPT (MVP)</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Connect GA4, choose a date range, optionally apply filters, and view traffic &amp; insights.
@@ -486,7 +529,7 @@ export default function Home() {
 
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }}>
+        <button onClick={connect} style={{ padding: "10px 14px", cursor: "pointer" }} aria-label="Connect Google Analytics">
           Connect Google Analytics
         </button>
 
@@ -508,7 +551,7 @@ export default function Home() {
           <input id="end-date" name="end-date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 8 }} />
         </label>
 
-        <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId}>
+        <button onClick={runReport} style={{ padding: "10px 14px", cursor: "pointer" }} disabled={loading || !propertyId} aria-label="Run GA4 Report">
           {loading ? "Running…" : "Run GA4 Report"}
         </button>
 
@@ -517,16 +560,17 @@ export default function Home() {
           style={{ padding: "10px 14px", cursor: "pointer" }}
           disabled={!rows.length}
           title={rows.length ? "Download table as CSV" : "Run a report first"}
+          aria-label="Download CSV"
         >
           Download CSV
         </button>
 
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }} htmlFor="compare-prev">
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8, borderLeft: "1px solid #ddd" }}>
           <input id="compare-prev" type="checkbox" checked={comparePrev} onChange={(e) => setComparePrev(e.target.checked)} />
           Compare vs previous period
         </label>
 
-        <button onClick={resetDashboard} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }}>
+        <button onClick={resetDashboard} style={{ padding: "8px 12px", cursor: "pointer", marginLeft: "auto" }} aria-label="Reset Dashboard">
           Reset Dashboard
         </button>
       </div>
@@ -537,18 +581,31 @@ export default function Home() {
           <b>Filters:</b>
           <label htmlFor="country-filter">Country&nbsp;
             <select id="country-filter" value={countrySel} onChange={(e) => setCountrySel(e.target.value)} style={{ padding: 8 }}>
-              {COUNTRY_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+              {COUNTRY_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
             </select>
           </label>
           <label htmlFor="channel-filter">Channel Group&nbsp;
             <select id="channel-filter" value={channelSel} onChange={(e) => setChannelSel(e.target.value)} style={{ padding: 8 }}>
-              {CHANNEL_GROUP_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+              {CHANNEL_GROUP_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
             </select>
           </label>
-          <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }}>Apply filters</button>
+          <button onClick={applyFilters} style={{ padding: "8px 12px", cursor: "pointer" }} aria-label="Apply filters">
+            Apply filters
+          </button>
           {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
-            <span style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}>
-              {"Filters active: "}
+            <span
+              style={{ background: "#e6f4ea", color: "#137333", padding: "4px 8px", borderRadius: 999, fontSize: 12 }}
+              aria-label="Filters active summary"
+            >
+              {`Filters active: `}
               {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
               {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
               {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
@@ -581,19 +638,19 @@ export default function Home() {
         onRunReport={runReport}
       />
 
-      {/* KPI Targets panel (editable) */}
+      {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
+
+      {/* KPI Targets (panel) */}
       <KpiTargetsPanel />
 
-      {/* Anomaly Alerts (Premium) */}
-      <AnomalyAlerts
+      {/* Anomaly Alerts (premium) */}
+      <AnomalyAlertsPanel
+        isPremium={isPremium}
         propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
-        premium={isPremium}
       />
-
-      {error && <p style={{ color: "crimson", marginTop: 16 }}>Error: {error}</p>}
 
       {/* At a glance + Channels */}
       {rows.length > 0 && (
@@ -616,8 +673,12 @@ export default function Home() {
           </div>
 
           <ul style={{ marginTop: 12 }}>
-            <li><b>Total sessions:</b> {totals.sessions.toLocaleString()}</li>
-            <li><b>Total users:</b> {totals.users.toLocaleString()}</li>
+            <li>
+              <b>Total sessions:</b> {totals.sessions.toLocaleString()}
+            </li>
+            <li>
+              <b>Total users:</b> {totals.users.toLocaleString()}
+            </li>
             {top && (
               <li>
                 <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
@@ -626,22 +687,52 @@ export default function Home() {
             {prevRows.length > 0 && (
               <>
                 <li style={{ marginTop: 6 }}>
-                  <b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev {prevTotals.sessions.toLocaleString()})
+                  <b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev{" "}
+                  {prevTotals.sessions.toLocaleString()})
                 </li>
                 <li>
-                  <b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev {prevTotals.users.toLocaleString()})
+                  <b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev{" "}
+                  {prevTotals.users.toLocaleString()})
                 </li>
               </>
             )}
           </ul>
 
-          {/* QuickChart pie (via next/image) */}
+          <div style={{ marginTop: 8, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Channel</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>% of Sessions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const pct = totals.sessions > 0 ? Math.round((r.sessions / totals.sessions) * 100) : 0;
+                  return (
+                    <tr key={r.channel}>
+                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.sessions.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.users.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
           <div style={{ marginTop: 16 }}>
-            <ChartImage
-              width={550}
-              height={360}
+            <img
+              src={buildChannelPieUrl(rows)}
               alt="Channel share chart"
-              config={buildChannelPieConfig(rows)}
+              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
             />
           </div>
         </section>
@@ -658,36 +749,16 @@ export default function Home() {
       />
 
       {/* Trends over time */}
-      <TrendsOverTime
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <TrendsOverTime propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* Campaigns */}
-      <Campaigns
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <Campaigns propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* Campaign drill-down */}
-      <CampaignDrilldown
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <CampaignDrilldown propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* Campaigns Overview */}
-      <CampaignsOverview
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <CampaignsOverview propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* Top pages */}
       <TopPages
@@ -700,12 +771,7 @@ export default function Home() {
       />
 
       {/* Landing Pages × Attribution */}
-      <LandingPages
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      <LandingPages propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
 
       {/* E-commerce KPIs */}
       <EcommerceKPIs
@@ -741,8 +807,17 @@ export default function Home() {
       {result ? (
         <details style={{ marginTop: 24 }}>
           <summary>Raw GA4 JSON (debug)</summary>
-          <pre style={{ marginTop: 8, background: "#f8f8f8", padding: 16, borderRadius: 8, overflow: "auto" }}>
-{safeStringify(result)}
+          <pre
+            style={{
+              marginTop: 8,
+              background: "#f8f8f8",
+              padding: 16,
+              borderRadius: 8,
+              overflow: "auto",
+              maxHeight: 380,
+            }}
+          >
+            {safeStringify(result)}
           </pre>
         </details>
       ) : null}
@@ -750,24 +825,91 @@ export default function Home() {
   );
 }
 
-/* ============================== Reusable: next/image wrapper for QuickChart ============================== */
-function ChartImage({ config, width = 800, height = 360, alt = "Chart" }) {
-  const url = quickChartUrl(config, width, height);
-  if (!url) return null;
-  // Use unoptimized to avoid next.config.js domain changes
+/* ============================================================================
+   KPI Targets Panel
+   ========================================================================== */
+
+function KpiTargetsPanel() {
+  const [kpis, setKpis] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(KPI_KEY);
+      const saved = raw ? JSON.parse(raw) : {};
+      setKpis({
+        sessionsTarget: saved.sessionsTarget ?? "",
+        revenueTarget: saved.revenueTarget ?? "",
+        cvrTarget: saved.cvrTarget ?? "",
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const save = () => {
+    try {
+      const toSave = {
+        sessionsTarget: Number(kpis.sessionsTarget) || 0,
+        revenueTarget: Number(kpis.revenueTarget) || 0,
+        cvrTarget: Number(kpis.cvrTarget) || 0,
+      };
+      localStorage.setItem(KPI_KEY, JSON.stringify(toSave));
+      setNotice("Saved KPI targets.");
+      setTimeout(() => setNotice(""), 1200);
+    } catch (e) {
+      setNotice(String(e?.message || e));
+    }
+  };
+
   return (
-    <Image
-      src={url}
-      alt={alt}
-      width={width}
-      height={height}
-      unoptimized
-      style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
-    />
+    <section style={{ marginTop: 16, padding: 12, border: "1px dashed #dcdcdc", borderRadius: 8 }}>
+      <h3 style={{ marginTop: 0 }}>KPI Targets</h3>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <label htmlFor="kpi-sessions">Sessions target&nbsp;
+          <input
+            id="kpi-sessions"
+            type="number"
+            min="0"
+            value={kpis.sessionsTarget}
+            onChange={(e) => setKpis((s) => ({ ...s, sessionsTarget: e.target.value }))}
+            style={{ padding: 8, width: 160 }}
+          />
+        </label>
+        <label htmlFor="kpi-revenue">Revenue target (GBP)&nbsp;
+          <input
+            id="kpi-revenue"
+            type="number"
+            min="0"
+            value={kpis.revenueTarget}
+            onChange={(e) => setKpis((s) => ({ ...s, revenueTarget: e.target.value }))}
+            style={{ padding: 8, width: 180 }}
+          />
+        </label>
+        <label htmlFor="kpi-cvr">CVR target (%)&nbsp;
+          <input
+            id="kpi-cvr"
+            type="number"
+            min="0"
+            step="0.01"
+            value={kpis.cvrTarget}
+            onChange={(e) => setKpis((s) => ({ ...s, cvrTarget: e.target.value }))}
+            style={{ padding: 8, width: 140 }}
+          />
+        </label>
+        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }} aria-label="Save KPI targets">
+          Save targets
+        </button>
+        {notice && <span style={{ color: "#137333", fontSize: 13 }}>{notice}</span>}
+      </div>
+    </section>
   );
 }
 
-/* ============================== Reusable AI block ============================== */
+/* ============================================================================
+   Reusable AI block
+   ========================================================================== */
+
 function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
@@ -781,7 +923,10 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   }, [resetSignal]);
 
   const run = async () => {
-    setLoading(true); setError(""); setText(""); setCopied(false);
+    setLoading(true);
+    setError("");
+    setText("");
+    setCopied(false);
     try {
       const data = await fetchJson(endpoint, payload);
       const summary = data?.summary || (typeof data === "string" ? data : "");
@@ -794,14 +939,19 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(text || ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }
-    catch { setError("Could not copy to clipboard"); }
+    try {
+      await navigator.clipboard.writeText(text || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("Could not copy to clipboard");
+    }
   };
 
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button onClick={run} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading}>
-        {loading ? "Summarising…" : (asButton ? buttonLabel : "Summarise with AI")}
+        {loading ? "Summarising…" : asButton ? buttonLabel : "Summarise with AI"}
       </button>
       <button onClick={copy} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!text}>
         {copied ? "Copied!" : "Copy insight"}
@@ -826,112 +976,39 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   );
 }
 
-/* ============================== KPI Targets Panel ============================== */
-function KpiTargetsPanel() {
-  const [kpis, setKpis] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
-  const [note, setNote] = useState("");
+/* ============================================================================
+   Anomaly Alerts (premium)
+   ========================================================================== */
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KPI_KEY);
-      const saved = raw ? JSON.parse(raw) : {};
-      setKpis({
-        sessionsTarget: saved.sessionsTarget ?? "",
-        revenueTarget: saved.revenueTarget ?? "",
-        cvrTarget: saved.cvrTarget ?? "",
-      });
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const save = () => {
-    const toSave = {
-      sessionsTarget: Number(kpis.sessionsTarget) || 0,
-      revenueTarget: Number(kpis.revenueTarget) || 0,
-      cvrTarget: Number(kpis.cvrTarget) || 0,
-    };
-    try {
-      localStorage.setItem(KPI_KEY, JSON.stringify(toSave));
-      setNote("Saved KPI targets.");
-      setTimeout(() => setNote(""), 1400);
-    } catch (e) {
-      setNote(`Save failed: ${String(e?.message || e)}`);
-      setTimeout(() => setNote(""), 2400);
-    }
-  };
-
-  return (
-    <section style={{ marginTop: 16, padding: 12, border: "1px dashed #e5e5e5", borderRadius: 8, background: "#fbfbfb" }}>
-      <h3 style={{ marginTop: 0 }}>KPI Targets</h3>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <label>Sessions target&nbsp;
-          <input
-            type="number"
-            inputMode="numeric"
-            value={kpis.sessionsTarget}
-            onChange={(e) => setKpis((k) => ({ ...k, sessionsTarget: e.target.value }))}
-            style={{ padding: 8, minWidth: 120 }}
-          />
-        </label>
-        <label>Revenue target (GBP)&nbsp;
-          <input
-            type="number"
-            inputMode="numeric"
-            value={kpis.revenueTarget}
-            onChange={(e) => setKpis((k) => ({ ...k, revenueTarget: e.target.value }))}
-            style={{ padding: 8, minWidth: 120 }}
-          />
-        </label>
-        <label>CVR target (%)&nbsp;
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            value={kpis.cvrTarget}
-            onChange={(e) => setKpis((k) => ({ ...k, cvrTarget: e.target.value }))}
-            style={{ padding: 8, minWidth: 120 }}
-          />
-        </label>
-        <button onClick={save} style={{ padding: "8px 12px", cursor: "pointer" }}>Save targets</button>
-        {note && <span style={{ color: "#137333", fontSize: 12 }}>{note}</span>}
-      </div>
-      <p style={{ color: "#666", fontSize: 12, marginTop: 8 }}>
-        Progress badges appear next to sections (Sessions, Revenue, CVR) once data is loaded.
-      </p>
-    </section>
-  );
-}
-
-/* ============================== Anomaly Alerts (Premium) ============================== */
-/** Features:
- * - Sensitivity (z), Lookback days, Metrics toggle
- * - Slack webhook delivery (Premium)
- * - AI summary appended to Slack message (optional)
- * - Stores config in localStorage['insightgpt_alerts_cfg_v1']
- */
-function AnomalyAlerts({ propertyId, startDate, endDate, filters, premium }) {
+function AnomalyAlertsPanel({ isPremium, propertyId, startDate, endDate, filters }) {
   const [cfg, setCfg] = useState({
-    enabled: true,
-    sensitivityZ: 2,
-    lookbackDays: 28,
     metrics: { sessions: true, revenue: true, cvr: true },
-    slackWebhookUrl: "",
-    includeAiSummary: true,
+    z: 2,
+    lookback: 28,
+    slackWebhook: "",
   });
-  const [loading, setLoading] = useState(false);
-  const [lastRun, setLastRun] = useState(null);
-  const [error, setError] = useState("");
+  const [state, setState] = useState({
+    loading: false,
+    lastRun: null,
+    anomalies: [],
+    msg: "",
+    error: "",
+    ai: "",
+    slackStatus: "",
+  });
 
   // Load config
   useEffect(() => {
     try {
-      const saved = safeParseJSON(localStorage.getItem(ALERTS_KEY), null);
+      const raw = localStorage.getItem(ALERTS_KEY);
+      const saved = raw ? JSON.parse(raw) : null;
       if (saved) {
         setCfg((c) => ({
           ...c,
-          ...saved,
-          metrics: { sessions: true, revenue: true, cvr: true, ...(saved.metrics || {}) },
+          metrics: saved.metrics ?? c.metrics,
+          z: Number(saved.z ?? c.z) || 2,
+          lookback: Number(saved.lookback ?? c.lookback) || 28,
+          slackWebhook: saved.slackWebhook ?? "",
         }));
       }
     } catch {
@@ -939,349 +1016,370 @@ function AnomalyAlerts({ propertyId, startDate, endDate, filters, premium }) {
     }
   }, []);
 
-  // Persist config
-  useEffect(() => {
+  const persistCfg = (next) => {
+    setCfg(next);
     try {
-      localStorage.setItem(ALERTS_KEY, JSON.stringify(cfg));
+      localStorage.setItem(ALERTS_KEY, JSON.stringify(next));
     } catch {
       // ignore
     }
-  }, [cfg]);
+  };
 
-  const percentage = (a, b) => (b > 0 ? (a / b) * 100 : 0);
+  const toggleMetric = (key) => {
+    const m = { ...cfg.metrics, [key]: !cfg.metrics[key] };
+    persistCfg({ ...cfg, metrics: m });
+  };
 
-  const run = async () => {
-    setError("");
-    setLoading(true);
+  const runDetection = async (sendToSlack = false) => {
+    setState((s) => ({ ...s, loading: true, error: "", msg: "", ai: "", slackStatus: "" }));
     try {
-      // 1) Load time series for the selected date range (daily)
-      const seriesData = await fetchJson("/api/ga4/timeseries", {
-        propertyId, startDate, endDate, filters, granularity: "daily",
-      });
-      const series = Array.isArray(seriesData?.series) ? seriesData.series : [];
-
-      // Build arrays per metric
-      const points = series.map(r => ({
-        period: r.period, // YYYYMMDD
-        sessions: Number(r.sessions || 0),
-        revenue: Number(r.revenue || 0),
-        cvr: Number(r.sessions > 0 ? (r.transactions || 0) / r.sessions : 0),
-      }));
-
-      const anoms = detectAnomalies(points, {
-        z: Number(cfg.sensitivityZ) || 2,
-        lookback: Number(cfg.lookbackDays) || 28,
-        use: cfg.metrics,
+      // Fetch time series for detection (daily granularity, unchanged API)
+      const data = await fetchJson("/api/ga4/timeseries", {
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        granularity: "daily",
       });
 
-      // Optionally build AI summary
-      let aiSummary = "";
-      if (cfg.includeAiSummary) {
-        try {
-          const payload = {
-            topic: "anomaly-alerts",
-            dateRange: { start: startDate, end: endDate },
-            filters,
-            rows: anoms.map(a => ({
-              metric: a.metric, period: a.period, value: a.value, z: a.z, mean: a.mean, stdev: a.stdev,
-            })),
-            instructions:
-              "Briefly summarise the anomalies. For each metric, state likely causes and 1–2 testable actions. Be concise.",
-          };
-          const ai = await fetchJson("/api/insights/summarise-pro", payload);
-          aiSummary = ai?.summary || "";
-        } catch (e) {
-          // Do not fail the flow if AI fails; continue with anomalies only
-          aiSummary = "";
+      const series = Array.isArray(data?.series) ? data.series : [];
+      // Build metric vectors
+      const days = series.map((r) => r.period); // YYYYMMDD
+      const metricsArr = [];
+      if (cfg.metrics.sessions) metricsArr.push({ key: "SESSIONS", arr: series.map((r) => Number(r.sessions || 0)) });
+      if (cfg.metrics.revenue) metricsArr.push({ key: "REVENUE", arr: series.map((r) => Number(r.revenue || 0)) });
+      if (cfg.metrics.cvr) {
+        const arr = series.map((r) => {
+          const s = Number(r.sessions || 0);
+          const t = Number(r.transactions || 0);
+          return s > 0 ? (t / s) * 100 : 0;
+        });
+        metricsArr.push({ key: "CVR", arr });
+      }
+
+      const anomalies = [];
+      const look = Math.max(5, Math.min(90, Number(cfg.lookback) || 28));
+      const Z = Math.max(1, Math.min(6, Number(cfg.z) || 2));
+
+      for (const m of metricsArr) {
+        const arr = m.arr;
+        for (let i = 0; i < arr.length; i++) {
+          const startIdx = Math.max(0, i - look);
+          const window = arr.slice(startIdx, i);
+          if (window.length < 5) continue;
+          const mean =
+            window.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) / window.length;
+          const variance =
+            window.reduce((a, b) => a + Math.pow((Number.isFinite(b) ? b : 0) - mean, 2), 0) /
+            window.length;
+          const std = Math.sqrt(variance);
+          const val = arr[i];
+          if (!Number.isFinite(val) || std === 0) continue;
+          const z = (val - mean) / std;
+          if (Math.abs(z) >= Z) {
+            anomalies.push({
+              metric: m.key,
+              dateRaw: days[i],
+              date: isoToYYYYMMDD(days[i]),
+              value: val,
+              z,
+              mean: Math.round(mean * 100) / 100,
+              std: Math.round(std * 100) / 100,
+            });
+          }
         }
       }
 
-      const result = { at: new Date().toISOString(), anomalies: anoms, aiSummary };
-      setLastRun(result);
+      anomalies.sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
 
-      // Deliver to Slack if configured & premium & enabled
-      if (premium && cfg.enabled && cfg.slackWebhookUrl) {
-        await deliverSlack({
-          webhook: cfg.slackWebhookUrl,
-          propertyId,
-          startDate,
-          endDate,
-          z: Number(cfg.sensitivityZ) || 2,
-          lookback: Number(cfg.lookbackDays) || 28,
-          anomalies: anoms,
-          aiSummary,
-        });
+      // Compose compact message for on-screen & Slack (hardened)
+      const head = `Anomalies detected (Property ${propertyId || "N/A"}, ${startDate} → ${endDate})\nZ≥${Z}, lookback ${look} days`;
+      const lines = anomalies.slice(0, 25).map((a) => {
+        const dir = a.z >= 0 ? "+" : "−";
+        const zAbs = Math.abs(a.z).toFixed(2);
+        const label = `${a.metric} ${dir}${zAbs}σ on ${a.date} — value ${Number(a.value).toLocaleString()}`;
+        return `• ${label}`;
+      });
+
+      // Optional ASCII sparkline per metric (inline, no deps)
+      const sparkByMetric = {};
+      const blockLines = [];
+      for (const m of metricsArr) {
+        const spark = makeSparkline(m.arr.slice(-30));
+        blockLines.push(`\`${m.key}\` last 30d: ${spark}`);
+        sparkByMetric[m.key] = spark;
       }
+
+      const msgBody = [head, ...lines, ...(blockLines.length ? ["", ...blockLines] : [])].join("\n");
+      const compact = sanitizeForSlack(clampStr(msgBody, 2900));
+      const msg = compact;
+
+      // Ask AI for a richer summary, hypotheses & actions
+      let ai = "";
+      try {
+        const aiRes = await fetchJson("/api/insights/summarise-pro", {
+          kind: "anomaly-alerts",
+          anomalies: anomalies.slice(0, 50),
+          dateRange: { start: startDate, end: endDate },
+          filters,
+          instructions:
+            "Write a concise, actionable summary. Explain most likely drivers, list 3–5 hypotheses by channel/source/campaign/landing page, and propose 3 focused tests or actions. If CVR spiked or dipped, relate to sessions and revenue. Keep it practical.",
+        });
+        ai = (aiRes?.summary || "").trim();
+      } catch (e) {
+        ai = "";
+      }
+
+      // If sending to Slack & webhook provided
+      let slackStatus = "";
+      if (sendToSlack) {
+        if (!cfg.slackWebhook) {
+          slackStatus = "No Slack webhook configured.";
+        } else {
+          // Build final Slack payload (block + optional AI section)
+          const blocks = [];
+          blocks.push({
+            type: "section",
+            text: { type: "mrkdwn", text: `*${sanitizeForSlack(head)}*` },
+          });
+          if (lines.length) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: sanitizeForSlack(lines.join("\n")) },
+            });
+          }
+          if (blockLines.length) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: sanitizeForSlack(blockLines.join("\n")) },
+            });
+          }
+          if (ai) {
+            const aiTitle = "_AI Analysis (beta)_";
+            const aiSafe = sanitizeForSlack(clampStr(ai, 2500));
+            blocks.push({ type: "divider" });
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*${aiTitle}*\n${aiSafe}` },
+            });
+          }
+
+          // Fallback text if blocks fail
+          const fallback = sanitizeForSlack([head, "", ...lines, "", "AI Analysis:", ai || "—"].join("\n"));
+          try {
+            const r = await fetch(cfg.slackWebhook, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: fallback, blocks }),
+            });
+            slackStatus = r.ok ? "Sent to Slack." : `Slack error: HTTP ${r.status}`;
+          } catch (e) {
+            slackStatus = `Slack error: ${String(e?.message || e)}`;
+          }
+        }
+      }
+
+      setState({
+        loading: false,
+        lastRun: new Date().toISOString(),
+        anomalies,
+        msg,
+        error: "",
+        ai,
+        slackStatus,
+      });
     } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
+      setState((s) => ({ ...s, loading: false, error: String(e?.message || e) }));
     }
   };
 
+  const saveWebhook = () => {
+    persistCfg({ ...cfg, slackWebhook: cfg.slackWebhook.trim() });
+  };
+
   return (
-    <section style={{ marginTop: 16, padding: 12, border: "1px dashed #e5e5e5", borderRadius: 8, background: "#fbfbfb" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0 }}>Anomaly Alerts {premium ? <PremiumBadge /> : <ProLock />}</h3>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={cfg.enabled}
-            onChange={(e) => setCfg((c) => ({ ...c, enabled: e.target.checked }))}
-          />
-          Enabled
-        </label>
-
-        <label> Sensitivity (z)&nbsp;
-          <input
-            type="number"
-            step="0.1"
-            value={cfg.sensitivityZ}
-            onChange={(e) => setCfg((c) => ({ ...c, sensitivityZ: e.target.value }))}
-            style={{ padding: 8, width: 80 }}
-          />
-        </label>
-
-        <label> Lookback days&nbsp;
-          <input
-            type="number"
-            step="1"
-            value={cfg.lookbackDays}
-            onChange={(e) => setCfg((c) => ({ ...c, lookbackDays: e.target.value }))}
-            style={{ padding: 8, width: 100 }}
-          />
-        </label>
-
-        <span style={{ marginLeft: 6 }}>Metrics:</span>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={!!cfg.metrics?.sessions} onChange={(e) => setCfg(c => ({ ...c, metrics: { ...c.metrics, sessions: e.target.checked } }))} />
-          Sessions
-        </label>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={!!cfg.metrics?.revenue} onChange={(e) => setCfg(c => ({ ...c, metrics: { ...c.metrics, revenue: e.target.checked } }))} />
-          Revenue
-        </label>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={!!cfg.metrics?.cvr} onChange={(e) => setCfg(c => ({ ...c, metrics: { ...c.metrics, cvr: e.target.checked } }))} />
-          CVR
-        </label>
-
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-          <input
-            type="checkbox"
-            checked={!!cfg.includeAiSummary}
-            onChange={(e) => setCfg((c) => ({ ...c, includeAiSummary: e.target.checked }))}
-          />
-          Include AI summary
-        </label>
-
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Slack Webhook&nbsp;
-            <input
-              type="url"
-              inputMode="url"
-              placeholder="https://hooks.slack.com/services/…"
-              value={cfg.slackWebhookUrl || ""}
-              onChange={(e) => setCfg((c) => ({ ...c, slackWebhookUrl: e.target.value }))}
-              style={{ padding: 8, minWidth: 280 }}
-              disabled={!premium}
-            />
-          </label>
-          <button
-            onClick={run}
-            style={{ padding: "8px 12px", cursor: "pointer" }}
-            disabled={loading || !propertyId || !cfg.enabled}
-            title={!propertyId ? "Enter a GA4 property ID first" : ""}
-          >
-            {loading ? "Scanning…" : "Run now"}
-          </button>
-        </div>
+    <section style={{ marginTop: 16, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fbfbfb" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>Anomaly Alerts {isPremium ? "💎" : "🔒"}</h3>
+        <span style={{ color: "#666", fontSize: 13 }}>
+          Detect spikes/dips on Sessions, Revenue, and CVR. Premium enables Slack delivery.
+        </span>
       </div>
 
-      <p style={{ color: "#666", fontSize: 12, marginTop: 8 }}>
-        Sensitivity is the z-score threshold (e.g., 2 = moderate, 3 = strict). Lookback days controls the rolling window used to compute baseline mean &amp; standard deviation.
-      </p>
+      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+        <fieldset style={{ border: "1px solid #eee", borderRadius: 8, padding: 10 }}>
+          <legend style={{ padding: "0 6px" }}>Metrics</legend>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <input type="checkbox" checked={!!cfg.metrics.sessions} onChange={() => toggleMetric("sessions")} /> Sessions
+          </label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <input type="checkbox" checked={!!cfg.metrics.revenue} onChange={() => toggleMetric("revenue")} /> Revenue
+          </label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={!!cfg.metrics.cvr} onChange={() => toggleMetric("cvr")} /> CVR (%)
+          </label>
+        </fieldset>
 
-      {error && <p style={{ color: "crimson", whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+        <fieldset style={{ border: "1px solid #eee", borderRadius: 8, padding: 10 }}>
+          <legend style={{ padding: "0 6px" }}>Sensitivity</legend>
+          <label htmlFor="alert-z" style={{ display: "block", marginBottom: 6 }}>
+            Z-score threshold (lower is more sensitive)
+          </label>
+          <input
+            id="alert-z"
+            type="number"
+            min="1"
+            max="6"
+            step="0.1"
+            value={cfg.z}
+            onChange={(e) => persistCfg({ ...cfg, z: Number(e.target.value) || 2 })}
+            style={{ padding: 8, width: 120 }}
+          />
+          <div style={{ marginTop: 10 }}>
+            <label htmlFor="alert-lookback" style={{ display: "block", marginBottom: 6 }}>
+              Lookback days (window for mean/std)
+            </label>
+            <input
+              id="alert-lookback"
+              type="number"
+              min="5"
+              max="90"
+              value={cfg.lookback}
+              onChange={(e) => persistCfg({ ...cfg, lookback: Number(e.target.value) || 28 })}
+              style={{ padding: 8, width: 120 }}
+            />
+          </div>
+        </fieldset>
 
-      {lastRun && (
-        <div style={{ marginTop: 10 }}>
-          <b>Last run:</b> {new Date(lastRun.at).toLocaleString()}
-          <ul style={{ marginTop: 8 }}>
-            {lastRun.anomalies.length === 0 && <li>No anomalies for current settings.</li>}
-            {lastRun.anomalies.map((a, idx) => {
-              const sign = a.z >= 0 ? "+" : "−";
-              const zAbs = Math.abs(a.z);
-              const metricLabel = a.metric.toUpperCase();
-              const prettyDate = formatYYYYMMDD(a.period);
-              const valueFmt = a.metric === "revenue"
-                ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
-                : (a.metric === "cvr" ? `${(a.value * 100).toFixed(2)}%` : String(a.value ?? 0));
-              return (
-                <li key={`${a.metric}-${a.period}-${idx}`}>
-                  {metricLabel} {sign}{zAbs.toFixed(2)}σ on {prettyDate} — value {valueFmt}
-                </li>
-              );
-            })}
-          </ul>
-          {lastRun.aiSummary && (
-            <div
-              style={{
-                marginTop: 8,
-                background: "#fffceb",
-                border: "1px solid #f5e08f",
-                padding: 10,
-                borderRadius: 6,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              <b>AI summary:</b> {lastRun.aiSummary}
-            </div>
-          )}
-        </div>
+        <fieldset style={{ border: "1px solid #eee", borderRadius: 8, padding: 10 }}>
+          <legend style={{ padding: "0 6px" }}>Slack (Premium)</legend>
+          <label htmlFor="slack-webhook" style={{ display: "block", marginBottom: 6 }}>
+            Incoming Webhook URL
+          </label>
+          <input
+            id="slack-webhook"
+            type="url"
+            placeholder="https://hooks.slack.com/services/…"
+            value={cfg.slackWebhook}
+            onChange={(e) => setCfg((c) => ({ ...c, slackWebhook: e.target.value }))}
+            onBlur={saveWebhook}
+            style={{ padding: 8, width: "100%" }}
+            disabled={!isPremium}
+          />
+          <small style={{ color: "#666" }}>
+            Premium only. Paste a Slack incoming webhook URL. We truncate and sanitise payloads for safety.
+          </small>
+        </fieldset>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+        <button
+          onClick={() => runDetection(false)}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={state.loading || !propertyId}
+          aria-label="Run anomaly detection"
+        >
+          {state.loading ? "Detecting…" : "Run detection"}
+        </button>
+        <button
+          onClick={() => runDetection(true)}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={state.loading || !propertyId || !isPremium}
+          aria-label="Run detection and send to Slack"
+          title={!isPremium ? "Premium only" : ""}
+        >
+          {state.loading ? "Sending…" : "Run &amp; send to Slack"}
+        </button>
+        {state.slackStatus && <span style={{ color: "#137333", fontSize: 13 }}>{state.slackStatus}</span>}
+      </div>
+
+      {state.error && (
+        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>
+          Error: {state.error}
+        </p>
       )}
 
-      {!premium && (
-        <p style={{ color: "#444", fontSize: 13, marginTop: 10 }}>
-          Premium required to enable Slack delivery. For testing in development, you can run:
-          <code style={{ marginLeft: 6, background: "#f3f3f3", padding: "2px 6px", borderRadius: 4 }}>
-            localStorage.setItem("insightgpt_premium","1"); location.reload();
-          </code>
-        </p>
+      {state.msg && (
+        <details style={{ marginTop: 10 }} open>
+          <summary>Detection output</summary>
+          <pre
+            style={{
+              marginTop: 8,
+              background: "#f8f8f8",
+              padding: 12,
+              borderRadius: 6,
+              overflow: "auto",
+              maxHeight: 300,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {state.msg}
+          </pre>
+        </details>
+      )}
+
+      {state.ai && (
+        <details style={{ marginTop: 10 }} open>
+          <summary>AI Analysis</summary>
+          <div
+            style={{
+              marginTop: 8,
+              background: "#fffceb",
+              border: "1px solid #f5e08f",
+              padding: 12,
+              borderRadius: 6,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {state.ai}
+          </div>
+        </details>
       )}
     </section>
   );
 }
 
-function PremiumBadge() {
-  return (
-    <span
-      style={{
-        fontSize: 12,
-        padding: "2px 8px",
-        borderRadius: 999,
-        background: "#e6f4ea",
-        color: "#137333",
-        border: "1px solid #b7e1cd",
-        marginLeft: 6,
-      }}
-      title="Premium feature"
-    >
-      Premium
-    </span>
-  );
-}
-function ProLock() {
-  return (
-    <span
-      style={{
-        fontSize: 12,
-        padding: "2px 8px",
-        borderRadius: 999,
-        background: "#f0f4ff",
-        color: "#1a56db",
-        border: "1px solid #c7d2fe",
-        marginLeft: 6,
-      }}
-      title="Premium feature (locked)"
-    >
-      Locked
-    </span>
-  );
+/** Tiny ASCII sparkline generator (no deps) */
+function makeSparkline(vals) {
+  const v = (vals || []).filter((x) => Number.isFinite(x));
+  if (!v.length) return "—";
+  const min = Math.min(...v);
+  const max = Math.max(...v);
+  if (min === max) return "▁".repeat(Math.min(20, v.length));
+  const blocks = "▁▂▃▄▅▆▇█";
+  const map = v
+    .slice(-Math.min(30, v.length))
+    .map((x) => Math.min(blocks.length - 1, Math.max(0, Math.floor(((x - min) / (max - min)) * (blocks.length - 1)))))
+    .map((i) => blocks[i])
+    .join("");
+  return map;
 }
 
-function mean(arr) {
-  if (!arr.length) return 0;
-  const s = arr.reduce((a, b) => a + b, 0);
-  return s / arr.length;
-}
-function stdev(arr) {
-  if (arr.length < 2) return 0;
-  const m = mean(arr);
-  const v = mean(arr.map(x => (x - m) ** 2));
-  return Math.sqrt(v);
-}
-function detectAnomalies(points, opts) {
-  const lookback = Math.max(3, opts.lookback || 28);
-  const z = Math.max(0.5, opts.z || 2);
-  const use = opts.use || { sessions: true, revenue: true, cvr: true };
-  const out = [];
+/* ============================================================================
+   Source / Medium
+   ========================================================================== */
 
-  const metrics = [
-    { key: "sessions", enabled: !!use.sessions },
-    { key: "revenue", enabled: !!use.revenue },
-    { key: "cvr", enabled: !!use.cvr },
-  ];
-
-  metrics.forEach(({ key, enabled }) => {
-    if (!enabled) return;
-    for (let i = 0; i < points.length; i++) {
-      const windowStart = Math.max(0, i - lookback);
-      const windowArr = points.slice(windowStart, i).map(p => Number(p[key] || 0));
-      if (windowArr.length < Math.min(7, lookback)) continue; // need minimal history
-      const m = mean(windowArr);
-      const sd = stdev(windowArr);
-      const val = Number(points[i][key] || 0);
-      const zscore = sd > 0 ? (val - m) / sd : 0;
-      if (Math.abs(zscore) >= z) {
-        out.push({
-          metric: key,
-          period: points[i].period, // YYYYMMDD
-          value: val,
-          mean: m,
-          stdev: sd,
-          z: zscore,
-        });
-      }
-    }
-  });
-
-  // Sort by |z| desc, then by recency desc
-  out.sort((a, b) => {
-    const za = Math.abs(b.z) - Math.abs(a.z);
-    if (za !== 0) return za;
-    return String(b.period).localeCompare(String(a.period));
-    });
-  return out;
-}
-
-async function deliverSlack({ webhook, propertyId, startDate, endDate, z, lookback, anomalies, aiSummary }) {
-  const bullets = anomalies.slice(0, 20).map((a) => {
-    const sign = a.z >= 0 ? "+" : "−";
-    const zAbs = Math.abs(a.z);
-    const metric = a.metric.toUpperCase();
-    const datePretty = formatYYYYMMDD(a.period);
-    const valueFmt = a.metric === "revenue"
-      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(a.value || 0)
-      : (a.metric === "cvr" ? `${(a.value * 100).toFixed(2)}%` : String(a.value ?? 0));
-    return `• ${metric} ${sign}${zAbs.toFixed(2)}σ on ${datePretty} — value ${valueFmt}`;
-  }).join("\n");
-
-  const header = `Anomalies detected (Property ${propertyId}, ${startDate} → ${endDate})\nZ≥${z}, lookback ${lookback} days`;
-  const aiBlock = aiSummary ? `\n\n*AI summary*\n${aiSummary}` : "";
-  const text = anomalies.length ? `${header}\n${bullets}${aiBlock}` : `${header}\nNo anomalies for current settings.`;
-
-  await fetch(webhook, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
-}
-
-/* ============================== Source / Medium ============================== */
 function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  useEffect(() => { setRows([]); setError(""); }, [resetSignal]);
+  useEffect(() => {
+    setRows([]);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
       const data = await fetchJson("/api/ga4/source-medium", {
-        propertyId, startDate, endDate, filters, limit: 25,
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        limit: 25,
       });
       const parsed = (data.rows || []).map((r) => ({
         source: r.dimensionValues?.[0]?.value || "(unknown)",
@@ -1297,10 +1395,8 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
     }
   };
 
-  const totalSessions = useMemo(
-    () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
-    [rows]
-  );
+  // Totals + KPI badges
+  const totalSessions = useMemo(() => rows.reduce((sum, r) => sum + (r.sessions || 0), 0), [rows]);
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
@@ -1311,11 +1407,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
           {loading ? "Loading…" : "Load Source / Medium"}
         </button>
         {rows.length > 0 && (
-          <TargetBadge
-            label="Sessions"
-            current={totalSessions}
-            target={Number(kpiTargets?.sessionsTarget)}
-          />
+          <TargetBadge label="Sessions" current={totalSessions} target={Number(kpiTargets?.sessionsTarget)} />
         )}
         <AiBlock
           asButton
@@ -1326,16 +1418,12 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
         />
         <button
           onClick={() =>
-            downloadCsvGeneric(
-              `source_medium_${startDate}_to_${endDate}`,
-              rows,
-              [
-                { header: "Source", key: "source" },
-                { header: "Medium", key: "medium" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ]
-            )
+            downloadCsvGeneric(`source_medium_${startDate}_to_${endDate}`, rows, [
+              { header: "Source", key: "source" },
+              { header: "Medium", key: "medium" },
+              { header: "Sessions", key: "sessions" },
+              { header: "Users", key: "users" },
+            ])
           }
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!rows.length}
@@ -1362,31 +1450,44 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
                 <tr key={`${r.source}-${r.medium}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== Campaigns (overview) ============================== */
+/* ============================================================================
+   Campaigns (overview)
+   ========================================================================== */
+
 function Campaigns({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
       const data = await fetchJson("/api/ga4/campaigns", {
-        propertyId, startDate, endDate, filters, limit: 50,
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        limit: 50,
       });
       const parsed = (data.rows || []).map((r, i) => ({
         campaign: r.dimensionValues?.[0]?.value || "(not set)",
@@ -1401,10 +1502,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
     }
   };
 
-  const totalSessions = useMemo(
-    () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
-    [rows]
-  );
+  const totalSessions = useMemo(() => rows.reduce((sum, r) => sum + (r.sessions || 0), 0), [rows]);
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
@@ -1415,11 +1513,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
           {loading ? "Loading…" : "Load Campaigns"}
         </button>
         {rows.length > 0 && (
-          <TargetBadge
-            label="Sessions"
-            current={totalSessions}
-            target={Number(kpiTargets?.sessionsTarget)}
-          />
+          <TargetBadge label="Sessions" current={totalSessions} target={Number(kpiTargets?.sessionsTarget)} />
         )}
         <AiBlock
           asButton
@@ -1429,15 +1523,11 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
         />
         <button
           onClick={() =>
-            downloadCsvGeneric(
-              `campaigns_${startDate}_to_${endDate}`,
-              rows,
-              [
-                { header: "Campaign", key: "campaign" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ]
-            )
+            downloadCsvGeneric(`campaigns_${startDate}_to_${endDate}`, rows, [
+              { header: "Campaign", key: "campaign" },
+              { header: "Sessions", key: "sessions" },
+              { header: "Users", key: "users" },
+            ])
           }
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!rows.length}
@@ -1462,25 +1552,32 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
               {rows.map((r, i) => (
                 <tr key={`${r.campaign}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.campaign}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== Campaign drill-down ============================== */
+/* ============================================================================
+   Campaign drill-down
+   ========================================================================== */
+
 function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const [campaign, setCampaign] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState("");
+  const [error, setError] = useState("");
 
   const [totals, setTotals] = useState(null);
   const [srcMed, setSrcMed] = useState([]);
@@ -1488,11 +1585,20 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const [term, setTerm] = useState([]);
 
   const load = async () => {
-    setLoading(true); setError("");
-    setTotals(null); setSrcMed([]); setContent([]); setTerm([]);
+    setLoading(true);
+    setError("");
+    setTotals(null);
+    setSrcMed([]);
+    setContent([]);
+    setTerm([]);
     try {
       const data = await fetchJson("/api/ga4/campaign-detail", {
-        propertyId, startDate, endDate, filters, campaign, limit: 25,
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        campaign,
+        limit: 25,
       });
 
       const t = data?.totals?.rows?.[0]?.metricValues || [];
@@ -1504,33 +1610,38 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       };
       setTotals(totalsParsed);
 
-      const parseRows = (rows) => (rows || []).map((r, i) => ({
-        d1: r.dimensionValues?.[0]?.value || "",
-        d2: r.dimensionValues?.[1]?.value || "",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-        transactions: Number(r.metricValues?.[2]?.value || 0),
-        revenue: Number(r.metricValues?.[3]?.value || 0),
-        key: `r-${i}`,
-      }));
+      const parseRows = (rows) =>
+        (rows || []).map((r, i) => ({
+          d1: r.dimensionValues?.[0]?.value || "",
+          d2: r.dimensionValues?.[1]?.value || "",
+          sessions: Number(r.metricValues?.[0]?.value || 0),
+          users: Number(r.metricValues?.[1]?.value || 0),
+          transactions: Number(r.metricValues?.[2]?.value || 0),
+          revenue: Number(r.metricValues?.[3]?.value || 0),
+          key: `r-${i}`,
+        }));
 
       setSrcMed(parseRows(data?.sourceMedium?.rows));
-      setContent((data?.adContent?.rows || []).map((r, i) => ({
-        content: r.dimensionValues?.[0]?.value || "(not set)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-        transactions: Number(r.metricValues?.[2]?.value || 0),
-        revenue: Number(r.metricValues?.[3]?.value || 0),
-        key: `c-${i}`,
-      })));
-      setTerm((data?.term?.rows || []).map((r, i) => ({
-        term: r.dimensionValues?.[0]?.value || "(not set)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-        transactions: Number(r.metricValues?.[2]?.value || 0),
-        revenue: Number(r.metricValues?.[3]?.value || 0),
-        key: `t-${i}`,
-      })));
+      setContent(
+        (data?.adContent?.rows || []).map((r, i) => ({
+          content: r.dimensionValues?.[0]?.value || "(not set)",
+          sessions: Number(r.metricValues?.[0]?.value || 0),
+          users: Number(r.metricValues?.[1]?.value || 0),
+          transactions: Number(r.metricValues?.[2]?.value || 0),
+          revenue: Number(r.metricValues?.[3]?.value || 0),
+          key: `c-${i}`,
+        }))
+      );
+      setTerm(
+        (data?.term?.rows || []).map((r, i) => ({
+          term: r.dimensionValues?.[0]?.value || "(not set)",
+          sessions: Number(r.metricValues?.[0]?.value || 0),
+          users: Number(r.metricValues?.[1]?.value || 0),
+          transactions: Number(r.metricValues?.[2]?.value || 0),
+          revenue: Number(r.metricValues?.[3]?.value || 0),
+          key: `t-${i}`,
+        }))
+      );
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -1539,20 +1650,26 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   };
 
   const cvr = totals && totals.sessions > 0 ? (totals.transactions / totals.sessions) * 100 : 0;
-  const aov = totals && totals.transactions > 0 ? (totals.revenue / totals.transactions) : 0;
+  const aov = totals && totals.transactions > 0 ? totals.revenue / totals.transactions : 0;
 
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Campaign drill-down</h3>
 
+        <label htmlFor="campaign-input" style={{ display: "none" }}>Campaign</label>
         <input
+          id="campaign-input"
           value={campaign}
           onChange={(e) => setCampaign(e.target.value)}
           placeholder="Type exact campaign name…"
           style={{ padding: 8, minWidth: 260 }}
         />
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId || !campaign}>
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId || !campaign}
+        >
           {loading ? "Loading…" : "Load Campaign Details"}
         </button>
 
@@ -1579,11 +1696,11 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
 
       {totals && (
         <div style={{ marginTop: 12 }}>
-          <b>Totals for &ldquo;{campaign}&rdquo;:</b>{" "}
-          Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} ·
-          Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
-          {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} ·
-          CVR {(cvr || 0).toFixed(2)}% · AOV{" "}
+          <b>Totals for “{campaign}”:</b>{" "}
+          Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} · Transactions{" "}
+          {totals.transactions.toLocaleString()} · Revenue{" "}
+          {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} · CVR{" "}
+          {(cvr || 0).toFixed(2)}% · AOV{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(aov || 0)}
         </div>
       )}
@@ -1607,9 +1724,15 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d1 || "(not set)"}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d2 || "(not set)"}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
@@ -1637,9 +1760,15 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
               {content.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.content}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
@@ -1667,9 +1796,15 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
               {term.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.term}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
@@ -1681,34 +1816,43 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       )}
 
       {!error && !loading && !totals && (
-        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click &ldquo;Load Campaign Details&rdquo;.</p>
+        <p style={{ marginTop: 8, color: "#666" }}>Enter a campaign name and click “Load Campaign Details”.</p>
       )}
     </section>
   );
 }
 
-/* ============================== Campaigns Overview ============================== */
+/* ============================================================================
+   Campaigns Overview
+   ========================================================================== */
+
 function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
-  const [loading, setLoading]   = useState(false);
-  const [rows, setRows]         = useState([]);
-  const [error, setError]       = useState("");
-  const [q, setQ]               = useState("");
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState(""); // client-side search
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
       const data = await fetchJson("/api/ga4/campaigns", {
-        propertyId, startDate, endDate, filters, limit: 100,
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        limit: 100,
       });
 
       const parsed = (data.rows || []).map((r, i) => {
-        const name          = r.dimensionValues?.[0]?.value ?? "(not set)";
-        const sessions      = Number(r.metricValues?.[0]?.value || 0);
-        const users         = Number(r.metricValues?.[1]?.value || 0);
-        const transactions  = Number(r.metricValues?.[2]?.value || 0);
-        const revenue       = Number(r.metricValues?.[3]?.value || 0);
-        const cvr           = sessions > 0 ? (transactions / sessions) * 100 : 0;
-        const aov           = transactions > 0 ? revenue / transactions : 0;
+        const name = r.dimensionValues?.[0]?.value ?? "(not set)";
+        const sessions = Number(r.metricValues?.[0]?.value || 0);
+        const users = Number(r.metricValues?.[1]?.value || 0);
+        const transactions = Number(r.metricValues?.[2]?.value || 0);
+        const revenue = Number(r.metricValues?.[3]?.value || 0);
+        const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
+        const aov = transactions > 0 ? revenue / transactions : 0;
 
         return { key: `c-${i}`, name, sessions, users, transactions, revenue, cvr, aov };
       });
@@ -1722,30 +1866,31 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
     }
   };
 
-  const visible = q ? rows.filter(r => r.name.toLowerCase().includes(q.toLowerCase())) : rows;
+  const visible = q ? rows.filter((r) => r.name.toLowerCase().includes(q.toLowerCase())) : rows;
 
-  const totalSessions = useMemo(
-    () => visible.reduce((sum, r) => sum + (r.sessions || 0), 0),
-    [visible]
-  );
+  const totalSessions = useMemo(() => visible.reduce((sum, r) => sum + (r.sessions || 0), 0), [visible]);
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Campaigns (overview)</h3>
+
         <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId}>
           {loading ? "Loading…" : "Load Campaigns"}
         </button>
 
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign name…" style={{ padding: 8, minWidth: 220 }} />
+        <label htmlFor="campaigns-search" style={{ display: "none" }}>Search campaigns</label>
+        <input
+          id="campaigns-search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search campaign name…"
+          style={{ padding: 8, minWidth: 220 }}
+        />
 
         {visible.length > 0 && (
-          <TargetBadge
-            label="Sessions"
-            current={totalSessions}
-            target={Number(kpiTargets?.sessionsTarget)}
-          />
+          <TargetBadge label="Sessions" current={totalSessions} target={Number(kpiTargets?.sessionsTarget)} />
         )}
 
         <AiBlock
@@ -1759,7 +1904,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
           onClick={() =>
             downloadCsvGeneric(
               `campaigns_${startDate}_to_${endDate}`,
-              visible.map(r => ({
+              visible.map((r) => ({
                 name: r.name,
                 sessions: r.sessions,
                 users: r.users,
@@ -1793,7 +1938,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
@@ -1806,13 +1951,21 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
               {visible.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.cvr.toFixed(2)}%</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.cvr.toFixed(2)}%
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
@@ -1821,21 +1974,31 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== Top Pages ============================== */
+/* ============================================================================
+   Top Pages
+   ========================================================================== */
+
 function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  useEffect(() => { setRows([]); setError(""); }, [resetSignal]);
+  useEffect(() => {
+    setRows([]);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
       const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
       const parsed = (data.rows || []).map((r, i) => ({
@@ -1868,16 +2031,12 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
         />
         <button
           onClick={() =>
-            downloadCsvGeneric(
-              `top_pages_${startDate}_to_${endDate}`,
-              rows,
-              [
-                { header: "Title", key: "title" },
-                { header: "Path", key: "path" },
-                { header: "Views", key: "views" },
-                { header: "Users", key: "users" },
-              ]
-            )
+            downloadCsvGeneric(`top_pages_${startDate}_to_${endDate}`, rows, [
+              { header: "Title", key: "title" },
+              { header: "Path", key: "path" },
+              { header: "Views", key: "views" },
+              { header: "Users", key: "users" },
+            ])
           }
           style={{ padding: "8px 12px", cursor: "pointer" }}
           disabled={!rows.length}
@@ -1904,19 +2063,28 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
                 <tr key={`${r.path}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.views.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== Landing Pages × Attribution ============================== */
+/* ============================================================================
+   Landing Pages × Attribution
+   ========================================================================== */
+
 function LandingPages({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1925,20 +2093,26 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
   const [minSessions, setMinSessions] = useState(0);
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
       const data = await fetchJson("/api/ga4/landing-pages", {
-        propertyId, startDate, endDate, filters, limit: 500,
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        limit: 500,
       });
 
       const parsed = (data?.rows || []).map((r, i) => ({
         landing: r.dimensionValues?.[0]?.value || "(unknown)",
-        source:  r.dimensionValues?.[1]?.value || "(unknown)",
-        medium:  r.dimensionValues?.[2]?.value || "(unknown)",
-        sessions:     Number(r.metricValues?.[0]?.value || 0),
-        users:        Number(r.metricValues?.[1]?.value || 0),
+        source: r.dimensionValues?.[1]?.value || "(unknown)",
+        medium: r.dimensionValues?.[2]?.value || "(unknown)",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        users: Number(r.metricValues?.[1]?.value || 0),
         transactions: Number(r.metricValues?.[2]?.value || 0),
-        revenue:      Number(r.metricValues?.[3]?.value || 0),
+        revenue: Number(r.metricValues?.[3]?.value || 0),
         _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
       }));
 
@@ -1956,7 +2130,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
 
   const filtered = useMemo(() => {
     let out = rows;
-    if (minSessions > 0) out = out.filter(r => (r.sessions || 0) >= minSessions);
+    if (minSessions > 0) out = out.filter((r) => (r.sessions || 0) >= minSessions);
     out = [...out].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
     if (topOnly) out = out.slice(0, 25);
     return out;
@@ -1971,12 +2145,12 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
       filtered,
       [
         { header: "Landing Page", key: "landing" },
-        { header: "Source",       key: "source" },
-        { header: "Medium",       key: "medium" },
-        { header: "Sessions",     key: "sessions" },
-        { header: "Users",        key: "users" },
+        { header: "Source", key: "source" },
+        { header: "Medium", key: "medium" },
+        { header: "Sessions", key: "sessions" },
+        { header: "Users", key: "users" },
         { header: "Transactions", key: "transactions" },
-        { header: "Revenue",      key: "revenue" },
+        { header: "Revenue", key: "revenue" },
       ]
     );
   };
@@ -1998,9 +2172,14 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             topic: "landing-pages",
             dateRange: { start: startDate, end: endDate },
             filters,
-            rows: filtered.slice(0, 50).map(r => ({
-              landing: r.landing, source: r.source, medium: r.medium,
-              sessions: r.sessions, users: r.users, transactions: r.transactions, revenue: r.revenue,
+            rows: filtered.slice(0, 50).map((r) => ({
+              landing: r.landing,
+              source: r.source,
+              medium: r.medium,
+              sessions: r.sessions,
+              users: r.users,
+              transactions: r.transactions,
+              revenue: r.revenue,
             })),
             instructions:
               "Focus on landing pages with high sessions but low transactions/revenue. Identify source/medium mixes that underperform. Provide at least 2 clear hypotheses + tests to improve CR and AOV.",
@@ -2030,9 +2209,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             style={{ width: 160 }}
             disabled={!rows.length}
           />
-          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
-            {minSessions}
-          </span>
+          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>{minSessions}</span>
         </div>
 
         {rows.length > 0 && (
@@ -2049,9 +2226,9 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Landing Page</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Landing Page</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
@@ -2064,9 +2241,15 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
                   <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.landing}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
@@ -2075,24 +2258,39 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>)}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>
+          {rows.length ? "No rows match your view filters." : "No rows loaded yet."}
+        </p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== E-commerce KPIs ============================== */
+/* ============================================================================
+   E-commerce KPIs
+   ========================================================================== */
+
 function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
 
-  useEffect(() => { setTotals(null); setError(""); }, [resetSignal]);
+  useEffect(() => {
+    setTotals(null);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
-    setLoading(true); setError(""); setTotals(null);
+    setLoading(true);
+    setError("");
+    setTotals(null);
     try {
       const data = await fetchJson("/api/ga4/ecommerce-summary", {
-        propertyId, startDate, endDate, filters,
+        propertyId,
+        startDate,
+        endDate,
+        filters,
       });
       setTotals(data?.totals || null);
     } catch (e) {
@@ -2114,22 +2312,14 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
         {/* KPI badges shown when totals loaded */}
         {totals && (
           <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <TargetBadge
-              label="Sessions"
-              current={Number(totals?.sessions || 0)}
-              target={Number(kpiTargets?.sessionsTarget)}
-            />
+            <TargetBadge label="Sessions" current={Number(totals?.sessions || 0)} target={Number(kpiTargets?.sessionsTarget)} />
             <TargetBadge
               label="Revenue"
               current={Number(totals?.revenue || 0)}
               target={Number(kpiTargets?.revenueTarget)}
               currency
             />
-            <TargetBadge
-              label="CVR"
-              current={Number(totals?.cvr || 0)}
-              target={Number(kpiTargets?.cvrTarget)}
-            />
+            <TargetBadge label="CVR" current={Number(totals?.cvr || 0)} target={Number(kpiTargets?.cvrTarget)} />
           </div>
         )}
         <AiBlock
@@ -2161,10 +2351,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
                 label="Revenue"
                 value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)}
               />
-              <Tr
-                label="Conversion Rate (purchase / session)"
-                value={`${(totals.cvr || 0).toFixed(2)}%`}
-              />
+              <Tr label="Conversion Rate (purchase / session)" value={`${(totals.cvr || 0).toFixed(2)}%`} />
               <Tr
                 label="AOV (Revenue / Transactions)"
                 value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)}
@@ -2188,16 +2375,24 @@ function Tr({ label, value }) {
   );
 }
 
-/* ============================== Checkout Funnel ============================== */
+/* ============================================================================
+   Checkout Funnel
+   ========================================================================== */
+
 function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
   const [error, setError] = useState("");
 
-  useEffect(() => { setSteps(null); setError(""); }, [resetSignal]);
+  useEffect(() => {
+    setSteps(null);
+    setError("");
+  }, [resetSignal]);
 
   const load = async () => {
-    setLoading(true); setError(""); setSteps(null);
+    setLoading(true);
+    setError("");
+    setSteps(null);
     try {
       const data = await fetchJson("/api/ga4/checkout-funnel", { propertyId, startDate, endDate, filters });
       setSteps(data?.steps || null);
@@ -2245,25 +2440,35 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
               ].map(([label, val]) => (
                 <tr key={label}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{(val || 0).toLocaleString()}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {(val || 0).toLocaleString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== Trends Over Time ============================== */
+/* ============================================================================
+   Trends Over Time
+   ========================================================================== */
+
 function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState("daily");
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  function pad2(n) { return String(n).padStart(2, "0"); }
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
   function isoWeekStartUTC(year, week) {
     const jan4 = new Date(Date.UTC(year, 0, 4));
     const jan4Day = jan4.getUTCDay() || 7;
@@ -2276,36 +2481,31 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   function formatYearWeekRange(s) {
     const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
-    const year = Number(m[1]); const week = Number(m[2]);
+    const year = Number(m[1]);
+    const week = Number(m[2]);
     const start = isoWeekStartUTC(year, week);
-    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
+    const end = new Date(start);
+    end.setUTCDate(start.getUTCDate() + 6);
     const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
     const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
     return `${startStr}–${endStr}`;
   }
-  function formatYYYYMMDDdisplay(s) {
+  function formatYYYYMMDD(s) {
     const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
-    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    const y = Number(m[1]),
+      mo = Number(m[2]),
+      d = Number(m[3]);
     return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
   }
   function displayPeriodLabel(raw, gran) {
-    return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDDdisplay(raw);
-  }
-
-  function buildLineChart(series) {
-    if (!series?.length) return null;
-    const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
-    const sessions = series.map((d) => d.sessions);
-    const users = series.map((d) => d.users);
-    return buildLineChartConfig(labels, [
-      { label: "Sessions", data: sessions },
-      { label: "Users", data: users },
-    ]);
+    return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
   }
 
   const load = async () => {
-    setLoading(true); setError(""); setRows([]);
+    setLoading(true);
+    setError("");
+    setRows([]);
     try {
       const data = await fetchJson("/api/ga4/timeseries", { propertyId, startDate, endDate, filters, granularity });
       setRows(data?.series || []);
@@ -2318,20 +2518,40 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 
   const hasRows = rows.length > 0;
 
+  const quickChartUrl = useMemo(() => {
+    if (!hasRows) return "";
+    const labels = rows.map((d) => displayPeriodLabel(d.period, granularity));
+    const sessions = rows.map((d) => d.sessions);
+    const users = rows.map((d) => d.users);
+    return buildLineChartUrl({
+      labels,
+      datasets: [
+        { label: "Sessions", data: sessions },
+        { label: "Users", data: users },
+      ],
+      title: "",
+    });
+  }, [rows, granularity]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <section style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>Trends over time</h3>
 
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <label htmlFor="granularity" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Granularity
-          <select value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
+          <select id="granularity" value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
           </select>
         </label>
 
-        <button onClick={load} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
+        <button
+          onClick={load}
+          style={{ padding: "8px 12px", cursor: "pointer" }}
+          disabled={loading || !propertyId}
+          title={!propertyId ? "Enter a GA4 property ID first" : ""}
+        >
           {loading ? "Loading…" : "Load Trends"}
         </button>
 
@@ -2345,11 +2565,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             series: rows,
             dateRange: { start: startDate, end: endDate },
             filters,
-            goals: [
-              "Call out surges/drops and likely drivers",
-              "Flag seasonality or anomalies",
-              "Recommend 2–3 next actions or tests",
-            ],
+            goals: ["Call out surges/drops and likely drivers", "Flag seasonality or anomalies", "Recommend 2–3 actions"],
           }}
         />
 
@@ -2379,11 +2595,11 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
       {hasRows ? (
         <>
           <div style={{ marginTop: 12 }}>
-            <ChartImage
-              width={800}
-              height={360}
+            {/* QuickChart image; eslint rule disabled at top */}
+            <img
+              src={quickChartUrl}
               alt="Sessions & Users trend"
-              config={buildLineChart(rows)}
+              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
             />
           </div>
 
@@ -2404,9 +2620,15 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
                   return (
                     <tr key={r.period} title={r.period}>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.sessions.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.users.toLocaleString()}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.transactions.toLocaleString()}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.sessions.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.users.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.transactions.toLocaleString()}
+                      </td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                         {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                       </td>
@@ -2417,17 +2639,22 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             </table>
           </div>
         </>
-      ) : (!error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>)}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
     </section>
   );
 }
 
-/* ============================== Product Performance ============================== */
+/* ============================================================================
+   Product Performance (feature-flagged)
+   ========================================================================== */
+
 function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);            // [{ name, id, views, carts, purchases, revenue }]
+  const [rows, setRows] = useState([]); // [{ name, id, views, carts, purchases, revenue }]
   const [error, setError] = useState("");
-  const [debug, setDebug] = useState(null);        // raw GA4 response
+  const [debug, setDebug] = useState(null); // raw GA4 response
 
   useEffect(() => {
     setRows([]);
@@ -2438,34 +2665,40 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   function parseProductsResponse(data) {
     if (!data || !Array.isArray(data.rows)) return [];
 
-    const dimNames = (data.dimensionHeaders || []).map(h => h.name);
-    const metNames = (data.metricHeaders || []).map(h => h.name);
+    const dimNames = (data.dimensionHeaders || []).map((h) => h.name);
+    const metNames = (data.metricHeaders || []).map((h) => h.name);
 
-    const iItemName = dimNames.findIndex(n => n === "itemName");
-    const iItemId   = dimNames.findIndex(n => n === "itemId");
+    const iItemName = dimNames.findIndex((n) => n === "itemName");
+    const iItemId = dimNames.findIndex((n) => n === "itemId");
 
-    const iViews     = metNames.findIndex(n => n === "itemViews");
-    const iCarts     = metNames.findIndex(n => n === "addToCarts");
-    const iPurchQty  = metNames.findIndex(n => n === "itemPurchaseQuantity");
-    const iPurchAlt1 = metNames.findIndex(n => n === "itemsPurchased");
-    const iRevenue   = metNames.findIndex(n => n === "itemRevenue");
+    const iViews = metNames.findIndex((n) => n === "itemViews");
+    const iCarts = metNames.findIndex((n) => n === "addToCarts");
+    const iPurchQty = metNames.findIndex((n) => n === "itemPurchaseQuantity");
+    const iPurchAlt1 = metNames.findIndex((n) => n === "itemsPurchased");
+    const iRevenue = metNames.findIndex((n) => n === "itemRevenue");
 
     return data.rows.map((r, idx) => {
-      const name = iItemName >= 0
-        ? (r.dimensionValues?.[iItemName]?.value || "(unknown)")
-        : (iItemId >= 0 ? (r.dimensionValues?.[iItemId]?.value || "(unknown)") : `(row ${idx+1})`);
+      const name =
+        iItemName >= 0
+          ? r.dimensionValues?.[iItemName]?.value || "(unknown)"
+          : iItemId >= 0
+          ? r.dimensionValues?.[iItemId]?.value || "(unknown)"
+          : `(row ${idx + 1})`;
 
-      const views     = iViews     >= 0 ? Number(r.metricValues?.[iViews]?.value || 0) : 0;
-      const carts     = iCarts     >= 0 ? Number(r.metricValues?.[iCarts]?.value || 0) : 0;
-      const purchases = iPurchQty  >= 0 ? Number(r.metricValues?.[iPurchQty]?.value || 0)
-                        : iPurchAlt1 >= 0 ? Number(r.metricValues?.[iPurchAlt1]?.value || 0)
-                        : 0;
-      const revenue   = iRevenue   >= 0 ? Number(r.metricValues?.[iRevenue]?.value || 0) : 0;
+      const views = iViews >= 0 ? Number(r.metricValues?.[iViews]?.value || 0) : 0;
+      const carts = iCarts >= 0 ? Number(r.metricValues?.[iCarts]?.value || 0) : 0;
+      const purchases =
+        iPurchQty >= 0
+          ? Number(r.metricValues?.[iPurchQty]?.value || 0)
+          : iPurchAlt1 >= 0
+          ? Number(r.metricValues?.[iPurchAlt1]?.value || 0)
+          : 0;
+      const revenue = iRevenue >= 0 ? Number(r.metricValues?.[iRevenue]?.value || 0) : 0;
 
       return {
         key: `p-${idx}`,
         name,
-        id: iItemId >= 0 ? (r.dimensionValues?.[iItemId]?.value || "") : "",
+        id: iItemId >= 0 ? r.dimensionValues?.[iItemId]?.value || "" : "",
         views,
         carts,
         purchases,
@@ -2475,7 +2708,10 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   }
 
   async function load() {
-    setLoading(true); setError(""); setRows([]); setDebug(null);
+    setLoading(true);
+    setError("");
+    setRows([]);
+    setDebug(null);
     const payload = { propertyId, startDate, endDate, filters, limit: 100 };
 
     const tryEndpoints = async () => {
@@ -2490,10 +2726,13 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
 
     try {
       const { data, which } = await tryEndpoints();
-      setDebug({ which, headers: {
-        dimensions: (data?.dimensionHeaders || []).map(h => h.name),
-        metrics:    (data?.metricHeaders || []).map(h => h.name),
-      }});
+      setDebug({
+        which,
+        headers: {
+          dimensions: (data?.dimensionHeaders || []).map((h) => h.name),
+          metrics: (data?.metricHeaders || []).map((h) => h.name),
+        },
+      });
 
       const parsed = parseProductsResponse(data);
       if (!parsed.length) {
@@ -2513,7 +2752,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
     if (!rows.length) return;
     downloadCsvGeneric(
       `product_performance_${startDate}_to_${endDate}`,
-      rows.map(r => ({
+      rows.map((r) => ({
         name: r.name,
         id: r.id,
         views: r.views,
@@ -2523,7 +2762,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
       })),
       [
         { header: "Item name/ID", key: "name" },
-        { header: "Item ID",      key: "id" },
+        { header: "Item ID", key: "id" },
         { header: "Items viewed", key: "views" },
         { header: "Items added to cart", key: "carts" },
         { header: "Items purchased", key: "purchases" },
@@ -2553,7 +2792,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
             topic: "products",
             dateRange: { start: startDate, end: endDate },
             filters,
-            rows: rows.slice(0, 50).map(r => ({
+            rows: rows.slice(0, 50).map((r) => ({
               name: r.name,
               id: r.id,
               views: r.views,
@@ -2567,17 +2806,11 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
           resetSignal={resetSignal}
         />
 
-        <button
-          onClick={exportCsv}
-          style={{ padding: "8px 12px", cursor: "pointer" }}
-          disabled={!rows.length}
-        >
+        <button onClick={exportCsv} style={{ padding: "8px 12px", cursor: "pointer" }} disabled={!rows.length}>
           Download CSV
         </button>
 
-        <span style={{ color: "#666", fontSize: 12 }}>
-          Respects global filters (Country / Channel Group).
-        </span>
+        <span style={{ color: "#666", fontSize: 12 }}>Respects global filters (Country / Channel Group).</span>
       </div>
 
       {error && (
@@ -2591,8 +2824,8 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
-                <th style={{ textAlign: "left",  borderBottom: "1px solid #ddd", padding: 8 }}>Item ID</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item ID</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items viewed</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items added to cart</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items purchased</th>
@@ -2600,13 +2833,21 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              {rows.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.id || "—"}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.carts.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{r.purchases.toLocaleString()}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>
+                    {r.id || "—"}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.views.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.carts.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.purchases.toLocaleString()}
+                  </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
@@ -2615,15 +2856,15 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
-      )}
+      ) : !error ? (
+        <p style={{ marginTop: 8, color: "#666" }}>No rows loaded yet.</p>
+      ) : null}
 
       {debug && (
         <details style={{ marginTop: 10 }}>
           <summary>Raw products response (debug)</summary>
           <pre style={{ marginTop: 8, background: "#f8f8f8", padding: 12, borderRadius: 6, overflow: "auto" }}>
-{JSON.stringify(debug, null, 2)}
+            {JSON.stringify(debug, null, 2)}
           </pre>
         </details>
       )}
@@ -2631,12 +2872,11 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ============================== Saved Views ============================== */
-function SavedViews({
-  startDate, endDate, countrySel, channelSel, comparePrev,
-  onApply,
-  onRunReport,
-}) {
+/* ============================================================================
+   Saved Views
+   ========================================================================== */
+
+function SavedViews({ startDate, endDate, countrySel, channelSel, comparePrev, onApply, onRunReport }) {
   const [presets, setPresets] = useState([]);
   const [name, setName] = useState("");
   const [notice, setNotice] = useState("");
@@ -2653,23 +2893,33 @@ function SavedViews({
 
   const persist = (arr) => {
     setPresets(arr);
-    try { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr)); } catch {}
+    try {
+      localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr));
+    } catch {
+      // ignore
+    }
   };
 
   const saveCurrent = () => {
     const trimmed = (name || "").trim();
-    if (!trimmed) { setNotice("Give your view a name."); return; }
+    if (!trimmed) {
+      setNotice("Give your view a name.");
+      return;
+    }
 
-    const next = [...presets.filter(p => p.name !== trimmed), {
-      id: crypto?.randomUUID?.() || String(Date.now()),
-      name: trimmed,
-      startDate,
-      endDate,
-      country: countrySel,
-      channelGroup: channelSel,
-      comparePrev: !!comparePrev,
-      savedAt: new Date().toISOString(),
-    }].sort((a, b) => a.name.localeCompare(b.name));
+    const next = [
+      ...presets.filter((p) => p.name !== trimmed),
+      {
+        id: crypto?.randomUUID?.() || String(Date.now()),
+        name: trimmed,
+        startDate,
+        endDate,
+        country: countrySel,
+        channelGroup: channelSel,
+        comparePrev: !!comparePrev,
+        savedAt: new Date().toISOString(),
+      },
+    ].sort((a, b) => a.name.localeCompare(b.name));
 
     persist(next);
     setNotice("Saved!");
@@ -2688,7 +2938,7 @@ function SavedViews({
   };
 
   const remove = (p) => {
-    const next = presets.filter(x => x.name !== p.name);
+    const next = presets.filter((x) => x.name !== p.name);
     persist(next);
   };
 
@@ -2697,7 +2947,9 @@ function SavedViews({
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0, fontSize: 16 }}>Saved Views</h3>
 
+        <label htmlFor="saved-name" style={{ display: "none" }}>Saved view name</label>
         <input
+          id="saved-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Name this view (e.g. UK · Organic · Sep)"
@@ -2740,4 +2992,6 @@ function SavedViews({
   );
 }
 
-/* ============================== END FILE ============================== */
+/* ============================================================================
+   END FILE
+   ========================================================================== */
