@@ -40,3 +40,141 @@ a {
     color-scheme: dark;
   }
 }
+
+:root{
+  /* Brand */
+  --brand: #4285F4;
+  --brand-600: #2b74f3;
+  --brand-700: #1e64e8;
+
+  /* Status */
+  --ok: #34A853;
+  --warn: #FBBC05;
+  --danger: #EA4335;
+
+  /* Surface */
+  --bg: #f7f9fc;
+  --panel: rgba(255,255,255,0.72);
+  --panel-strong: rgba(255,255,255,0.9);
+  --border: rgba(17, 24, 39, 0.08);
+  --shadow: 0 10px 30px rgba(0,0,0,0.06);
+
+  /* Text */
+  --ink: #0f172a;
+  --muted: #475569;
+
+  /* Radius & spacing */
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-2xl: 24px;
+  --space: 12px;
+
+  /* Frosted backdrop */
+  --blur: saturate(180%) blur(12px);
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* Glass card */
+.card {
+  background: var(--panel);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
+}
+
+/* Sticky toolbar (top control bar / filters) */
+.sticky-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--panel-strong);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  transition: transform .04s ease, box-shadow .2s ease, background .2s ease;
+}
+.btn:active { transform: translateY(1px); }
+.btn[disabled] { opacity: .55; cursor: not-allowed; }
+
+.btn-primary {
+  color: #fff;
+  background: var(--brand);
+  border-color: transparent;
+}
+.btn-primary:hover { background: var(--brand-600); }
+.btn-primary:active { background: var(--brand-700); }
+
+.btn-ghost {
+  background: transparent;
+}
+.btn-danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: transparent;
+}
+
+/* Section header row */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 4px;
+}
+
+/* Progress / badges */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 12px;
+}
+
+/* Tables */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table thead th {
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  padding: 10px;
+  position: sticky;
+  top: 0;
+  background: var(--panel-strong);
+}
+.table tbody td {
+  border-bottom: 1px solid var(--border);
+  padding: 10px;
+}
+.table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Small helper spacing */
+.stack-12 > * + * { margin-top: 12px; }
+.stack-16 > * + * { margin-top: 16px; }
+.row-8 > * + * { margin-left: 8px; }
+.row-12 > * + * { margin-left: 12px; }
