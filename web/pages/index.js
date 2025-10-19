@@ -1,165 +1,141 @@
-/* eslint-disable @next/next/no-img-element */
-// pages/index.js
-import { useEffect, useMemo, useState } from "react";
+/* eslint-disable react/no-unescaped-entities */
 
-/* ========================================================================== */
-/* Design tokens (aligned to ORB AI vibe + Google colors)                     */
-/* ========================================================================== */
+// /pages/index.js
+import { useEffect, useMemo, useState, useCallback } from "react";
+import Image from "next/image";
+
+/* =============================================================================
+   BRAND / THEME
+   ============================================================================= */
 const COLORS = {
-  bg: "#ffffff",
-  card: "rgba(248, 250, 252, 0.75)",
-  border: "rgba(2, 6, 23, 0.08)",
-  text: "#0b1220",
-  subtext: "#4b5563",
-  frosted: "rgba(255, 255, 255, 0.6)",
-  shadow: "0 8px 28px rgba(2, 6, 23, 0.08)",
-  blue: "#4285F4", // Google Blue (primary / CTAs)
-  green: "#34A853", // Up-trend
-  red: "#EA4335", // Down-trend / errors
-  amber: "#FABB05",
+  brand: "#4285F4",      // Google Blue (primary CTAs)
+  success: "#34A853",    // up trends
+  danger: "#EA4335",     // errors / down trends
+  warning: "#FBBC05",    // warning accent
+  text: "#0B0F17",
+  subtext: "#5B6472",
+  surface: "#FFFFFF",
+  frosted: "rgba(255,255,255,0.7)",
+  border: "#E8ECF1",
+  chip: "#EEF3FF",
 };
 
 const styles = {
   page: {
-    background: COLORS.bg,
+    padding: 16,
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     color: COLORS.text,
-    fontFamily:
-      "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji",
-    minHeight: "100vh",
+    background:
+      "radial-gradient(1200px 800px at 90% -20%, rgba(66,133,244,.08), transparent 65%), radial-gradient(1000px 600px at -10% 10%, rgba(66,133,244,.06), transparent 55%)",
   },
-  wrap: {
-    width: "100%",
-    maxWidth: 1100,
-    margin: "0 auto",
-    padding: "96px 20px 40px",
-  },
-  stickyHeader: {
+  wrap: { maxWidth: 1180, margin: "0 auto" },
+  h1: { margin: "8px 0 0", fontSize: 24, lineHeight: 1.2 },
+  sub: { margin: "4px 0 0", color: COLORS.subtext, fontSize: 14 },
+
+  // Sticky nav
+  sticky: {
     position: "sticky",
     top: 0,
-    zIndex: 30,
-    backdropFilter: "saturate(180%) blur(10px)",
-    WebkitBackdropFilter: "saturate(180%) blur(10px)",
+    zIndex: 50,
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
     background: COLORS.frosted,
     borderBottom: `1px solid ${COLORS.border}`,
-    boxShadow: COLORS.shadow,
   },
   stickyInner: {
-    width: "100%",
-    maxWidth: 1100,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "10px 12px",
+    maxWidth: 1180,
     margin: "0 auto",
-    padding: "14px 20px",
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
   },
-  h1: { fontSize: 20, fontWeight: 700, margin: 0, letterSpacing: 0.2 },
-  headerBadge: {
-    marginLeft: "auto",
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "#eef2ff",
-    color: "#3730a3",
-    border: "1px solid #e0e7ff",
-    fontSize: 12,
-    fontWeight: 600,
-  },
-  controlsRow: {
-    display: "flex",
-    gap: 12,
-    flexWrap: "wrap",
-    alignItems: "center",
-    marginTop: 12,
-  },
-  btn: {
-    padding: "10px 14px",
-    cursor: "pointer",
-    border: "1px solid rgba(0,0,0,0.08)",
-    borderRadius: 10,
-    background: COLORS.blue,
-    color: "white",
-    fontWeight: 600,
-  },
-  btnSecondary: {
-    padding: "8px 12px",
-    cursor: "pointer",
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 10,
-    background: COLORS.card,
-    color: COLORS.text,
-    fontWeight: 600,
-  },
-  input: {
-    padding: 10,
-    borderRadius: 10,
-    border: `1px solid ${COLORS.border}`,
-    background: "white",
-  },
-  select: {
-    padding: 10,
-    borderRadius: 10,
-    border: `1px solid ${COLORS.border}`,
-    background: "white",
-  },
+
   card: {
-    marginTop: 20,
-    padding: 16,
+    marginTop: 14,
+    padding: 14,
     borderRadius: 14,
-    background: COLORS.card,
+    background: COLORS.surface,
     border: `1px solid ${COLORS.border}`,
-    boxShadow: COLORS.shadow,
+    boxShadow:
+      "0 0.6px 1.5px rgba(0,0,0,0.03), 0 2.2px 5.2px rgba(0,0,0,0.03), 0 10px 24px rgba(0,0,0,0.04)",
   },
   sectionTitleRow: {
     display: "flex",
     alignItems: "center",
     gap: 12,
     flexWrap: "wrap",
-    marginBottom: 6,
   },
-  h2: { margin: 0, fontSize: 18, fontWeight: 700 },
-  h3: { margin: 0, fontSize: 16, fontWeight: 700 },
-  muted: { color: COLORS.subtext },
+  btn: {
+    padding: "8px 12px",
+    cursor: "pointer",
+    background: COLORS.brand,
+    color: "white",
+    border: 0,
+    borderRadius: 10,
+  },
+  ghost: {
+    padding: "8px 12px",
+    cursor: "pointer",
+    background: "transparent",
+    border: `1px solid ${COLORS.border}`,
+    color: COLORS.text,
+    borderRadius: 10,
+  },
+  linkBtn: {
+    padding: 0,
+    background: "transparent",
+    color: COLORS.brand,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  badgeOk: {
+    background: "#E6F4EA",
+    color: "#137333",
+    border: "1px solid #B7E1CD",
+    borderRadius: 999,
+    padding: "2px 8px",
+    fontSize: 12,
+  },
+  badgeWarn: {
+    background: "#FDECEA",
+    color: "#B00020",
+    border: "1px solid #F4C7C3",
+    borderRadius: 999,
+    padding: "2px 8px",
+    fontSize: 12,
+  },
+  premiumBadge: {
+    display: "inline-block",
+    background: COLORS.chip,
+    color: COLORS.brand,
+    padding: "4px 10px",
+    borderRadius: 999,
+    border: `1px solid ${COLORS.border}`,
+    fontSize: 12,
+    fontWeight: 700,
+  },
   pill: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    padding: "4px 10px",
+    background: COLORS.chip,
+    color: COLORS.brand,
+    border: `1px solid ${COLORS.border}`,
     borderRadius: 999,
+    padding: "4px 10px",
     fontSize: 12,
     fontWeight: 600,
-    border: `1px solid ${COLORS.border}`,
-    background: "white",
   },
-  premiumBadge: {
-    padding: "4px 10px",
-    borderRadius: 999,
-    background: "#eef2ff",
-    color: "#3730a3",
-    border: "1px solid #e0e7ff",
-    fontSize: 12,
-    fontWeight: 700,
-  },
-  linkish: {
-    textDecoration: "underline",
-    cursor: "pointer",
-  },
+  label: { fontSize: 12, color: COLORS.subtext },
 };
 
-// Mobile tune for sticky header height (smaller)
-const mobileCss = `
-@media (max-width: 640px) {
-  .sticky-inner {
-    padding: 10px 14px !important;
-  }
-  .sticky-inner h1 {
-    font-size: 16px !important;
-  }
-  .ctrl-row label { font-size: 12px; }
-}
-`;
+/* =============================================================================
+   HELPERS (Stable)
+   ============================================================================= */
 
-/* ========================================================================== */
-/* Helpers                                                                    */
-/* ========================================================================== */
+/** -------- Saved Views (URL helpers) -------- */
 function encodeQuery(state) {
   const p = new URLSearchParams();
   if (state.startDate) p.set("start", state.startDate);
@@ -173,6 +149,7 @@ function encodeQuery(state) {
   if (state.comparePrev) p.set("compare", "1");
   return p.toString();
 }
+
 function decodeQuery() {
   if (typeof window === "undefined") return null;
   const p = new URLSearchParams(window.location.search);
@@ -189,17 +166,7 @@ function decodeQuery() {
 const STORAGE_KEY = "insightgpt_preset_v2";
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
 
-function isPremium() {
-  if (typeof window === "undefined") return false;
-  // Any non-empty truthy flag enables premium in the browser (for testing).
-  return Boolean(
-    localStorage.getItem("insightgpt_premium") ||
-      window.__INSIGHT_PREMIUM ||
-      process.env.NEXT_PUBLIC_PREMIUM
-  );
-}
-
-/** KPI target helpers (kept exact keys) */
+/** -------- KPI Targets helpers & badge -------- */
 function loadKpiTargets() {
   const keys = ["insightgpt_kpi_targets_v1", "kpi_targets_v1"];
   for (const k of keys) {
@@ -225,12 +192,7 @@ function TargetBadge({ label, current, target, currency = false }) {
   return (
     <span
       title={`${label} target: ${val} \u2022 Progress: ${pct}%`}
-      style={{
-        ...styles.pill,
-        background: ok ? "#e6f4ea" : "#fdecea",
-        color: ok ? COLORS.green : COLORS.red,
-        borderColor: ok ? "#b7e1cd" : "#f4c7c3",
-      }}
+      style={ok ? styles.badgeOk : styles.badgeWarn}
     >
       {`${pct}% to ${label} target`}
     </span>
@@ -282,18 +244,21 @@ function parseGa4Channels(response) {
   rows.sort((a, b) => b.sessions - a.sessions);
   return { rows, totals };
 }
+
 function formatPctDelta(curr, prev) {
   if (prev === 0 && curr === 0) return "0%";
   if (prev === 0) return "+100%";
   const pct = Math.round(((curr - prev) / prev) * 100);
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
+
 function ymd(d) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
+
 function computePreviousRange(startStr, endStr) {
   const start = new Date(startStr);
   const end = new Date(endStr);
@@ -312,6 +277,7 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   const csv = [header, ...lines]
     .map((cols) => cols.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n");
+
   const filename = `${filenamePrefix}.csv`;
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -325,7 +291,7 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   URL.revokeObjectURL(url);
 }
 
-/** QuickChart URL builders (kept) */
+/** QuickChart pie chart URL */
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
   const labels = rows.map((r) => r.channel);
@@ -339,7 +305,7 @@ function buildChannelPieUrl(rows) {
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
 
-/** Fetch helper */
+/** Unified fetch helper */
 async function fetchJson(url, payload) {
   const res = await fetch(url, {
     method: "POST",
@@ -362,6 +328,8 @@ async function fetchJson(url, payload) {
   }
   return data || {};
 }
+
+/** Safe stringify for debug block */
 function safeStringify(value) {
   try {
     return JSON.stringify(value, null, 2);
@@ -382,55 +350,116 @@ function safeStringify(value) {
   }
 }
 
-/* ========================================================================== */
-/* Page                                                                        */
-/* ========================================================================== */
+/** Premium detection (server-controlled or env); no localStorage bypass */
+function isPremium() {
+  if (typeof window === "undefined") return false;
+  return Boolean(
+    // server may inject this for paid users
+    window.__INSIGHT_PREMIUM ||
+      // or set NEXT_PUBLIC_PREMIUM="true" for dev/staging only
+      process.env.NEXT_PUBLIC_PREMIUM === "true"
+  );
+}
+
+/** Premium gate wrapper (non-destructive) */
+function PremiumGate({ enabled, label, children }) {
+  if (enabled) return <>{children}</>;
+  const allowAlpha = process.env.NEXT_PUBLIC_ALLOW_ALPHA === "true";
+  return (
+    <section style={{ ...styles.card, position: "relative" }}>
+      <div style={{ filter: "grayscale(0.1)", opacity: 0.55, pointerEvents: "none" }}>{children}</div>
+      <div
+        aria-label={`${label} premium gating`}
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "grid",
+          placeItems: "center",
+          background: "linear-gradient(180deg, rgba(255,255,255,0.88), rgba(255,255,255,0.94))",
+          borderRadius: 14,
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div style={styles.premiumBadge}>Premium required</div>
+          <div style={{ marginTop: 6, color: COLORS.subtext }}>
+            Unlock <b>{label}</b> to boost your workflow.
+          </div>
+          {allowAlpha ? (
+            <div style={{ marginTop: 10 }}>
+              <span
+                style={{ ...styles.btn, padding: "8px 14px", background: COLORS.warning, color: "#1d1d1f" }}
+                onClick={() => {
+                  // NOTE: This does not unlock premium (no localStorage bypass).
+                  alert("Alpha preview is disabled for production. Ask an admin to enable Premium on your account.");
+                }}
+              >
+                Try (alpha)
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =============================================================================
+   PAGE
+   ============================================================================= */
 export default function Home() {
+  const premium = isPremium();
+
   // Base controls
   const [propertyId, setPropertyId] = useState("");
   const [startDate, setStartDate] = useState("2024-09-01");
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
 
-  // Global refresh for AI + sections
+  // Fires whenever the user runs a fresh report (to reset AI & section data)
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  // Filters
+  // Filter controls (current selectors)
   const [countrySel, setCountrySel] = useState("All");
   const [channelSel, setChannelSel] = useState("All");
-  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
 
-  // Re-mount key for some sections
+  // Filters actually applied to queries
+  const [appliedFilters, setAppliedFilters] = useState({
+    country: "All",
+    channelGroup: "All",
+  });
+
+  // Re-mount key for hard resets
   const [dashKey, setDashKey] = useState(1);
 
-  // Channels (hero)
+  // Channel results (main hero)
   const [result, setResult] = useState(null);
   const [prevResult, setPrevResult] = useState(null);
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Premium
-  const [premium, setPremium] = useState(false);
-
-  // Saved preset / URL restore
+  // Load from URL once
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
-      setPremium(isPremium());
-
       const q = decodeQuery();
-      if (q) {
-        if (q.startDate) setStartDate(q.startDate);
-        if (q.endDate) setEndDate(q.endDate);
-        setCountrySel(q.country || "All");
-        setChannelSel(q.channelGroup || "All");
-        setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
-        setComparePrev(!!q.comparePrev);
-      }
+      if (!q) return;
+
+      if (q.startDate) setStartDate(q.startDate);
+      if (q.endDate) setEndDate(q.endDate);
+
+      setCountrySel(q.country || "All");
+      setChannelSel(q.channelGroup || "All");
+      setAppliedFilters({
+        country: q.country || "All",
+        channelGroup: q.channelGroup || "All",
+      });
+
+      setComparePrev(!!q.comparePrev);
     } catch {}
   }, []);
 
+  // Load preset once
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
@@ -443,6 +472,7 @@ export default function Home() {
     } catch {}
   }, []);
 
+  // Save preset whenever these change
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -459,12 +489,13 @@ export default function Home() {
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
-  // Channels parse
+  // --- Channels parse
   const { rows: chRows, totals: chTotals } = useMemo(() => parseGa4Channels(result), [result]);
   const { rows: prevRows, totals: prevTotals } = useMemo(
     () => parseGa4Channels(prevResult),
     [prevResult]
   );
+
   const top = chRows[0];
   const topShare =
     top && chTotals.sessions > 0 ? Math.round((top.sessions / chTotals.sessions) * 100) : 0;
@@ -473,14 +504,19 @@ export default function Home() {
     window.location.href = "/api/auth/google/start";
   };
 
+  // Apply filters button
   const applyFilters = () => {
-    setAppliedFilters({ country: countrySel, channelGroup: channelSel });
+    setAppliedFilters({
+      country: countrySel,
+      channelGroup: channelSel,
+    });
   };
 
-  // Channel report
-  async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
-    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
-  }
+  // GA4 channel fetch (uses filters)
+  const fetchGa4Channels = useCallback(async ({ propertyId: pid, startDate: sd, endDate: ed, filters }) => {
+    return fetchJson("/api/ga4/query", { propertyId: pid, startDate: sd, endDate: ed, filters });
+  }, []);
+
   const runReport = async () => {
     setError("");
     setResult(null);
@@ -495,12 +531,14 @@ export default function Home() {
       });
       setResult(curr);
 
+      // Update URL to reflect the view we just ran
       try {
         const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
         const path = window.location.pathname + (qs ? `?${qs}` : "");
         window.history.replaceState(null, "", path);
       } catch {}
 
+      // Broadcast reset for sections & AI
       setRefreshSignal((n) => n + 1);
 
       if (comparePrev) {
@@ -520,6 +558,7 @@ export default function Home() {
     }
   };
 
+  // Reset Dashboard: keep propertyId, reset everything else
   const resetDashboard = () => {
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -533,7 +572,7 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setError("");
-    setDashKey((k) => k + 1);
+    setDashKey((k) => k + 1); // force remount of sections
     try {
       const path = window.location.pathname;
       window.history.replaceState(null, "", path);
@@ -541,98 +580,124 @@ export default function Home() {
   };
 
   return (
-    <div style={styles.page}>
-      <style dangerouslySetInnerHTML={{ __html: mobileCss }} />
-      {/* Sticky header */}
-      <div style={styles.stickyHeader}>
-        <div className="sticky-inner" style={styles.stickyInner}>
-          <h1 style={styles.h1}>InsightGPT (MVP)</h1>
-          <span style={styles.headerBadge}>
-            {premium ? "Premium: Enabled" : "Premium: Locked"}
-          </span>
+    <main style={styles.page}>
+      {/* Sticky header (slimmer on mobile) */}
+      <div style={styles.sticky}>
+        <div style={styles.stickyInner}>
+          <div aria-label="brand" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 8,
+                background: COLORS.brand,
+                display: "grid",
+                placeItems: "center",
+                color: "white",
+                fontWeight: 900,
+              }}
+            >
+              IG
+            </div>
+            <div style={{ fontWeight: 800 }}>InsightGPT</div>
+          </div>
+
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={styles.pill} title="Premium status">
+              {premium ? "Premium" : "Standard"}
+            </span>
+            <button onClick={resetDashboard} style={styles.ghost} aria-label="Reset dashboard">
+              Reset
+            </button>
+          </div>
         </div>
       </div>
 
-      <main style={styles.wrap}>
-        {/* Intro / Controls */}
-        <p style={{ margin: "0 0 8px 0", color: COLORS.subtext }}>
-          Connect GA4, choose a date range, optionally apply filters, then run. UI follows the ORB
-          look with Google accents.
+      <div style={styles.wrap}>
+        <h1 style={styles.h1}>Analytics & Insights Dashboard</h1>
+        <p style={styles.sub}>
+          Connect GA4, choose a date range, optionally apply filters, and view traffic & insights.
         </p>
 
-        <div className="ctrl-row" style={styles.controlsRow}>
-          <button onClick={connect} style={styles.btn}>Connect Google Analytics</button>
+        {/* Controls */}
+        <div style={{ ...styles.card }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <button onClick={connect} style={styles.ghost} aria-label="Connect Google Analytics">
+              Connect Google Analytics
+            </button>
 
-          <label>
-            <span style={{ marginRight: 6 }}>GA4 Property ID</span>
-            <input
-              id="property-id"
-              name="property-id"
-              value={propertyId}
-              onChange={(e) => setPropertyId(e.target.value)}
-              placeholder="e.g. 123456789"
-              style={styles.input}
-            />
-          </label>
+            <label aria-label="GA4 Property ID">
+              <span style={styles.label}>GA4 Property ID&nbsp;</span>
+              <input
+                id="property-id"
+                name="property-id"
+                value={propertyId}
+                onChange={(e) => setPropertyId(e.target.value)}
+                placeholder="e.g. 123456789"
+                style={{ padding: 8, minWidth: 180 }}
+              />
+            </label>
 
-          <label>
-            <span style={{ marginRight: 6 }}>Start date</span>
-            <input
-              id="start-date"
-              name="start-date"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              style={styles.input}
-            />
-          </label>
-          <label>
-            <span style={{ marginRight: 6 }}>End date</span>
-            <input
-              id="end-date"
-              name="end-date"
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              style={styles.input}
-            />
-          </label>
+            <label aria-label="Start date">
+              <span style={styles.label}>Start date&nbsp;</span>
+              <input
+                id="start-date"
+                name="start-date"
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                style={{ padding: 8 }}
+              />
+            </label>
+            <label aria-label="End date">
+              <span style={styles.label}>End date&nbsp;</span>
+              <input
+                id="end-date"
+                name="end-date"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                style={{ padding: 8 }}
+              />
+            </label>
 
-          <button
-            onClick={runReport}
-            style={styles.btn}
-            disabled={loading || !propertyId}
-            title={!propertyId ? "Enter a GA4 property ID first" : ""}
-          >
-            {loading ? "Running\u2026" : "Run GA4 Report"}
-          </button>
+            <button
+              onClick={runReport}
+              style={styles.btn}
+              disabled={loading || !propertyId}
+              aria-label="Run GA4 Report"
+              title={!propertyId ? "Enter a GA4 property ID first" : "Run GA4 Report"}
+            >
+              {loading ? "Running…" : "Run GA4 Report"}
+            </button>
 
-          <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-            <input
-              id="compare-prev"
-              type="checkbox"
-              checked={comparePrev}
-              onChange={(e) => setComparePrev(e.target.checked)}
-            />
-            Compare vs previous period
-          </label>
-
-          <button onClick={resetDashboard} style={styles.btnSecondary}>
-            Reset Dashboard
-          </button>
+            <label
+              htmlFor="compare-prev"
+              style={{ display: "inline-flex", gap: 8, alignItems: "center", paddingLeft: 8 }}
+              aria-label="Compare vs previous period"
+            >
+              <input
+                id="compare-prev"
+                type="checkbox"
+                checked={comparePrev}
+                onChange={(e) => setComparePrev(e.target.checked)}
+              />
+              <span>Compare vs previous period</span>
+            </label>
+          </div>
         </div>
 
         {/* Filters */}
-        <div style={{ ...styles.card, marginTop: 12 }}>
+        <div style={{ ...styles.card }}>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <b>Filters:</b>
             <label>
-              Country&nbsp;
+              <span style={styles.label}>Country&nbsp;</span>
               <select
                 id="country-filter"
                 value={countrySel}
                 onChange={(e) => setCountrySel(e.target.value)}
-                style={styles.select}
+                style={{ padding: 8 }}
               >
                 {COUNTRY_OPTIONS.map((opt) => (
                   <option key={opt} value={opt}>
@@ -642,12 +707,12 @@ export default function Home() {
               </select>
             </label>
             <label>
-              Channel Group&nbsp;
+              <span style={styles.label}>Channel Group&nbsp;</span>
               <select
                 id="channel-filter"
                 value={channelSel}
                 onChange={(e) => setChannelSel(e.target.value)}
-                style={styles.select}
+                style={{ padding: 8 }}
               >
                 {CHANNEL_GROUP_OPTIONS.map((opt) => (
                   <option key={opt} value={opt}>
@@ -656,29 +721,44 @@ export default function Home() {
                 ))}
               </select>
             </label>
-            <button onClick={applyFilters} style={styles.btnSecondary}>Apply filters</button>
+            <button onClick={applyFilters} style={styles.ghost}>
+              Apply filters
+            </button>
             {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
-              <span
-                style={{
-                  ...styles.pill,
-                  background: "#e6f4ea",
-                  color: COLORS.green,
-                  borderColor: "#b7e1cd",
-                }}
-              >
-                {`Filters active: `}
+              <span style={styles.pill}>
+                {`Filters: `}
                 {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
                 {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
                 {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
               </span>
             )}
-            <span style={{ ...styles.muted, fontSize: 12 }}>
-              Filters apply when you run sections (Load buttons).
+            <span style={{ color: COLORS.subtext, fontSize: 12 }}>
+              Filters apply when you run a section (e.g. GA4 Report / Load buttons).
             </span>
           </div>
         </div>
 
-        {/* Saved Views (Premium) - NOW placed right under filters */}
+        {error && (
+          <p style={{ color: COLORS.danger, marginTop: 10 }} role="alert">
+            Error: {error}
+          </p>
+        )}
+
+        {/* ==================== CHANNELS AT TOP (if data) ==================== */}
+        {chRows.length > 0 && (
+          <ChannelsHero
+            rows={chRows}
+            totals={chTotals}
+            prevRows={prevRows}
+            prevTotals={prevTotals}
+            startDate={startDate}
+            endDate={endDate}
+            appliedFilters={appliedFilters}
+            refreshSignal={refreshSignal}
+          />
+        )}
+
+        {/* ==================== SAVED VIEWS (Premium) ==================== */}
         <PremiumGate enabled={premium} label="Saved Views">
           <SavedViews
             startDate={startDate}
@@ -701,18 +781,20 @@ export default function Home() {
           />
         </PremiumGate>
 
-        {/* KPI Targets & Alerts / Digest (panel) */}
-        <TargetsAlertsDigest
-          chTotals={chTotals}
-          startDate={startDate}
-          endDate={endDate}
-          appliedFilters={appliedFilters}
-          refreshSignal={refreshSignal}
-        />
+        {/* ==================== KPI TARGETS & ALERTS / DIGEST (Premium) ==================== */}
+        <PremiumGate enabled={premium} label="KPI Targets & Alerts / Digest">
+          <TargetsAlertsDigest
+            chTotals={chTotals}
+            startDate={startDate}
+            endDate={endDate}
+            appliedFilters={appliedFilters}
+            refreshSignal={refreshSignal}
+          />
+        </PremiumGate>
 
-        {/* ------------------ Ordered Content per your new spec ------------------ */}
+        {/* ==================== ORDERED SECTIONS ==================== */}
 
-        {/* 1) Top pages (views) */}
+        {/* 1. Top pages (views) */}
         <TopPages
           key={`tp-${dashKey}`}
           propertyId={propertyId}
@@ -722,7 +804,7 @@ export default function Home() {
           resetSignal={refreshSignal}
         />
 
-        {/* 2) Source / Medium */}
+        {/* 2. Source / Medium */}
         <SourceMedium
           key={`sm-${dashKey}`}
           propertyId={propertyId}
@@ -732,7 +814,7 @@ export default function Home() {
           resetSignal={refreshSignal}
         />
 
-        {/* 3) E-commerce KPIs */}
+        {/* 3. E-commerce KPIs */}
         <EcommerceKPIs
           key={`ekpi-${dashKey}`}
           propertyId={propertyId}
@@ -742,7 +824,7 @@ export default function Home() {
           resetSignal={refreshSignal}
         />
 
-        {/* 4) Checkout funnel (event counts) */}
+        {/* 4. Checkout funnel */}
         <CheckoutFunnel
           key={`cf-${dashKey}`}
           propertyId={propertyId}
@@ -752,70 +834,7 @@ export default function Home() {
           resetSignal={refreshSignal}
         />
 
-        {/* Keep Channels feature (not in your list, but must not be removed) */}
-        <ChannelsHero
-          rows={chRows}
-          totals={chTotals}
-          prevRows={prevRows}
-          prevTotals={prevTotals}
-          startDate={startDate}
-          endDate={endDate}
-          appliedFilters={appliedFilters}
-          refreshSignal={refreshSignal}
-        />
-
-        {/* 6) Trends over time — Premium */}
-        <PremiumGate enabled={premium} label="Trends over time">
-          <TrendsOverTime
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-          />
-        </PremiumGate>
-
-        {/* 7) Campaigns — Premium */}
-        <PremiumGate enabled={premium} label="Campaigns">
-          <Campaigns
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-          />
-        </PremiumGate>
-
-        {/* 8) Campaigns Drilldown — Premium */}
-        <PremiumGate enabled={premium} label="Campaigns Drilldown">
-          <CampaignDrilldown
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-          />
-        </PremiumGate>
-
-        {/* 9) Campaigns (KPI metrics) — renamed from Overview — Premium */}
-        <PremiumGate enabled={premium} label="Campaigns (KPI metrics)">
-          <CampaignsOverview
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            titleOverride="Campaigns (KPI metrics)"
-          />
-        </PremiumGate>
-
-        {/* 10) Landing Pages × Attribution — Premium */}
-        <PremiumGate enabled={premium} label="Landing Pages × Attribution">
-          <LandingPages
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-          />
-        </PremiumGate>
-
-        {/* Products (feature-flag) */}
+        {/* Products (feature flag) – keep where it was (optional in order) */}
         {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
           <Products
             propertyId={propertyId}
@@ -825,6 +844,57 @@ export default function Home() {
             resetSignal={refreshSignal}
           />
         )}
+
+        {/* 6. Trends over time (Premium) */}
+        <PremiumGate enabled={premium} label="Trends over time">
+          <TrendsOverTime
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+          />
+        </PremiumGate>
+
+        {/* 7. Campaigns (Premium) */}
+        <PremiumGate enabled={premium} label="Campaigns">
+          <Campaigns
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+          />
+        </PremiumGate>
+
+        {/* 8. Campaign drill-down (Premium) */}
+        <PremiumGate enabled={premium} label="Campaign drill-down">
+          <CampaignDrilldown
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+          />
+        </PremiumGate>
+
+        {/* 9. Campaigns (KPI metrics) – renamed from "Campaigns (overview)" (Premium) */}
+        <PremiumGate enabled={premium} label="Campaigns (KPI metrics)">
+          <CampaignsOverview
+            titleOverride="Campaigns (KPI metrics)"
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+          />
+        </PremiumGate>
+
+        {/* 10. Landing Pages × Attribution (Premium) */}
+        <PremiumGate enabled={premium} label="Landing Pages × Attribution">
+          <LandingPages
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+          />
+        </PremiumGate>
 
         {/* Raw JSON (debug) */}
         {result ? (
@@ -839,581 +909,32 @@ export default function Home() {
                 overflow: "auto",
               }}
             >
-{safeStringify(result)}
+              {safeStringify(result)}
             </pre>
           </details>
         ) : null}
-
-        {error && (
-          <p style={{ color: COLORS.red, marginTop: 16 }}>
-            Error: {error}
-          </p>
-        )}
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
 
-/* ========================================================================== */
-/* Premium Gate (blur + disabled UI)                                          */
-/* ========================================================================== */
-function PremiumGate({ enabled, label, children }) {
-  if (enabled) return <>{children}</>;
+/* =============================================================================
+   CHANNELS HERO (appears at top when data exists)
+   ============================================================================= */
+function ChannelsHero({
+  rows,
+  totals,
+  prevRows,
+  prevTotals,
+  startDate,
+  endDate,
+  appliedFilters,
+  refreshSignal,
+}) {
   return (
-    <section style={{ ...styles.card, position: "relative" }}>
-      <div
-        style={{
-          filter: "blur(0px)",
-          opacity: 0.6,
-          pointerEvents: "none",
-        }}
-      >
-        {children}
-      </div>
-      <div
-        aria-label={`${label} premium gating`}
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "grid",
-          placeItems: "center",
-          background:
-            "linear-gradient(180deg, rgba(255,255,255,0.88), rgba(255,255,255,0.94))",
-          borderRadius: 14,
-        }}
-      >
-        <div style={{ textAlign: "center" }}>
-          <div style={styles.premiumBadge}>Premium required</div>
-          <div style={{ marginTop: 6, color: COLORS.subtext }}>
-            Unlock <b>{label}</b> to boost your workflow.
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <span
-              style={{ ...styles.btn, padding: "8px 14px" }}
-              onClick={() => {
-                // Non-destructive demo toggle for local testing:
-                try {
-                  localStorage.setItem("insightgpt_premium", "alpha");
-                  window.location.reload();
-                } catch {}
-              }}
-            >
-              Try (alpha)
-            </span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ========================================================================== */
-/* Targets + Alerts + Digest Panel                                            */
-/* ========================================================================== */
-function TargetsAlertsDigest({ chTotals, startDate, endDate, appliedFilters, refreshSignal }) {
-  const [showConfig, setShowConfig] = useState(false);
-  const [notice, setNotice] = useState("");
-
-  // KPI targets state (persist with exact key)
-  const [targets, setTargets] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
-
-  // Alerts config (persist with exact key)
-  const [alerts, setAlerts] = useState({
-    enabled: false,
-    metrics: { sessions: true, revenue: true, cvr: true },
-    z: 2,
-    lookbackDays: 28,
-    slackWebhook: "",
-  });
-
-  // Performance digest config (Premium handled on server when sending)
-  const [digest, setDigest] = useState({
-    enabled: false,
-    frequency: "daily", // daily | weekly | monthly
-    timeUTC: "09:00",
-    slackWebhook: "",
-  });
-
-  useEffect(() => {
-    try {
-      const t = loadKpiTargets();
-      setTargets({
-        sessionsTarget: t?.sessionsTarget ?? "",
-        revenueTarget: t?.revenueTarget ?? "",
-        cvrTarget: t?.cvrTarget ?? "",
-      });
-    } catch {}
-    try {
-      const raw = localStorage.getItem("insightgpt_alerts_cfg_v1");
-      if (raw) setAlerts(JSON.parse(raw));
-    } catch {}
-    try {
-      const raw2 = localStorage.getItem("insightgpt_digest_cfg_v1");
-      if (raw2) setDigest(JSON.parse(raw2));
-    } catch {}
-  }, [refreshSignal]);
-
-  const saveTargets = () => {
-    try {
-      const clean = {
-        sessionsTarget: Number(targets.sessionsTarget) || 0,
-        revenueTarget: Number(targets.revenueTarget) || 0,
-        cvrTarget: Number(targets.cvrTarget) || 0,
-      };
-      localStorage.setItem("insightgpt_kpi_targets_v1", JSON.stringify(clean));
-      setNotice("KPI targets saved.");
-      setTimeout(() => setNotice(""), 1200);
-    } catch {
-      setNotice("Could not save KPI targets.");
-      setTimeout(() => setNotice(""), 1600);
-    }
-  };
-
-  const saveAlerts = () => {
-    try {
-      const clean = {
-        enabled: !!alerts.enabled,
-        metrics: {
-          sessions: !!alerts.metrics.sessions,
-          revenue: !!alerts.metrics.revenue,
-          cvr: !!alerts.metrics.cvr,
-        },
-        z: Number(alerts.z) || 2,
-        lookbackDays: Number(alerts.lookbackDays) || 28,
-        slackWebhook: (alerts.slackWebhook || "").trim(),
-      };
-      localStorage.setItem("insightgpt_alerts_cfg_v1", JSON.stringify(clean));
-      setNotice("Anomaly alert settings saved.");
-      setTimeout(() => setNotice(""), 1200);
-    } catch {
-      setNotice("Could not save alert settings.");
-      setTimeout(() => setNotice(""), 1600);
-    }
-  };
-
-  const testAnomaliesToSlack = async () => {
-    try {
-      const payload = {
-        propertyId: document.getElementById("property-id")?.value || "",
-        dateRange: { start: startDate, end: endDate },
-        filters: appliedFilters,
-        sensitivityZ: Number(alerts.z) || 2,
-        lookbackDays: Number(alerts.lookbackDays) || 28,
-        metrics: alerts.metrics,
-        webhook: (alerts.slackWebhook || "").trim(),
-      };
-      const res = await fetchJson("/api/slack/anomaly", payload);
-      setNotice(res?.ok ? "Anomaly test sent to Slack." : "Test attempted. Check webhook.");
-      setTimeout(() => setNotice(""), 1500);
-    } catch (e) {
-      setNotice(`Slack test failed: ${e.message}`);
-      setTimeout(() => setNotice(""), 2000);
-    }
-  };
-
-  const saveDigest = () => {
-    try {
-      const clean = {
-        enabled: !!digest.enabled,
-        frequency: digest.frequency || "daily",
-        timeUTC: digest.timeUTC || "09:00",
-        slackWebhook: (digest.slackWebhook || "").trim(),
-      };
-      localStorage.setItem("insightgpt_digest_cfg_v1", JSON.stringify(clean));
-      setNotice("Digest preferences saved.");
-      setTimeout(() => setNotice(""), 1200);
-    } catch {
-      setNotice("Could not save digest.");
-      setTimeout(() => setNotice(""), 1600);
-    }
-  };
-
-  const testDigestToSlack = async () => {
-    try {
-      const payload = {
-        propertyId: document.getElementById("property-id")?.value || "",
-        dateRange: { start: startDate, end: endDate },
-        filters: appliedFilters,
-        webhook: (digest.slackWebhook || "").trim(),
-        frequency: digest.frequency,
-        timeUTC: digest.timeUTC,
-      };
-      const res = await fetch("/api/slack/digest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setNotice("Digest test sent to Slack.");
-      } else {
-        setNotice(`Digest test failed (${res.status})`);
-      }
-      setTimeout(() => setNotice(""), 1500);
-    } catch (e) {
-      setNotice(`Digest test failed: ${e.message}`);
-      setTimeout(() => setNotice(""), 2000);
-    }
-  };
-
-  return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h2 style={styles.h2}>KPI Targets & Alerts / Digest</h2>
-        {chTotals && (
-          <>
-            <TargetBadge
-              label="Sessions"
-              current={Number(chTotals?.sessions || 0)}
-              target={Number(loadKpiTargets()?.sessionsTarget)}
-            />
-          </>
-        )}
-        <button
-          style={{ ...styles.btnSecondary, marginLeft: "auto" }}
-          onClick={() => setShowConfig((v) => !v)}
-        >
-          {showConfig ? "Hide settings" : "Show settings"}
-        </button>
-      </div>
-
-      {showConfig && (
-        <div style={{ marginTop: 10, display: "grid", gap: 16 }}>
-          {/* KPI Targets */}
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border: `1px solid ${COLORS.border}`,
-              background: "white",
-            }}
-          >
-            <h3 style={styles.h3}>KPI Targets</h3>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-              <label>
-                Sessions target&nbsp;
-                <input
-                  inputMode="numeric"
-                  value={targets.sessionsTarget}
-                  onChange={(e) =>
-                    setTargets((t) => ({ ...t, sessionsTarget: e.target.value }))
-                  }
-                  style={styles.input}
-                  placeholder="e.g. 50000"
-                />
-              </label>
-              <label>
-                Revenue target (GBP)&nbsp;
-                <input
-                  inputMode="numeric"
-                  value={targets.revenueTarget}
-                  onChange={(e) =>
-                    setTargets((t) => ({ ...t, revenueTarget: e.target.value }))
-                  }
-                  style={styles.input}
-                  placeholder="e.g. 250000"
-                />
-              </label>
-              <label>
-                CVR target (%)&nbsp;
-                <input
-                  inputMode="decimal"
-                  value={targets.cvrTarget}
-                  onChange={(e) => setTargets((t) => ({ ...t, cvrTarget: e.target.value }))}
-                  style={styles.input}
-                  placeholder="e.g. 2.5"
-                />
-              </label>
-              <button onClick={saveTargets} style={styles.btnSecondary}>
-                Save targets
-              </button>
-            </div>
-          </div>
-
-          {/* Anomaly Alerts */}
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border: `1px solid ${COLORS.border}`,
-              background: "white",
-            }}
-          >
-            <h3 style={styles.h3}>Anomaly Alerts (Slack)</h3>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={!!alerts.enabled}
-                  onChange={(e) => setAlerts((a) => ({ ...a, enabled: e.target.checked }))}
-                />
-                Enabled
-              </label>
-
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                Sensitivity (z)&nbsp;
-                <input
-                  type="number"
-                  step="0.1"
-                  min="1"
-                  value={alerts.z}
-                  onChange={(e) => setAlerts((a) => ({ ...a, z: e.target.value }))}
-                  style={{ ...styles.input, width: 96 }}
-                />
-              </label>
-
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                Lookback days&nbsp;
-                <input
-                  type="number"
-                  min="7"
-                  value={alerts.lookbackDays}
-                  onChange={(e) => setAlerts((a) => ({ ...a, lookbackDays: e.target.value }))}
-                  style={{ ...styles.input, width: 96 }}
-                />
-              </label>
-
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                Metrics:&nbsp;
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={!!alerts.metrics.sessions}
-                    onChange={(e) =>
-                      setAlerts((a) => ({
-                        ...a,
-                        metrics: { ...a.metrics, sessions: e.target.checked },
-                      }))
-                    }
-                  />
-                  Sessions
-                </label>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={!!alerts.metrics.revenue}
-                    onChange={(e) =>
-                      setAlerts((a) => ({
-                        ...a,
-                        metrics: { ...a.metrics, revenue: e.target.checked },
-                      }))
-                    }
-                  />
-                  Revenue
-                </label>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={!!alerts.metrics.cvr}
-                    onChange={(e) =>
-                      setAlerts((a) => ({
-                        ...a,
-                        metrics: { ...a.metrics, cvr: e.target.checked },
-                      }))
-                    }
-                  />
-                  CVR
-                </label>
-              </div>
-
-              <label style={{ flex: 1, minWidth: 260 }}>
-                Slack webhook&nbsp;
-                <input
-                  value={alerts.slackWebhook}
-                  onChange={(e) =>
-                    setAlerts((a) => ({ ...a, slackWebhook: e.target.value }))
-                  }
-                  style={{ ...styles.input, width: "100%" }}
-                  placeholder="https://hooks.slack.com/services/XXX/YYY/ZZZ"
-                />
-              </label>
-
-              <button onClick={saveAlerts} style={styles.btnSecondary}>
-                Save alerts
-              </button>
-              <button
-                onClick={testAnomaliesToSlack}
-                style={{ ...styles.btnSecondary, borderColor: COLORS.blue, color: COLORS.blue }}
-              >
-                Send anomaly test
-              </button>
-            </div>
-
-            <p style={{ ...styles.muted, marginTop: 8, fontSize: 13 }}>
-              Sensitivity uses z-score: higher z = fewer, stronger anomalies. Lookback controls the
-              baseline window.
-            </p>
-          </div>
-
-          {/* Performance Digest */}
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border: `1px solid ${COLORS.border}`,
-              background: "white",
-            }}
-          >
-            <h3 style={styles.h3}>Performance Digest (Slack) \u2014 Premium</h3>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={!!digest.enabled}
-                  onChange={(e) => setDigest((d) => ({ ...d, enabled: e.target.checked }))}
-                />
-                Enabled
-              </label>
-
-              <label>
-                Frequency&nbsp;
-                <select
-                  value={digest.frequency}
-                  onChange={(e) => setDigest((d) => ({ ...d, frequency: e.target.value }))}
-                  style={styles.select}
-                >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </label>
-
-              <label>
-                Time (UTC)&nbsp;
-                <input
-                  type="time"
-                  value={digest.timeUTC}
-                  onChange={(e) => setDigest((d) => ({ ...d, timeUTC: e.target.value }))}
-                  style={styles.input}
-                />
-              </label>
-
-              <label style={{ flex: 1, minWidth: 260 }}>
-                Slack webhook&nbsp;
-                <input
-                  value={digest.slackWebhook}
-                  onChange={(e) => setDigest((d) => ({ ...d, slackWebhook: e.target.value }))}
-                  style={{ ...styles.input, width: "100%" }}
-                  placeholder="https://hooks.slack.com/services/XXX/YYY/ZZZ"
-                />
-              </label>
-
-              <button onClick={saveDigest} style={styles.btnSecondary}>
-                Save digest
-              </button>
-
-              <button
-                onClick={testDigestToSlack}
-                style={{
-                  ...styles.btnSecondary,
-                  borderColor: COLORS.blue,
-                  color: COLORS.blue,
-                }}
-              >
-                Send digest test
-              </button>
-            </div>
-            <p style={{ ...styles.muted, marginTop: 8, fontSize: 13 }}>
-              Sends a concise AI summary + actions to Slack. Requires a valid Slack webhook.
-            </p>
-          </div>
-
-          {notice && (
-            <div
-              role="status"
-              style={{
-                marginTop: 4,
-                color: COLORS.green,
-                fontWeight: 600,
-              }}
-            >
-              {notice}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* ========================================================================== */
-/* Reusable AI block                                                           */
-/* ========================================================================== */
-function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal }) {
-  const [loading, setLoading] = useState(false);
-  const [text, setText] = useState("");
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    setText("");
-    setError("");
-    setCopied(false);
-  }, [resetSignal]);
-
-  const run = async () => {
-    setLoading(true);
-    setError("");
-    setText("");
-    setCopied(false);
-    try {
-      const data = await fetchJson(endpoint, payload);
-      const summary = data?.summary || (typeof data === "string" ? data : "");
-      setText(summary || "No response");
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text || "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setError("Could not copy to clipboard");
-    }
-  };
-
-  return (
-    <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button onClick={run} style={styles.btnSecondary} disabled={loading}>
-        {loading ? "Summarising\u2026" : asButton ? buttonLabel : "Summarise with AI"}
-      </button>
-      <button onClick={copy} style={styles.btnSecondary} disabled={!text}>
-        {copied ? "Copied!" : "Copy insight"}
-      </button>
-      {error && <span style={{ color: COLORS.red }}>Error: {error}</span>}
-      {text && (
-        <div
-          style={{
-            marginTop: 8,
-            background: "#fffceb",
-            border: "1px solid #f5e08f",
-            padding: 10,
-            borderRadius: 10,
-            whiteSpace: "pre-wrap",
-            width: "100%",
-          }}
-        >
-          {text}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ========================================================================== */
-/* Channels (kept; not removed)                                                */
-/* ========================================================================== */
-function ChannelsHero({ rows, totals, prevRows, prevTotals, startDate, endDate, appliedFilters, refreshSignal }) {
-  if (!rows?.length) return null;
-  return (
-    <section style={styles.card}>
-      <div style={styles.sectionTitleRow}>
-        <h2 style={styles.h2}>Traffic by Default Channel Group</h2>
+        <h2 style={{ margin: 0 }}>Traffic by Default Channel Group</h2>
         {/* KPI badge for Sessions (hero) */}
         <TargetBadge
           label="Sessions"
@@ -1432,29 +953,12 @@ function ChannelsHero({ rows, totals, prevRows, prevTotals, startDate, endDate, 
           }}
           resetSignal={refreshSignal}
         />
-        <button
-          onClick={() =>
-            downloadCsvGeneric(
-              `ga4_channels_${startDate}_to_${endDate}`,
-              rows.map((r) => ({
-                channel: r.channel,
-                sessions: r.sessions,
-                users: r.users,
-              })),
-              [
-                { header: "Channel", key: "channel" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ]
-            )
-          }
-          style={styles.btnSecondary}
-        >
-          Download CSV
-        </button>
+        <span aria-hidden style={{ marginLeft: "auto", color: COLORS.subtext, fontSize: 12 }}>
+          {startDate} → {endDate}
+        </span>
       </div>
 
-      <ul style={{ marginTop: 8 }}>
+      <ul style={{ marginTop: 12 }}>
         <li>
           <b>Total sessions:</b> {totals.sessions.toLocaleString()}
         </li>
@@ -1463,7 +967,9 @@ function ChannelsHero({ rows, totals, prevRows, prevTotals, startDate, endDate, 
         </li>
         {rows[0] && (
           <li>
-            <b>Top channel:</b> {rows[0].channel} with {rows[0].sessions.toLocaleString()} sessions
+            <b>Top channel:</b> {rows[0].channel} with {rows[0].sessions.toLocaleString()} sessions (
+            {totals.sessions > 0 ? Math.round((rows[0].sessions / totals.sessions) * 100) : 0}% of
+            total)
           </li>
         )}
         {prevRows?.length > 0 && (
@@ -1521,27 +1027,587 @@ function ChannelsHero({ rows, totals, prevRows, prevTotals, startDate, endDate, 
         </table>
       </div>
 
-      {/* Chart (QuickChart) */}
-      <div style={{ marginTop: 16 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={buildChannelPieUrl(rows)}
-          alt="Channel share chart"
-          style={{
-            maxWidth: "100%",
-            height: "auto",
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: 12,
-          }}
-        />
-      </div>
+      {/* Use next/image (unoptimized) to avoid Next domain config + no-img-element warnings */}
+      {rows?.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <Image
+            src={buildChannelPieUrl(rows)}
+            alt="Channel share chart"
+            unoptimized
+            width={800}
+            height={520}
+            style={{ width: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+          />
+        </div>
+      )}
     </section>
   );
 }
 
-/* ========================================================================== */
-/* Source / Medium                                                             */
-/* ========================================================================== */
+/* =============================================================================
+   REUSABLE AI block
+   ============================================================================= */
+function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal }) {
+  const [loading, setLoading] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setText("");
+    setError("");
+    setCopied(false);
+  }, [resetSignal]);
+
+  const run = async () => {
+    setLoading(true);
+    setError("");
+    setText("");
+    setCopied(false);
+    try {
+      const data = await fetchJson(endpoint, payload);
+      const summary = data?.summary || (typeof data === "string" ? data : "");
+      setText(summary || "No response");
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("Could not copy to clipboard");
+    }
+  };
+
+  return (
+    <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button onClick={run} style={styles.ghost} disabled={loading}>
+        {loading ? "Summarising…" : asButton ? buttonLabel : "Summarise with AI"}
+      </button>
+      <button onClick={copy} style={styles.ghost} disabled={!text}>
+        {copied ? "Copied!" : "Copy insight"}
+      </button>
+      {error && <span style={{ color: COLORS.danger }}>Error: {error}</span>}
+      {text && (
+        <div
+          style={{
+            marginTop: 8,
+            background: "#fffceb",
+            border: "1px solid #f5e08f",
+            padding: 10,
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+            width: "100%",
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =============================================================================
+   SAVED VIEWS (Premium)
+   ============================================================================= */
+function SavedViews({
+  startDate,
+  endDate,
+  countrySel,
+  channelSel,
+  comparePrev,
+  onApply,
+  onRunReport,
+}) {
+  const [presets, setPresets] = useState([]);
+  const [name, setName] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_VIEWS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(arr)) setPresets(arr);
+    } catch {}
+  }, []);
+
+  const persist = (arr) => {
+    setPresets(arr);
+    try {
+      localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr));
+    } catch {}
+  };
+
+  const saveCurrent = () => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) {
+      setNotice("Give your view a name.");
+      return;
+    }
+
+    const next = [
+      ...presets.filter((p) => p.name !== trimmed),
+      {
+        id: crypto?.randomUUID?.() || String(Date.now()),
+        name: trimmed,
+        startDate,
+        endDate,
+        country: countrySel,
+        channelGroup: channelSel,
+        comparePrev: !!comparePrev,
+        savedAt: new Date().toISOString(),
+      },
+    ].sort((a, b) => a.name.localeCompare(b.name));
+
+    persist(next);
+    setNotice("Saved!");
+    setTimeout(() => setNotice(""), 1200);
+  };
+
+  const apply = (p, run = false) => {
+    onApply({
+      startDate: p.startDate,
+      endDate: p.endDate,
+      country: p.country,
+      channelGroup: p.channelGroup,
+      comparePrev: !!p.comparePrev,
+    });
+    if (run) onRunReport();
+  };
+
+  const remove = (p) => {
+    const next = presets.filter((x) => x.name !== p.name);
+    persist(next);
+  };
+
+  return (
+    <section style={{ ...styles.card }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: 16 }}>Saved Views</h3>
+
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name this view (e.g. UK · Organic · Sep)"
+          style={{ padding: 8, minWidth: 260 }}
+          aria-label="Saved view name"
+        />
+        <button onClick={saveCurrent} style={styles.ghost}>
+          Save current
+        </button>
+        {notice && <span style={{ color: COLORS.success, fontSize: 12 }}>{notice}</span>}
+      </div>
+
+      {presets.length > 0 ? (
+        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+          {presets.map((p) => (
+            <div
+              key={p.name}
+              style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+            >
+              <div style={{ minWidth: 280 }}>
+                <b>{p.name}</b>{" "}
+                <span style={{ color: COLORS.subtext, fontSize: 12 }}>
+                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup}{" "}
+                  {p.comparePrev ? "· compare" : ""}
+                </span>
+              </div>
+              <button onClick={() => apply(p, false)} style={styles.ghost}>
+                Apply
+              </button>
+              <button onClick={() => apply(p, true)} style={styles.ghost}>
+                Apply & Run
+              </button>
+              <button onClick={() => remove(p)} style={{ ...styles.ghost, color: COLORS.danger }}>
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p style={{ marginTop: 8, color: COLORS.subtext, fontSize: 13 }}>
+          No saved views yet. Set dates/filters, give it a name, then “Save current”.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/* =============================================================================
+   KPI TARGETS + ANOMALY ALERTS + DIGEST (Premium)
+   ============================================================================= */
+function TargetsAlertsDigest({ chTotals, startDate, endDate, appliedFilters, refreshSignal }) {
+  // Saved KPI targets UI
+  const [targets, setTargets] = useState(() => loadKpiTargets());
+  const [notice, setNotice] = useState("");
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    setTargets(loadKpiTargets());
+  }, [refreshSignal]);
+
+  const save = () => {
+    try {
+      localStorage.setItem("insightgpt_kpi_targets_v1", JSON.stringify(targets || {}));
+      setNotice("Targets saved.");
+      setTimeout(() => setNotice(""), 1200);
+    } catch {
+      setNotice("Could not save.");
+      setTimeout(() => setNotice(""), 1400);
+    }
+  };
+
+  // Alerts config (stored)
+  const [alerts, setAlerts] = useState(() => {
+    try {
+      const raw = localStorage.getItem("insightgpt_alerts_cfg_v1");
+      return raw ? JSON.parse(raw) : {
+        enabled: false,
+        sensitivityZ: 2,
+        lookbackDays: 28,
+        metrics: { sessions: true, revenue: true, cvr: true },
+        slackWebhook: "",
+      };
+    } catch {
+      return {
+        enabled: false,
+        sensitivityZ: 2,
+        lookbackDays: 28,
+        metrics: { sessions: true, revenue: true, cvr: true },
+        slackWebhook: "",
+      };
+    }
+  });
+  const [alertsSaved, setAlertsSaved] = useState("");
+
+  const persistAlerts = () => {
+    try {
+      localStorage.setItem("insightgpt_alerts_cfg_v1", JSON.stringify(alerts || {}));
+      setAlertsSaved("Alerts settings saved.");
+      setTimeout(() => setAlertsSaved(""), 1200);
+    } catch {
+      setAlertsSaved("Could not save.");
+      setTimeout(() => setAlertsSaved(""), 1400);
+    }
+  };
+
+  // Test Slack delivery of anomalies (client -> backend -> Slack webhook)
+  const testSlackAnomalies = async () => {
+    try {
+      const body = {
+        propertyId: document.getElementById("property-id")?.value || "",
+        dateRange: { start: startDate, end: endDate },
+        filters: appliedFilters,
+        config: {
+          sensitivityZ: alerts.sensitivityZ,
+          lookbackDays: alerts.lookbackDays,
+          metrics: alerts.metrics,
+        },
+        slackWebhook: alerts.slackWebhook,
+        // Also include a short AI summary; backend can call /api/insights/summarise-pro if desired.
+        includeSummary: true,
+      };
+      const res = await fetch("/api/slack/anomalies-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      alert(json?.ok ? "Sent test anomalies to Slack." : `Slack test failed: ${json?.error || "Unknown error"}`);
+    } catch (e) {
+      alert(`Slack test failed: ${String(e?.message || e)}`);
+    }
+  };
+
+  // Performance digest (Slack)
+  const [digest, setDigest] = useState(() => {
+    try {
+      const raw = localStorage.getItem("insightgpt_digest_cfg_v1");
+      return raw
+        ? JSON.parse(raw)
+        : { enabled: false, frequency: "weekly", localTime: "09:00", slackWebhook: "" };
+    } catch {
+      return { enabled: false, frequency: "weekly", localTime: "09:00", slackWebhook: "" };
+    }
+  });
+  const [digestSaved, setDigestSaved] = useState("");
+
+  const persistDigest = () => {
+    try {
+      localStorage.setItem("insightgpt_digest_cfg_v1", JSON.stringify(digest || {}));
+      setDigestSaved("Digest settings saved.");
+      setTimeout(() => setDigestSaved(""), 1200);
+    } catch {
+      setDigestSaved("Could not save.");
+      setTimeout(() => setDigestSaved(""), 1400);
+    }
+  };
+
+  const testDigestSlack = async () => {
+    try {
+      const body = {
+        propertyId: document.getElementById("property-id")?.value || "",
+        dateRange: { start: startDate, end: endDate },
+        filters: appliedFilters,
+        slackWebhook: digest.slackWebhook,
+        // include AI narrative (channels, pages, ecom, etc.)
+        includeSummary: true,
+      };
+      const res = await fetch("/api/slack/digest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      alert(json?.ok ? "Sent test Performance Digest to Slack." : `Digest test failed: ${json?.error || "Unknown error"}`);
+    } catch (e) {
+      alert(`Digest test failed: ${String(e?.message || e)}`);
+    }
+  };
+
+  const kpiProgress = {
+    sessions: {
+      current: Number(chTotals?.sessions || 0),
+      target: Number(targets?.sessionsTarget || 0),
+    },
+  };
+
+  return (
+    <section style={styles.card} aria-label="KPI Targets & Alerts / Digest">
+      <div style={styles.sectionTitleRow}>
+        <h3 style={{ margin: 0 }}>KPI Targets & Alerts / Digest</h3>
+        {kpiProgress.sessions.target > 0 && (
+          <TargetBadge label="Sessions" current={kpiProgress.sessions.current} target={kpiProgress.sessions.target} />
+        )}
+        <button onClick={() => setOpen((o) => !o)} style={styles.ghost}>
+          {open ? "Hide settings" : "Show settings"}
+        </button>
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 12, display: "grid", gap: 16 }}>
+          {/* KPI Targets */}
+          <div>
+            <h4 style={{ margin: "0 0 8px" }}>KPI Targets</h4>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <label>
+                <span style={styles.label}>Sessions target</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={targets.sessionsTarget ?? ""}
+                  onChange={(e) => setTargets({ ...targets, sessionsTarget: Number(e.target.value) })}
+                  style={{ padding: 8, minWidth: 140, display: "block" }}
+                />
+              </label>
+
+              <label>
+                <span style={styles.label}>Revenue target (GBP)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={targets.revenueTarget ?? ""}
+                  onChange={(e) => setTargets({ ...targets, revenueTarget: Number(e.target.value) })}
+                  style={{ padding: 8, minWidth: 160, display: "block" }}
+                />
+              </label>
+
+              <label>
+                <span style={styles.label}>CVR target (%)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="0.01"
+                  value={targets.cvrTarget ?? ""}
+                  onChange={(e) => setTargets({ ...targets, cvrTarget: Number(e.target.value) })}
+                  style={{ padding: 8, minWidth: 140, display: "block" }}
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <button onClick={save} style={styles.btn}>
+                Save targets
+              </button>
+              {notice && <span style={{ color: COLORS.success, fontSize: 12 }}>{notice}</span>}
+            </div>
+          </div>
+
+          {/* Anomaly Alerts */}
+          <div>
+            <h4 style={{ margin: "0 0 8px" }}>Anomaly Alerts (Slack)</h4>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={!!alerts.enabled}
+                  onChange={(e) => setAlerts({ ...alerts, enabled: e.target.checked })}
+                />
+                <span>Enabled</span>
+              </label>
+
+              <label>
+                <span style={styles.label}>Sensitivity (z)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="0.1"
+                  value={alerts.sensitivityZ}
+                  onChange={(e) => setAlerts({ ...alerts, sensitivityZ: Number(e.target.value) })}
+                  style={{ padding: 8, minWidth: 120, display: "block" }}
+                />
+              </label>
+
+              <label>
+                <span style={styles.label}>Lookback days</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={alerts.lookbackDays}
+                  onChange={(e) => setAlerts({ ...alerts, lookbackDays: Number(e.target.value) })}
+                  style={{ padding: 8, minWidth: 120, display: "block" }}
+                />
+              </label>
+
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!alerts.metrics?.sessions}
+                    onChange={(e) =>
+                      setAlerts({ ...alerts, metrics: { ...alerts.metrics, sessions: e.target.checked } })
+                    }
+                  />
+                  <span>Sessions</span>
+                </label>
+                <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!alerts.metrics?.revenue}
+                    onChange={(e) =>
+                      setAlerts({ ...alerts, metrics: { ...alerts.metrics, revenue: e.target.checked } })
+                    }
+                  />
+                  <span>Revenue</span>
+                </label>
+                <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!alerts.metrics?.cvr}
+                    onChange={(e) =>
+                      setAlerts({ ...alerts, metrics: { ...alerts.metrics, cvr: e.target.checked } })
+                    }
+                  />
+                  <span>CVR</span>
+                </label>
+              </div>
+
+              <label style={{ flex: "1 1 300px" }}>
+                <span style={styles.label}>Slack Incoming Webhook URL</span>
+                <input
+                  type="url"
+                  placeholder="https://hooks.slack.com/services/XXX/YYY/ZZZ"
+                  value={alerts.slackWebhook || ""}
+                  onChange={(e) => setAlerts({ ...alerts, slackWebhook: e.target.value })}
+                  style={{ padding: 8, width: "100%", display: "block" }}
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={persistAlerts} style={styles.btn}>
+                Save alerts
+              </button>
+              <button
+                onClick={testSlackAnomalies}
+                style={styles.ghost}
+                disabled={!alerts.slackWebhook}
+                title={!alerts.slackWebhook ? "Add Slack webhook first" : "Send test anomalies to Slack"}
+              >
+                Send anomalies test to Slack
+              </button>
+              {alertsSaved && <span style={{ color: COLORS.success, fontSize: 12 }}>{alertsSaved}</span>}
+            </div>
+          </div>
+
+          {/* Performance Digest */}
+          <div>
+            <h4 style={{ margin: "0 0 8px" }}>Performance Digest (Slack)</h4>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={!!digest.enabled}
+                  onChange={(e) => setDigest({ ...digest, enabled: e.target.checked })}
+                />
+                <span>Enabled</span>
+              </label>
+
+              <label>
+                <span style={styles.label}>Frequency</span>
+                <select
+                  value={digest.frequency}
+                  onChange={(e) => setDigest({ ...digest, frequency: e.target.value })}
+                  style={{ padding: 8 }}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+
+              <label>
+                <span style={styles.label}>Local time (24h)</span>
+                <input
+                  type="time"
+                  value={digest.localTime}
+                  onChange={(e) => setDigest({ ...digest, localTime: e.target.value })}
+                  style={{ padding: 8, minWidth: 120 }}
+                />
+              </label>
+
+              <label style={{ flex: "1 1 300px" }}>
+                <span style={styles.label}>Slack Incoming Webhook URL</span>
+                <input
+                  type="url"
+                  placeholder="https://hooks.slack.com/services/XXX/YYY/ZZZ"
+                  value={digest.slackWebhook || ""}
+                  onChange={(e) => setDigest({ ...digest, slackWebhook: e.target.value })}
+                  style={{ padding: 8, width: "100%", display: "block" }}
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={persistDigest} style={styles.btn}>
+                Save digest
+              </button>
+              <button
+                onClick={testDigestSlack}
+                style={styles.ghost}
+                disabled={!digest.slackWebhook}
+                title={!digest.slackWebhook ? "Add Slack webhook first" : "Send test digest to Slack"}
+              >
+                Send digest test to Slack
+              </button>
+              {digestSaved && <span style={{ color: COLORS.success, fontSize: 12 }}>{digestSaved}</span>}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* =============================================================================
+   Source / Medium
+   ============================================================================= */
 function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1578,6 +1644,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
     }
   };
 
+  // Totals + KPI badges
   const totalSessions = useMemo(
     () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
     [rows]
@@ -1585,15 +1652,11 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Source / Medium</h3>
-        <button
-          onClick={load}
-          style={styles.btnSecondary}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading\u2026" : "Load Source / Medium"}
+        <h3 style={{ margin: 0 }}>Source / Medium</h3>
+        <button onClick={load} style={styles.ghost} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Source / Medium"}
         </button>
         {rows.length > 0 && (
           <TargetBadge
@@ -1605,13 +1668,8 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pro"
-          payload={{
-            topic: "source_medium",
-            rows,
-            dateRange: { start: startDate, end: endDate },
-            filters,
-          }}
+          endpoint="/api/insights/summarise-source-medium"
+          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
           resetSignal={resetSignal}
         />
         <button
@@ -1623,7 +1681,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
               { header: "Users", key: "users" },
             ])
           }
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={!rows.length}
         >
           Download CSV
@@ -1631,7 +1689,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {rows.length > 0 ? (
@@ -1676,9 +1734,9 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   );
 }
 
-/* ========================================================================== */
-/* Campaigns (overview -> KPI metrics)                                         */
-/* ========================================================================== */
+/* =============================================================================
+   Campaigns (overview) – renamed to Campaigns (KPI metrics) when titleOverride passed
+   ============================================================================= */
 function Campaigns({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1716,15 +1774,11 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Campaigns</h3>
-        <button
-          onClick={load}
-          style={styles.btnSecondary}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading\u2026" : "Load Campaigns"}
+        <h3 style={{ margin: 0 }}>Campaigns</h3>
+        <button onClick={load} style={styles.ghost} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Campaigns"}
         </button>
         {rows.length > 0 && (
           <TargetBadge
@@ -1736,21 +1790,8 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pro"
-          payload={{
-            topic: "campaigns-overview",
-            campaigns: rows.map((r) => ({
-              name: r.campaign,
-              sessions: r.sessions,
-              users: r.users,
-              transactions: 0,
-              revenue: 0,
-              cvr: 0,
-              aov: 0,
-            })),
-            dateRange: { start: startDate, end: endDate },
-            filters,
-          }}
+          endpoint="/api/insights/summarise-campaigns"
+          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
         />
         <button
           onClick={() =>
@@ -1760,7 +1801,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
               { header: "Users", key: "users" },
             ])
           }
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={!rows.length}
         >
           Download CSV
@@ -1768,7 +1809,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {rows.length > 0 ? (
@@ -1809,9 +1850,9 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ========================================================================== */
-/* Campaign drill-down                                                         */
-/* ========================================================================== */
+/* =============================================================================
+   Campaign drill-down
+   ============================================================================= */
 function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const [campaign, setCampaign] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1891,22 +1932,23 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const aov = totals && totals.transactions > 0 ? totals.revenue / totals.transactions : 0;
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Campaigns Drilldown</h3>
+        <h3 style={{ margin: 0 }}>Campaign drill-down</h3>
 
         <input
           value={campaign}
           onChange={(e) => setCampaign(e.target.value)}
-          placeholder="Type exact campaign name\u2026"
-          style={{ ...styles.input, minWidth: 260 }}
+          placeholder="Type exact campaign name…"
+          style={{ padding: 8, minWidth: 260 }}
         />
         <button
           onClick={load}
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={loading || !propertyId || !campaign}
+          title={!propertyId ? "Enter a GA4 property ID first" : ""}
         >
-          {loading ? "Loading\u2026" : "Load Campaign Details"}
+          {loading ? "Loading…" : "Load Campaign Details"}
         </button>
 
         <AiBlock
@@ -1914,7 +1956,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{
-            topic: "campaign-detail",
+            kind: "campaign-detail",
             campaign,
             totals,
             breakdowns: {
@@ -1929,189 +1971,187 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {totals && (
         <div style={{ marginTop: 12 }}>
-          <b>Totals for \u201C{campaign}\u201D:</b> Sessions {totals.sessions.toLocaleString()} \u00B7
-          {" "}Users {totals.users.toLocaleString()} \u00B7 Transactions{" "}
-          {totals.transactions.toLocaleString()} \u00B7 Revenue{" "}
+          <b>Totals for \u201C{campaign}\u201D:</b> Sessions {totals.sessions.toLocaleString()} ·
+          Users {totals.users.toLocaleString()} · Transactions{" "}
+          {totals.transactions.toLocaleString()} · Revenue{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
             totals.revenue || 0
           )}{" "}
-          \u00B7 CVR {(cvr || 0).toFixed(2)}% \u00B7 AOV{" "}
-          {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-            aov || 0
-          )}
+          · CVR {(cvr || 0).toFixed(2)}% · AOV{" "}
+          {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(aov || 0)}
         </div>
       )}
 
       {srcMed.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Source / Medium</h4>
-          <TableSM rows={srcMed} />
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Source
+                </th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Medium
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Sessions
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Users
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Transactions
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Revenue
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {srcMed.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d1 || "(not set)"}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d2 || "(not set)"}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.revenue || 0
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {content.length > 0 && (
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Ad Content (utm_content)</h4>
-          <TableContent rows={content} />
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Ad Content
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Sessions
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Users
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Transactions
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Revenue
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {content.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.content}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.revenue || 0
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {term.length > 0 && (
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Term (utm_term)</h4>
-          <TableTerm rows={term} />
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Term
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Sessions
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Users
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Transactions
+                </th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
+                  Revenue
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {term.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.term}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.sessions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.users.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.transactions.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.revenue || 0
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {!error && !loading && !totals && (
         <p style={{ marginTop: 8, color: COLORS.subtext }}>
-          Enter a campaign name and click \u201CLoad Campaign Details\u201D.
+          Enter a campaign name and click “Load Campaign Details”.
         </p>
       )}
     </section>
   );
 }
 
-function TableSM({ rows }) {
-  return (
-    <table style={{ borderCollapse: "collapse", width: "100%" }}>
-      <thead>
-        <tr>
-          <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
-          <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Transactions
-          </th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.key}>
-            <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d1 || "(not set)"}</td>
-            <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.d2 || "(not set)"}</td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.sessions.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.users.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.transactions.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-                r.revenue || 0
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-function TableContent({ rows }) {
-  return (
-    <table style={{ borderCollapse: "collapse", width: "100%" }}>
-      <thead>
-        <tr>
-          <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Ad Content
-          </th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Sessions
-          </th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Transactions
-          </th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Revenue
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.key}>
-            <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.content}</td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.sessions.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.users.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.transactions.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-                r.revenue || 0
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-function TableTerm({ rows }) {
-  return (
-    <table style={{ borderCollapse: "collapse", width: "100%" }}>
-      <thead>
-        <tr>
-          <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Term</th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Sessions
-          </th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Transactions
-          </th>
-          <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>
-            Revenue
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.key}>
-            <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.term}</td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.sessions.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.users.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {r.transactions.toLocaleString()}
-            </td>
-            <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-              {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-                r.revenue || 0
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-/* ========================================================================== */
-/* Campaigns Overview (renamed to KPI metrics in UI via prop)                  */
-/* ========================================================================== */
+/* =============================================================================
+   Campaigns Overview (renamed: Campaigns (KPI metrics) via titleOverride)
+   ============================================================================= */
 function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverride }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(""); // client-side search
 
   const load = async () => {
     setLoading(true);
@@ -2156,23 +2196,19 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>{titleOverride || "Campaigns (overview)"}</h3>
+        <h3 style={{ margin: 0 }}>{titleOverride || "Campaigns (overview)"}</h3>
 
-        <button
-          onClick={load}
-          style={styles.btnSecondary}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading\u2026" : "Load Campaigns"}
+        <button onClick={load} style={styles.ghost} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Campaigns"}
         </button>
 
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search campaign name\u2026"
-          style={{ ...styles.input, minWidth: 220 }}
+          placeholder="Search campaign name…"
+          style={{ padding: 8, minWidth: 220 }}
         />
 
         {visible.length > 0 && (
@@ -2188,7 +2224,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{
-            topic: "campaigns-overview",
+            kind: "campaigns-overview",
             campaigns: visible,
             dateRange: { start: startDate, end: endDate },
             filters,
@@ -2219,7 +2255,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
               ]
             )
           }
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={!visible.length}
         >
           Download CSV
@@ -2227,7 +2263,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {visible.length > 0 ? (
@@ -2272,19 +2308,17 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
                     {r.transactions.toLocaleString()}
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", {
-                      style: "currency",
-                      currency: "GBP",
-                    }).format(r.revenue || 0)}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.revenue || 0
+                    )}
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.cvr.toFixed(2)}%
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", {
-                      style: "currency",
-                      currency: "GBP",
-                    }).format(r.aov || 0)}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.aov || 0
+                    )}
                   </td>
                 </tr>
               ))}
@@ -2298,9 +2332,9 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
   );
 }
 
-/* ========================================================================== */
-/* Top Pages                                                                   */
-/* ========================================================================== */
+/* =============================================================================
+   Top Pages
+   ============================================================================= */
 function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -2338,26 +2372,17 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   };
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Top pages (views)</h3>
-        <button
-          onClick={load}
-          style={styles.btnSecondary}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading\u2026" : "Load Top Pages"}
+        <h3 style={{ margin: 0 }}>Top pages (views)</h3>
+        <button onClick={load} style={styles.ghost} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Top Pages"}
         </button>
         <AiBlock
           asButton
           buttonLabel="Summarise with AI"
-          endpoint="/api/insights/summarise-pro"
-          payload={{
-            topic: "pages",
-            rows,
-            dateRange: { start: startDate, end: endDate },
-            filters,
-          }}
+          endpoint="/api/insights/summarise-pages"
+          payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
           resetSignal={resetSignal}
         />
         <button
@@ -2369,7 +2394,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
               { header: "Users", key: "users" },
             ])
           }
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={!rows.length}
         >
           Download CSV
@@ -2377,7 +2402,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {rows.length > 0 ? (
@@ -2404,11 +2429,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
                 <tr key={`${r.path}-${i}`}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
                   <td
-                    style={{
-                      padding: 8,
-                      borderBottom: "1px solid #eee",
-                      fontFamily: "monospace",
-                    }}
+                    style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}
                   >
                     {r.path}
                   </td>
@@ -2430,9 +2451,9 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ========================================================================== */
-/* Landing Pages × Attribution                                                 */
-/* ========================================================================== */
+/* =============================================================================
+   Landing Pages × Attribution (Premium)
+   ============================================================================= */
 function LandingPages({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -2461,9 +2482,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         users: Number(r.metricValues?.[1]?.value || 0),
         transactions: Number(r.metricValues?.[2]?.value || 0),
         revenue: Number(r.metricValues?.[3]?.value || 0),
-        _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${
-          r.dimensionValues?.[2]?.value || ""
-        }`,
+        _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
       }));
 
       setRows(parsed);
@@ -2505,16 +2524,17 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
   };
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Landing Pages \u00D7 Attribution</h3>
+        <h3 style={{ margin: 0 }}>Landing Pages × Attribution</h3>
 
         <button
           onClick={load}
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={loading || !propertyId}
+          title={!propertyId ? "Enter a GA4 property ID first" : ""}
         >
-          {loading ? "Loading\u2026" : "Load Landing Pages"}
+          {loading ? "Loading…" : "Load Landing Pages"}
         </button>
 
         <AiBlock
@@ -2535,11 +2555,11 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
               revenue: r.revenue,
             })),
             instructions:
-              "Focus on landing pages with high sessions but low transactions/revenue. Provide hypotheses and tests.",
+              "Focus on landing pages with high sessions but low transactions/revenue. Identify source/medium mixes that underperform. Provide at least 2 clear hypotheses + tests to improve CR and AOV.",
           }}
         />
 
-        <button onClick={exportCsv} style={styles.btnSecondary} disabled={!filtered.length}>
+        <button onClick={exportCsv} style={styles.ghost} disabled={!filtered.length}>
           Download CSV
         </button>
       </div>
@@ -2554,11 +2574,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         }}
       >
         <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={topOnly}
-            onChange={(e) => setTopOnly(e.target.checked)}
-          />
+          <input type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} />
           Top entries only (25)
         </label>
 
@@ -2574,27 +2590,20 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             style={{ width: 160 }}
             disabled={!rows.length}
           />
-          <span
-            style={{
-              fontVariantNumeric: "tabular-nums",
-              minWidth: 40,
-              textAlign: "right",
-            }}
-          >
+          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 40, textAlign: "right" }}>
             {minSessions}
           </span>
         </div>
 
         {rows.length > 0 && (
           <span style={{ fontSize: 12, color: COLORS.subtext }}>
-            Showing <b>{shownCount.toLocaleString()}</b> of{" "}
-            {totalCount.toLocaleString()}
+            Showing <b>{shownCount.toLocaleString()}</b> of {totalCount.toLocaleString()}
           </span>
         )}
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {filtered.length > 0 ? (
@@ -2629,11 +2638,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
               {filtered.map((r) => (
                 <tr key={r._k}>
                   <td
-                    style={{
-                      padding: 8,
-                      borderBottom: "1px solid #eee",
-                      fontFamily: "monospace",
-                    }}
+                    style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}
                   >
                     {r.landing}
                   </td>
@@ -2649,28 +2654,29 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
                     {r.transactions.toLocaleString()}
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", {
-                      style: "currency",
-                      currency: "GBP",
-                    }).format(r.revenue || 0)}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.revenue || 0
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : !error ? (
-        <p style={{ marginTop: 8, color: COLORS.subtext }}>
-          {rows.length ? "No rows match your view filters." : "No rows loaded yet."}
-        </p>
-      ) : null}
+      ) : (
+        !error && (
+          <p style={{ marginTop: 8, color: COLORS.subtext }}>
+            {rows.length ? "No rows match your view filters." : "No rows loaded yet."}
+          </p>
+        )
+      )}
     </section>
   );
 }
 
-/* ========================================================================== */
-/* E-commerce KPIs                                                             */
-/* ========================================================================== */
+/* =============================================================================
+   E-commerce KPIs
+   ============================================================================= */
 function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
@@ -2703,15 +2709,11 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
   const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>E-commerce KPIs</h3>
-        <button
-          onClick={load}
-          style={styles.btnSecondary}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading\u2026" : "Load E-commerce KPIs"}
+        <h3 style={{ margin: 0 }}>E-commerce KPIs</h3>
+        <button onClick={load} style={styles.ghost} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load E-commerce KPIs"}
         </button>
         {/* KPI badges shown when totals loaded */}
         {totals && (
@@ -2727,11 +2729,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
               target={Number(kpiTargets?.revenueTarget)}
               currency
             />
-            <TargetBadge
-              label="CVR"
-              current={Number(totals?.cvr || 0)}
-              target={Number(kpiTargets?.cvrTarget)}
-            />
+            <TargetBadge label="CVR" current={Number(totals?.cvr || 0)} target={Number(kpiTargets?.cvrTarget)} />
           </div>
         )}
         <AiBlock
@@ -2744,7 +2742,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
       {!error && totals && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -2767,49 +2765,39 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
               <Tr label="Purchases (transactions)" value={totals.transactions} />
               <Tr
                 label="Revenue"
-                value={new Intl.NumberFormat("en-GB", {
-                  style: "currency",
-                  currency: "GBP",
-                }).format(totals.revenue || 0)}
+                value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                  totals.revenue || 0
+                )}
               />
-              <Tr
-                label="Conversion Rate (purchase / session)"
-                value={`${(totals.cvr || 0).toFixed(2)}%`}
-              />
+              <Tr label="Conversion Rate (purchase / session)" value={`${(totals.cvr || 0).toFixed(2)}%`} />
               <Tr
                 label="AOV (Revenue / Transactions)"
-                value={new Intl.NumberFormat("en-GB", {
-                  style: "currency",
-                  currency: "GBP",
-                }).format(totals.aov || 0)}
+                value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                  totals.aov || 0
+                )}
               />
             </tbody>
           </table>
         </div>
       )}
-      {!error && !totals && (
-        <p style={{ marginTop: 8, color: COLORS.subtext }}>No data loaded yet.</p>
-      )}
+      {!error && !totals && <p style={{ marginTop: 8, color: COLORS.subtext }}>No data loaded yet.</p>}
     </section>
   );
 }
 
 function Tr({ label, value }) {
-  const formatted =
-    typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : value;
+  const formatted = typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : value;
   return (
     <tr>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
-      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-        {formatted}
-      </td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{formatted}</td>
     </tr>
   );
 }
 
-/* ========================================================================== */
-/* Checkout Funnel                                                             */
-/* ========================================================================== */
+/* =============================================================================
+   Checkout Funnel
+   ============================================================================= */
 function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
@@ -2840,15 +2828,11 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
   };
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Checkout funnel (event counts)</h3>
-        <button
-          onClick={load}
-          style={styles.btnSecondary}
-          disabled={loading || !propertyId}
-        >
-          {loading ? "Loading\u2026" : "Load Checkout Funnel"}
+        <h3 style={{ margin: 0 }}>Checkout funnel (event counts)</h3>
+        <button onClick={load} style={styles.ghost} disabled={loading || !propertyId}>
+          {loading ? "Loading…" : "Load Checkout Funnel"}
         </button>
         <AiBlock
           asButton
@@ -2860,7 +2844,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {steps ? (
@@ -2901,29 +2885,16 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
   );
 }
 
-/* ========================================================================== */
-/* Trends Over Time                                                            */
-/* ========================================================================== */
+/* =============================================================================
+   Trends Over Time (Premium)
+   ============================================================================= */
 function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState("daily");
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  const MONTHS = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   function pad2(n) {
     return String(n).padStart(2, "0");
   }
@@ -2946,7 +2917,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     end.setUTCDate(start.getUTCDate() + 6);
     const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
     const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
-    return `${startStr}\u2013${endStr}`;
+    return `${startStr}–${endStr}`;
   }
   function formatYYYYMMDD(s) {
     const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
@@ -2996,17 +2967,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const hasRows = rows.length > 0;
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Trends over time</h3>
+        <h3 style={{ margin: 0 }}>Trends over time</h3>
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Granularity
-          <select
-            value={granularity}
-            onChange={(e) => setGranularity(e.target.value)}
-            style={styles.select}
-          >
+          <span style={styles.label}>Granularity</span>
+          <select value={granularity} onChange={(e) => setGranularity(e.target.value)} style={{ padding: 6 }}>
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
           </select>
@@ -3014,11 +2981,11 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
 
         <button
           onClick={load}
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={loading || !propertyId}
           title={!propertyId ? "Enter a GA4 property ID first" : ""}
         >
-          {loading ? "Loading\u2026" : "Load Trends"}
+          {loading ? "Loading…" : "Load Trends"}
         </button>
 
         <AiBlock
@@ -3026,7 +2993,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
           buttonLabel="Summarise with AI"
           endpoint="/api/insights/summarise-pro"
           payload={{
-            topic: "timeseries",
+            kind: "timeseries",
             granularity,
             series: rows,
             dateRange: { start: startDate, end: endDate },
@@ -3034,26 +3001,22 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             goals: [
               "Call out surges/drops and likely drivers",
               "Flag seasonality or anomalies",
-              "Recommend 2\u20133 next actions or tests",
+              "Recommend 2–3 next actions or tests",
             ],
           }}
         />
 
         <button
           onClick={() =>
-            downloadCsvGeneric(
-              `timeseries_${granularity}_${startDate}_to_${endDate}`,
-              rows,
-              [
-                { header: "Period", key: "period" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-                { header: "Transactions", key: "transactions" },
-                { header: "Revenue", key: "revenue" },
-              ]
-            )
+            downloadCsvGeneric(`timeseries_${granularity}_${startDate}_to_${endDate}`, rows, [
+              { header: "Period", key: "period" },
+              { header: "Sessions", key: "sessions" },
+              { header: "Users", key: "users" },
+              { header: "Transactions", key: "transactions" },
+              { header: "Revenue", key: "revenue" },
+            ])
           }
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={!hasRows}
         >
           Download CSV
@@ -3061,22 +3024,19 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {hasRows ? (
         <>
           <div style={{ marginTop: 12 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={buildLineChartUrl(rows)}
               alt="Sessions & Users trend"
-              style={{
-                maxWidth: "100%",
-                height: "auto",
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: 12,
-              }}
+              unoptimized
+              width={1000}
+              height={480}
+              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
             />
           </div>
 
@@ -3117,10 +3077,9 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
                         {r.transactions.toLocaleString()}
                       </td>
                       <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                        {new Intl.NumberFormat("en-GB", {
-                          style: "currency",
-                          currency: "GBP",
-                        }).format(r.revenue || 0)}
+                        {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                          r.revenue || 0
+                        )}
                       </td>
                     </tr>
                   );
@@ -3136,9 +3095,9 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-/* ========================================================================== */
-/* Products                                                                    */
-/* ========================================================================== */
+/* =============================================================================
+   Product Performance (feature-flag)
+   ============================================================================= */
 function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]); // [{ name, id, views, carts, purchases, revenue }]
@@ -3225,9 +3184,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
 
       const parsed = parseProductsResponse(data);
       if (!parsed.length) {
-        setError(
-          "No product rows returned. Check date range, filters, and GA4 e-commerce tagging."
-        );
+        setError("No product rows returned. Check date range, filters, and GA4 e-commerce tagging.");
       } else {
         parsed.sort((a, b) => (b.views || 0) - (a.views || 0));
         setRows(parsed);
@@ -3263,16 +3220,16 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   };
 
   return (
-    <section style={styles.card}>
+    <section style={{ ...styles.card, marginTop: 14 }}>
       <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Product Performance</h3>
+        <h3 style={{ margin: 0 }}>Product Performance</h3>
         <button
           onClick={load}
-          style={styles.btnSecondary}
+          style={styles.ghost}
           disabled={loading || !propertyId}
           title={!propertyId ? "Enter a GA4 property ID first" : ""}
         >
-          {loading ? "Loading\u2026" : "Load Products"}
+          {loading ? "Loading…" : "Load Products"}
         </button>
 
         <AiBlock
@@ -3292,22 +3249,20 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               revenue: r.revenue,
             })),
             instructions:
-              "Identify SKUs with high views but low add-to-carts or purchases; provide 2\u20133 testable hypotheses.",
+              "Identify SKUs with high views but low add-to-carts or purchases. Call out likely issues (pricing, imagery, PDP UX). Provide 2–3 testable hypotheses to improve add-to-cart rate and conversion.",
           }}
           resetSignal={resetSignal}
         />
 
-        <button onClick={exportCsv} style={styles.btnSecondary} disabled={!rows.length}>
+        <button onClick={exportCsv} style={styles.ghost} disabled={!rows.length}>
           Download CSV
         </button>
 
-        <span style={{ color: COLORS.subtext, fontSize: 12 }}>
-          Respects global filters (Country / Channel Group).
-        </span>
+        <span style={{ color: COLORS.subtext, fontSize: 12 }}>Respects global filters.</span>
       </div>
 
       {error && (
-        <p style={{ color: COLORS.red, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
+        <p style={{ color: COLORS.danger, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>
       )}
 
       {rows.length > 0 ? (
@@ -3339,14 +3294,8 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               {rows.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
-                  <td
-                    style={{
-                      padding: 8,
-                      borderBottom: "1px solid #eee",
-                      fontFamily: "monospace",
-                    }}
-                  >
-                    {r.id || "\u2014"}
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>
+                    {r.id || "—"}
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.views.toLocaleString()}
@@ -3358,10 +3307,9 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
                     {r.purchases.toLocaleString()}
                   </td>
                   <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
-                    {new Intl.NumberFormat("en-GB", {
-                      style: "currency",
-                      currency: "GBP",
-                    }).format(r.revenue || 0)}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                      r.revenue || 0
+                    )}
                   </td>
                 </tr>
               ))}
@@ -3384,7 +3332,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               overflow: "auto",
             }}
           >
-{JSON.stringify(debug, null, 2)}
+            {JSON.stringify(debug, null, 2)}
           </pre>
         </details>
       )}
@@ -3392,143 +3340,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ========================================================================== */
-/* Saved Views                                                                 */
-/* ========================================================================== */
-function SavedViews({ startDate, endDate, countrySel, channelSel, comparePrev, onApply, onRunReport }) {
-  const [presets, setPresets] = useState([]);
-  const [name, setName] = useState("");
-  const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(SAVED_VIEWS_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(arr)) setPresets(arr);
-    } catch {}
-  }, []);
-
-  const persist = (arr) => {
-    setPresets(arr);
-    try {
-      localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr));
-    } catch {}
-  };
-
-  const saveCurrent = () => {
-    const trimmed = (name || "").trim();
-    if (!trimmed) {
-      setNotice("Give your view a name.");
-      return;
-    }
-    const next = [
-      ...presets.filter((p) => p.name !== trimmed),
-      {
-        id: crypto?.randomUUID?.() || String(Date.now()),
-        name: trimmed,
-        startDate,
-        endDate,
-        country: countrySel,
-        channelGroup: channelSel,
-        comparePrev: !!comparePrev,
-        savedAt: new Date().toISOString(),
-      },
-    ].sort((a, b) => a.name.localeCompare(b.name));
-    persist(next);
-    setNotice("Saved!");
-    setTimeout(() => setNotice(""), 1200);
-  };
-
-  const apply = (p, run = false) => {
-    onApply({
-      startDate: p.startDate,
-      endDate: p.endDate,
-      country: p.country,
-      channelGroup: p.channelGroup,
-      comparePrev: !!p.comparePrev,
-    });
-    if (run) onRunReport();
-  };
-
-  const remove = (p) => {
-    const next = presets.filter((x) => x.name !== p.name);
-    persist(next);
-  };
-
-  return (
-    <section style={{ ...styles.card, marginTop: 12 }}>
-      <div style={styles.sectionTitleRow}>
-        <h3 style={styles.h3}>Saved Views</h3>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Name this view (e.g. UK \u00B7 Organic \u00B7 Sep)"
-          style={{ ...styles.input, minWidth: 260 }}
-        />
-        <button onClick={saveCurrent} style={styles.btnSecondary}>
-          Save current
-        </button>
-        {notice && <span style={{ color: COLORS.green, fontSize: 12 }}>{notice}</span>}
-      </div>
-
-      {presets.length > 0 ? (
-        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-          {presets.map((p) => (
-            <div
-              key={p.name}
-              style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
-            >
-              <div style={{ minWidth: 280 }}>
-                <b>{p.name}</b>{" "}
-                <span style={{ color: COLORS.subtext, fontSize: 12 }}>
-                  {p.startDate} \u2192 {p.endDate} \u00B7 {p.country} \u00B7 {p.channelGroup}{" "}
-                  {p.comparePrev ? "\u00B7 compare" : ""}
-                </span>
-              </div>
-              <button onClick={() => apply(p, false)} style={styles.btnSecondary}>
-                Apply
-              </button>
-              <button onClick={() => apply(p, true)} style={styles.btnSecondary}>
-                Apply & Run
-              </button>
-              <button
-                onClick={() => remove(p)}
-                style={{ ...styles.btnSecondary, color: COLORS.red }}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p style={{ marginTop: 8, color: COLORS.subtext, fontSize: 13 }}>
-          No saved views yet. Set dates/filters, give it a name, then \u201CSave current\u201D.
-        </p>
-      )}
-    </section>
-  );
-}
-
-/* ========================================================================== */
-/* CHANGE LOG / COMPAT NOTES / ASSUMPTIONS                                     */
-/* ========================================================================== */
-// Change Log:
-// - Reordered sections per your new spec: Saved Views (moved under Filters and gated Premium), then KPI Targets & Alerts / Digest panel, then Top Pages, Source/Medium, E-commerce KPIs, Checkout Funnel, Channels (kept), Trends (Premium), Campaigns (Premium), Campaigns Drilldown (Premium), Campaigns (KPI metrics) (Premium, renamed), Landing Pages × Attribution (Premium). Products (flag) unchanged.
-// - Implemented Premium gating for: Saved Views, Trends over time, Campaigns, Campaigns Drilldown, Campaigns (KPI metrics), Landing Pages × Attribution. Non-premium users see blurred content with a \u201CTry (alpha)\u201D button (local test only) that sets localStorage flag and reloads.
-// - Refined sticky header to be compact on mobile (smaller padding/font via CSS).
-// - Preserved all previous features: KPI targets, anomaly alerts Slack test, digest Slack test, AI summaries, CSV exports, debug blocks.
-// - Escaped typographic quotes and added inline ESLint suppressions for <img> charts to avoid build warnings without changing next.config.js.
-
-// Compatibility Notes:
-// - No public interfaces changed: same API routes, keys, query params, feature flags.
-// - Remote chart images still use QuickChart via <img>. If you later whitelist domains in next.config.js, you can switch to <Image>. Until then, lint rule is suppressed inline.
-// - Premium test toggle uses localStorage key `insightgpt_premium` for in-browser enablement; server-side gating (if any) remains your discretion.
-
-// Assumptions:
-// - You want Channels kept (not in the new order list, but requirement says not to remove features). Placed after Checkout Funnel to respect your core order while keeping parity.
-// - Currency is GBP across the UI, consistent with prior code.
-// - Slack webhook routes `/api/slack/anomaly` and `/api/slack/digest` already exist as in your MVP.
-// - The ORB/Google aesthetic is achieved via inline tokens without introducing new deps.
+/* =============================================================================
+   CHANGE LOG / NOTES (displayed after the code block in the chat)
+   ============================================================================= */
