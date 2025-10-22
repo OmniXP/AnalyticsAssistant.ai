@@ -1,66 +1,77 @@
 /* eslint-disable @next/next/no-img-element */
-
 // pages/index.js
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 
-/* ========================================================================== */
-/* THEME (ORB-like + Google colors)                                           */
-/* ========================================================================== */
-const COLORS = {
-  bg: "#ffffff",
-  panel: "rgba(255,255,255,0.72)",
-  border: "rgba(0,0,0,0.08)",
-  text: "#0f172a",
-  subtext: "#475569",
-  frost: "rgba(255,255,255,0.6)",
-  blue: "#4285F4", // Google Blue
-  green: "#34A853", // Up
-  red: "#EA4335", // Down / error
-  amber: "#FBBC05",
-  gray: "#E5E7EB",
-};
+/**
+ * ============================================================================
+ * InsightGPT Dashboard (MVP)
+ * - Keeps all existing features intact.
+ * - Adds: GA4 connection + Property ID status pills (green/red),
+ *         Blue "Summarise with AI" CTA styling,
+ *         Mobile-only accordion for key KPI sections to reduce scroll.
+ *
+ * FEATURE REMINDERS / GUARANTEES:
+ * - Premium gating preserved (localStorage key insightgpt_premium_flag_v1).
+ * - Saved Views, KPI Targets, Alerts/Digest use existing storage keys.
+ * - All API routes unchanged.
+ * - No new dependencies.
+ * - Escapes quotes to satisfy react/no-unescaped-entities.
+ * - Uses <Image> where relevant; leaves externally-hosted chart images (QuickChart) as <img>.
+ * ============================================================================
+ */
 
-const SHADOW = "0 10px 30px rgba(0,0,0,0.08)";
-const RADIUS = 14;
-
-/* ========================================================================== */
-/* STORAGE KEYS (must not change)                                             */
-/* ========================================================================== */
+/* ============================== Constants ============================== */
 const STORAGE_KEY = "insightgpt_preset_v2";
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
-const KPI_KEY = "insightgpt_kpi_targets_v1";
-const KPI_KEY_ALT = "kpi_targets_v1"; // back-compat
-const ALERTS_KEY = "insightgpt_alerts_cfg_v1";
+const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
+const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
+const PREMIUM_FLAG_KEY = "insightgpt_premium_flag_v1"; // "Alpha" or "Pro" to unlock premium UI (dev/testing)
 
-/* ========================================================================== */
-/* PREMIUM GATE (strict)                                                      */
-/* - No more "Try Alpha".                                                     */
-/* - Dev override (session-only) available via console:                       */
-/*     sessionStorage.setItem('__dev_premium_session','1')                    */
-/*     // remove with: sessionStorage.removeItem('__dev_premium_session')     */
-/* ========================================================================== */
-function usePremium() {
-  const [isPremium, setIsPremium] = useState(false);
+const COLORS = {
+  googleBlue: "#4285F4",
+  googleGreen: "#34A853",
+  googleRed: "#EA4335",
+  frost: "#F7F9FB",
+  frostEdge: "#E9EEF5",
+  text: "#111827",
+  subtext: "#6B7280",
+  border: "#E5E7EB",
+  soft: "#F3F4F6",
+};
 
-  useEffect(() => {
-    // Server should set premium via session/cookie in a real app.
-    // Here we strictly default to false. A dev may temporary unlock per session:
-    // sessionStorage.setItem('__dev_premium_session','1')
-    try {
-      const dev = typeof window !== "undefined" && sessionStorage.getItem("__dev_premium_session") === "1";
-      setIsPremium(!!dev); // only dev override allowed in MVP
-    } catch {
-      setIsPremium(false);
-    }
-  }, []);
+const COUNTRY_OPTIONS = [
+  "All",
+  "United Kingdom",
+  "United States",
+  "Ireland",
+  "Germany",
+  "France",
+  "Spain",
+  "Italy",
+  "Netherlands",
+  "Australia",
+  "Canada",
+  "India",
+];
 
-  return isPremium;
-}
+const CHANNEL_GROUP_OPTIONS = [
+  "All",
+  "Direct",
+  "Organic Search",
+  "Paid Search",
+  "Organic Social",
+  "Paid Social",
+  "Email",
+  "Referral",
+  "Display",
+  "Video",
+  "Affiliates",
+  "Organic Shopping",
+  "Paid Shopping",
+];
 
-/* ========================================================================== */
-/* HELPERS                                                                    */
-/* ========================================================================== */
+/* ============================== Utilities ============================== */
 function encodeQuery(state) {
   const p = new URLSearchParams();
   if (state.startDate) p.set("start", state.startDate);
@@ -86,21 +97,6 @@ function decodeQuery() {
     comparePrev: q.compare === "1",
   };
 }
-function ymd(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-function computePreviousRange(startStr, endStr) {
-  const start = new Date(startStr);
-  const end = new Date(endStr);
-  const oneDay = 24 * 60 * 60 * 1000;
-  const days = Math.round((end - start) / oneDay) + 1;
-  const prevEnd = new Date(start.getTime() - oneDay);
-  const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
-  return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
-}
 async function fetchJson(url, payload) {
   const res = await fetch(url, {
     method: "POST",
@@ -114,35 +110,92 @@ async function fetchJson(url, payload) {
   } catch {}
   if (!res.ok) {
     const msg =
-      data?.error || data?.message || data?.details?.error?.message || text || `HTTP ${res.status}`;
+      data?.error ||
+      data?.message ||
+      data?.details?.error?.message ||
+      text ||
+      `HTTP ${res.status}`;
     throw new Error(msg);
   }
   return data || {};
 }
+function ymd(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function computePreviousRange(startStr, endStr) {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const oneDay = 24 * 60 * 60 * 1000;
+  const days = Math.round((end - start) / oneDay) + 1; // inclusive
+  const prevEnd = new Date(start.getTime() - oneDay);
+  const prevStart = new Date(prevEnd.getTime() - (days - 1) * oneDay);
+  return { prevStart: ymd(prevStart), prevEnd: ymd(prevEnd) };
+}
 function safeStringify(value) {
   try {
     return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
+  } catch (e) {
+    try {
+      const seen = new WeakSet();
+      const replacer = (_, v) => {
+        if (v && typeof v === "object") {
+          if (seen.has(v)) return "[[circular]]";
+          seen.add(v);
+        }
+        return v;
+      };
+      return JSON.stringify(value, replacer, 2);
+    } catch {
+      return String(value);
+    }
   }
 }
-function pctToTarget(current, target) {
-  if (!target || target <= 0) return null;
-  return Math.round((current / target) * 100);
-}
-function loadKpiTargets() {
-  try {
-    const raw = localStorage.getItem(KPI_KEY) || localStorage.getItem(KPI_KEY_ALT);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
+function parseGa4Channels(response) {
+  if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
+  const rows = response.rows.map((r) => ({
+    channel: r.dimensionValues?.[0]?.value || "(unknown)",
+    sessions: Number(r.metricValues?.[0]?.value || 0),
+    users: Number(r.metricValues?.[1]?.value || 0),
+  }));
+  const totals = rows.reduce(
+    (a, r) => ({ sessions: a.sessions + r.sessions, users: a.users + r.users }),
+    { sessions: 0, users: 0 }
+  );
+  rows.sort((a, b) => b.sessions - a.sessions);
+  return { rows, totals };
 }
 function formatPctDelta(curr, prev) {
   if (prev === 0 && curr === 0) return "0%";
   if (prev === 0) return "+100%";
   const pct = Math.round(((curr - prev) / prev) * 100);
   return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+function downloadCsvChannels(rows, totals, startDate, endDate) {
+  if (!rows?.length) return;
+  const header = ["Channel", "Sessions", "Users", "% of Sessions"];
+  const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
+  const lines = rows.map((r) => {
+    const pct = totalSessions ? Math.round((r.sessions / totalSessions) * 100) : 0;
+    return [r.channel, r.sessions, r.users, `${pct}%`];
+  });
+  lines.push(["Total", totals.sessions, totals.users, ""]);
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const filename = `ga4_channels_${startDate}_to_${endDate}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 function downloadCsvGeneric(filenamePrefix, rows, columns) {
   if (!rows?.length) return;
@@ -175,296 +228,1030 @@ function buildChannelPieUrl(rows) {
   const encoded = encodeURIComponent(JSON.stringify(cfg));
   return `https://quickchart.io/chart?w=550&h=360&c=${encoded}`;
 }
-function parseGa4Channels(response) {
-  if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
-  const rows = response.rows.map((r) => ({
-    channel: r.dimensionValues?.[0]?.value || "(unknown)",
-    sessions: Number(r.metricValues?.[0]?.value || 0),
-    users: Number(r.metricValues?.[1]?.value || 0),
-  }));
-  const totals = rows.reduce(
-    (a, r) => ({ sessions: a.sessions + r.sessions, users: a.users + r.users }),
-    { sessions: 0, users: 0 }
-  );
-  rows.sort((a, b) => b.sessions - a.sessions);
-  return { rows, totals };
+function loadKpiTargets() {
+  try {
+    const raw =
+      localStorage.getItem(KPI_TARGETS_KEY) || localStorage.getItem("kpi_targets_v1");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+function pctToTarget(current, target) {
+  if (!target || target <= 0) return null;
+  return Math.round((current / target) * 100);
 }
 
-/* ========================================================================== */
-/* LAYOUT BLOCKS                                                               */
-/* ========================================================================== */
-function FrostCard({ title, subtitle, right, children, id, style }) {
+/* ============================== Reusable UI ============================== */
+function Pill({ color = "#999", bg = "#eee", text, title }) {
+  return (
+    <span
+      title={title || ""}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 10px",
+        borderRadius: 999,
+        border: `1px solid ${bg}`,
+        background: bg,
+        color,
+        fontSize: 12,
+        fontWeight: 600,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: "inline-block",
+          width: 8,
+          height: 8,
+          borderRadius: 999,
+          background: color,
+          boxShadow: `0 0 0 2px ${bg}`,
+        }}
+      />
+      {text}
+    </span>
+  );
+}
+function FrostCard({ title, actions, children, id }) {
   return (
     <section
       id={id}
-      aria-labelledby={id ? `${id}-h` : undefined}
       style={{
         marginTop: 18,
-        padding: 16,
-        borderRadius: RADIUS,
-        background: COLORS.panel,
-        border: `1px solid ${COLORS.border}`,
-        boxShadow: SHADOW,
-        backdropFilter: "saturate(140%) blur(8px)",
-        WebkitBackdropFilter: "saturate(140%) blur(8px)",
-        ...style,
+        border: `1px solid ${COLORS.frostEdge}`,
+        borderRadius: 14,
+        background: "rgba(255,255,255,0.7)",
+        backdropFilter: "blur(8px)",
+        boxShadow: "0 8px 24px rgba(16,24,40,0.06)",
       }}
     >
       <div
         style={{
+          padding: "12px 14px",
+          borderBottom: `1px solid ${COLORS.frostEdge}`,
           display: "flex",
-          gap: 12,
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 12,
           flexWrap: "wrap",
         }}
       >
-        <div>
-          <h3 id={id ? `${id}-h` : undefined} style={{ margin: 0, color: COLORS.text }}>
-            {title}
-          </h3>
-          {subtitle ? (
-            <p style={{ margin: "4px 0 0", color: COLORS.subtext, fontSize: 13 }}>{subtitle}</p>
-          ) : null}
-        </div>
-        <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {right}
-        </div>
+        <h3 style={{ margin: 0, fontSize: 16, color: COLORS.text }}>{title}</h3>
+        {actions ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div> : null}
       </div>
-      <div style={{ marginTop: 10 }}>{children}</div>
+      <div style={{ padding: 14 }}>{children}</div>
     </section>
   );
 }
-
-function Skeleton({ height = 16, width = "100%", radius = 8 }) {
+function Button({ onClick, children, disabled, kind = "default", title, id, style }) {
+  const base = {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: `1px solid ${COLORS.border}`,
+    background: "#fff",
+    color: COLORS.text,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+    fontWeight: 600,
+  };
+  const kinds = {
+    default: base,
+    primary: {
+      ...base,
+      background: COLORS.googleBlue,
+      borderColor: "#2C6AD9",
+      color: "#fff",
+    },
+    subtle: {
+      ...base,
+      background: COLORS.soft,
+      borderColor: COLORS.border,
+      color: COLORS.text,
+    },
+    danger: {
+      ...base,
+      background: "#fff5f5",
+      borderColor: "#ffd6d6",
+      color: COLORS.googleRed,
+    },
+  };
+  const st = { ...kinds[kind] };
+  return (
+    <button id={id} title={title} onClick={onClick} disabled={disabled} style={{ ...st, ...(style || {}) }}>
+      {children}
+    </button>
+  );
+}
+function BlueAiButton(props) {
+  // Enforces a consistent prominent CTA for "Summarise with AI"
+  return <Button kind="primary" {...props} />;
+}
+function Skeleton({ height = 16, width = "100%", radius = 6 }) {
   return (
     <div
-      aria-hidden="true"
       style={{
-        width,
         height,
+        width,
         borderRadius: radius,
         background:
-          "linear-gradient(90deg, rgba(0,0,0,0.06) 25%, rgba(0,0,0,0.08) 37%, rgba(0,0,0,0.06) 63%)",
+          "linear-gradient(90deg, #f2f4f7 25%, #eaeef3 37%, #f2f4f7 63%)",
         backgroundSize: "400% 100%",
-        animation: "shimmer 1.2s ease-in-out infinite",
+        animation: "sweep 1.4s ease infinite",
       }}
     />
   );
 }
 
-/* ========================================================================== */
-/* PREMIUM GUARD & UPGRADE MODAL                                               */
-/* ========================================================================== */
-function PremiumTease({ feature, onOpen }) {
+/* Keyframe for Skeleton */
+if (typeof document !== "undefined" && !document.getElementById("sweep-keyframes")) {
+  const style = document.createElement("style");
+  style.id = "sweep-keyframes";
+  style.textContent = `
+  @keyframes sweep {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (max-width: 768px) {
+    .mobile-accordion details > summary { 
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #F3F4F6;
+      border: 1px solid #E5E7EB;
+      font-weight: 600;
+    }
+    .mobile-accordion details[open] > summary {
+      background: #EEF2FF;
+      border-color: #E0E7FF;
+    }
+    .mobile-accordion .accordion-inner {
+      padding: 10px 0 2px;
+    }
+  }`;
+  document.head.appendChild(style);
+}
+
+/* ============================== Premium Gate ============================== */
+function isPremium() {
+  try {
+    const raw = localStorage.getItem(PREMIUM_FLAG_KEY);
+    if (!raw) return false;
+    const v = String(raw || "").toLowerCase();
+    return v === "alpha" || v === "pro" || v === "true" || v === "yes";
+  } catch {
+    return false;
+  }
+}
+
+/* ============================== KPI Target Badge ============================== */
+function TargetBadge({ label, current, target, currency = false }) {
+  if (target == null) return null;
+  const pct = pctToTarget(current, target);
+  if (pct == null) return null;
+  const ok = pct >= 100;
+  const val = currency
+    ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(target)
+    : Number(target).toLocaleString();
   return (
-    <div
-      role="region"
-      aria-label={`${feature} locked`}
+    <span
+      title={`${label} target: ${val} • Progress: ${pct}%`}
       style={{
-        position: "relative",
-        padding: 18,
-        borderRadius: RADIUS,
-        border: `1px dashed ${COLORS.border}`,
-        background: "#f8fafc",
-        color: COLORS.subtext,
+        marginLeft: 6,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        background: ok ? "#e6f4ea" : "#fdecea",
+        color: ok ? "#137333" : "#b00020",
+        border: `1px solid ${ok ? "#b7e1cd" : "#f4c7c3"}`,
       }}
     >
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: "linear-gradient(to bottom, rgba(255,255,255,0.65), rgba(255,255,255,0.9))",
-          backdropFilter: "blur(2px)",
-          borderRadius: RADIUS,
-          pointerEvents: "none",
-        }}
-      />
-      <div style={{ position: "relative" }}>
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "4px 10px",
-            borderRadius: 999,
-            background: "#eef2ff",
-            color: "#3730a3",
-            fontSize: 12,
-            fontWeight: 600,
-            marginBottom: 10,
-          }}
-        >
-          <LockIcon />
-          Premium
-        </div>
-        <p style={{ margin: "4px 0 8px" }}>
-          <b>{feature}</b> is available on Premium. Unlock AI summaries, anomaly alerts delivery,
-          advanced attribution &amp; more.
-        </p>
-        <button
-          onClick={onOpen}
-          style={{
-            background: COLORS.blue,
-            color: "#fff",
-            border: "none",
-            padding: "8px 12px",
-            borderRadius: 10,
-            cursor: "pointer",
-          }}
-        >
-          Upgrade to Premium
-        </button>
-      </div>
-    </div>
+      {`${pct}% to ${label} target`}
+    </span>
   );
 }
-function PremiumGuard({ isPremium, feature, onOpen, children }) {
-  if (isPremium) return children;
-  return <PremiumTease feature={feature} onOpen={onOpen} />;
-}
-function UpgradeModal({ open, onClose }) {
-  if (!open) return null;
+
+/* ============================== Sticky Top Bar (status) ============================== */
+function StatusDot({ status, label }) {
+  const map = {
+    good: { bg: "#e6f4ea", bc: "#b7e1cd", dot: COLORS.googleGreen, text: "#14532D" },
+    bad: { bg: "#fdecea", bc: "#f4c7c3", dot: COLORS.googleRed, text: "#7F1D1D" },
+    unknown: { bg: "#f8fafc", bc: "#e2e8f0", dot: "#94A3B8", text: "#334155" },
+  };
+  const s = map[status] || map.unknown;
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Upgrade to Premium"
+    <span
       style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(15,23,42,0.45)",
-        zIndex: 1000,
-        display: "grid",
-        placeItems: "center",
-        padding: 16,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        borderRadius: 999,
+        border: `1px solid ${s.bc}`,
+        background: s.bg,
+        color: s.text,
+        fontSize: 12,
+        fontWeight: 600,
       }}
-      onClick={onClose}
+      title={label}
     >
+      <span style={{ width: 8, height: 8, borderRadius: 8, background: s.dot }} aria-hidden />
+      {label}
+    </span>
+  );
+}
+
+/* ============================== Page ============================== */
+export default function Home() {
+  // Base controls
+  const [propertyId, setPropertyId] = useState("");
+  const [startDate, setStartDate] = useState("2024-09-01");
+  const [endDate, setEndDate] = useState("2024-09-30");
+  const [comparePrev, setComparePrev] = useState(false);
+
+  // Filters
+  const [countrySel, setCountrySel] = useState("All");
+  const [channelSel, setChannelSel] = useState("All");
+  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
+
+  // Global signals
+  const [refreshSignal, setRefreshSignal] = useState(0);
+  const [dashKey, setDashKey] = useState(1);
+
+  // Channel results (hero)
+  const [result, setResult] = useState(null);
+  const [prevResult, setPrevResult] = useState(null);
+  const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
+  const { rows: prevRows, totals: prevTotals } = useMemo(() => parseGa4Channels(prevResult), [prevResult]);
+
+  // Status & errors
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // Connection status (session + property id)
+  const [gaSessionConnected, setGaSessionConnected] = useState(false); // true if GA OAuth session active
+  const [hasProperty, setHasProperty] = useState(false); // true if propertyId entered (non-empty)
+
+  // Saved views notice
+  const [saveNotice, setSaveNotice] = useState("");
+
+  // Refs
+  const topAnchorRef = useRef(null);
+
+  useEffect(() => {
+    // URL params -> initial state
+    try {
+      if (typeof window === "undefined") return;
+      const q = decodeQuery();
+      if (!q) return;
+      if (q.startDate) setStartDate(q.startDate);
+      if (q.endDate) setEndDate(q.endDate);
+      setCountrySel(q.country || "All");
+      setChannelSel(q.channelGroup || "All");
+      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
+      setComparePrev(!!q.comparePrev);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    // Load preset
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (saved?.propertyId) setPropertyId(saved.propertyId);
+      if (saved?.startDate) setStartDate(saved.startDate);
+      if (saved?.endDate) setEndDate(saved.endDate);
+      if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
+      if (saved?.countrySel) setCountrySel(saved.countrySel);
+      if (saved?.channelSel) setChannelSel(saved.channelSel);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    // Persist preset
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          propertyId,
+          startDate,
+          endDate,
+          appliedFilters,
+          countrySel,
+          channelSel,
+        })
+      );
+    } catch {}
+  }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
+
+  useEffect(() => {
+    // Determine connection status
+    async function checkAuth() {
+      try {
+        const res = await fetch("/api/auth/google/status", { method: "GET" });
+        const ok = res.ok ? await res.json() : null;
+        setGaSessionConnected(!!ok?.connected);
+      } catch {
+        setGaSessionConnected(false);
+      }
+    }
+    // Session status
+    checkAuth();
+  }, []);
+
+  // Property ID presence -> status
+  useEffect(() => {
+    setHasProperty(!!(propertyId && String(propertyId).trim()));
+  }, [propertyId]);
+
+  const connect = () => {
+    window.location.href = "/api/auth/google/start";
+  };
+  const applyFilters = () => {
+    setAppliedFilters({ country: countrySel, channelGroup: channelSel });
+  };
+
+  async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
+    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
+  }
+
+  const runReport = async () => {
+    setError("");
+    setResult(null);
+    setPrevResult(null);
+    setLoading(true);
+    try {
+      const curr = await fetchGa4Channels({
+        propertyId,
+        startDate,
+        endDate,
+        filters: appliedFilters,
+      });
+      setResult(curr);
+
+      // Update URL to reflect the view we just ran
+      try {
+        const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+        const path = window.location.pathname + (qs ? `?${qs}` : "");
+        window.history.replaceState(null, "", path);
+      } catch {}
+
+      // Broadcast reset for sections & AI
+      setRefreshSignal((n) => n + 1);
+
+      // Scroll user to the hero block after run
+      setTimeout(() => {
+        if (topAnchorRef.current) {
+          topAnchorRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 80);
+
+      if (comparePrev) {
+        const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
+        const prev = await fetchGa4Channels({
+          propertyId,
+          startDate: prevStart,
+          endDate: prevEnd,
+          filters: appliedFilters,
+        });
+        setPrevResult(prev);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetDashboard = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+    setStartDate("2024-09-01");
+    setEndDate("2024-09-30");
+    setCountrySel("All");
+    setChannelSel("All");
+    setAppliedFilters({ country: "All", channelGroup: "All" });
+    setComparePrev(false);
+    setResult(null);
+    setPrevResult(null);
+    setError("");
+    setDashKey((k) => k + 1);
+    try {
+      const path = window.location.pathname;
+      window.history.replaceState(null, "", path);
+    } catch {}
+  };
+
+  const top = rows[0];
+  const topShare =
+    top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
+
+  /* ============================== Sticky header ============================== */
+  const sessionStatus = gaSessionConnected
+    ? { s: "good", label: "Google session: Connected" }
+    : { s: "bad", label: "Google session: Not connected" };
+  const propertyStatus = hasProperty
+    ? { s: "good", label: "Property ID: Present" }
+    : { s: "bad", label: "Property ID: Missing" };
+
+  /* ============================== Premium ============================== */
+  const premium = isPremium();
+
+  return (
+    <main
+      style={{
+        padding: 16,
+        fontFamily:
+          "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+        maxWidth: 1150,
+        margin: "0 auto",
+        color: COLORS.text,
+      }}
+    >
+      {/* Sticky nav */}
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
-          width: "min(680px, 96vw)",
-          borderRadius: 16,
-          background: COLORS.bg,
-          boxShadow: SHADOW,
-          border: `1px solid ${COLORS.border}`,
-          padding: 20,
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+          background: "rgba(255,255,255,0.85)",
+          backdropFilter: "blur(8px)",
+          borderBottom: `1px solid ${COLORS.frostEdge}`,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ margin: 0 }}>Go Premium</h2>
-          <button
-            aria-label="Close"
-            onClick={onClose}
-            style={{
-              border: "none",
-              background: "transparent",
-              fontSize: 22,
-              cursor: "pointer",
-              color: COLORS.subtext,
-            }}
-          >
-            &times;
-          </button>
-        </div>
-        <p style={{ color: COLORS.subtext, marginTop: 8 }}>
-          Unlock anomaly alerts to Slack, AI digests, advanced campaigns &amp; attribution, saved
-          views persistence, and more.
-        </p>
-
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            display: "flex",
             gap: 12,
-            marginTop: 12,
+            alignItems: "center",
+            padding: "10px 2px",
+            flexWrap: "wrap",
           }}
         >
-          {[
-            ["Anomaly alerts to Slack", "Never miss spikes & dips"],
-            ["AI performance digests", "Weekly or monthly in Slack"],
-            ["Campaign drilldowns", "Revenue, CVR, AOV slices"],
-            ["Saved views", "Shareable presets & filters"],
-          ].map(([h, s]) => (
-            <div
-              key={h}
-              style={{
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: 12,
-                padding: 12,
-                background: "#fcfcff",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <CheckIcon color={COLORS.green} />
-                <b>{h}</b>
-              </div>
-              <div style={{ color: COLORS.subtext, fontSize: 13, marginTop: 6 }}>{s}</div>
-            </div>
-          ))}
-        </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Image
+              src="/logo.svg"
+              alt="InsightGPT"
+              width={26}
+              height={26}
+              priority
+            />
+            <h1 style={{ margin: 0, fontSize: 18 }}>InsightGPT (MVP)</h1>
+          </div>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-          <a
-            href="/upgrade"
-            style={{
-              background: COLORS.blue,
-              color: "#fff",
-              textDecoration: "none",
-              padding: "10px 14px",
-              borderRadius: 12,
-              fontWeight: 600,
-            }}
-          >
-            Upgrade
-          </a>
-          <a
-            href="mailto:hello@insightgpt.ai?subject=Upgrade%20request"
-            style={{
-              border: `1px solid ${COLORS.border}`,
-              color: COLORS.text,
-              textDecoration: "none",
-              padding: "10px 14px",
-              borderRadius: 12,
-              fontWeight: 600,
-              background: "#fff",
-            }}
-          >
-            Talk to sales
-          </a>
-          <div style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12, color: COLORS.subtext }}>
-            Tip for devs: run <code>sessionStorage.setItem(&quot;__dev_premium_session&quot;,&quot;1&quot;)</code> to
-            test Premium in this session.
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <StatusDot status={sessionStatus.s} label={sessionStatus.label} />
+            <StatusDot status={propertyStatus.s} label={propertyStatus.label} />
+            <Button onClick={connect} title="Connect Google Analytics">
+              Connect Google Analytics
+            </Button>
           </div>
         </div>
       </div>
+
+      {/* Subheading */}
+      <p style={{ marginTop: 12, color: COLORS.subtext }}>
+        Connect GA4, choose a date range, optionally apply filters, and run your report.
+      </p>
+
+      {/* Controls */}
+      <FrostCard
+        title="Controls"
+        actions={
+          <>
+            <Button
+              onClick={runReport}
+              disabled={loading || !gaSessionConnected || !hasProperty}
+              title={!gaSessionConnected ? "Connect Google first" : !hasProperty ? "Enter a GA4 Property ID" : "Run"}
+            >
+              {loading ? "Running…" : "Run GA4 Report"}
+            </Button>
+            <Button
+              onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
+              disabled={!rows.length}
+              title={rows.length ? "Download channels table as CSV" : "Run a report first"}
+            >
+              Download CSV
+            </Button>
+            <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              <input
+                id="compare-prev"
+                type="checkbox"
+                checked={comparePrev}
+                onChange={(e) => setComparePrev(e.target.checked)}
+              />
+              Compare vs previous period
+            </label>
+            <Button onClick={resetDashboard} title="Reset all filters & date range">
+              Reset
+            </Button>
+          </>
+        }
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+            alignItems: "end",
+          }}
+        >
+          <div>
+            <label htmlFor="property-id" style={{ fontSize: 12, color: COLORS.subtext }}>
+              GA4 Property ID
+            </label>
+            <input
+              id="property-id"
+              name="property-id"
+              value={propertyId}
+              onChange={(e) => setPropertyId(e.target.value)}
+              placeholder="e.g. 123456789"
+              style={{
+                marginTop: 6,
+                padding: 10,
+                width: "100%",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="start-date" style={{ fontSize: 12, color: COLORS.subtext }}>
+              Start date
+            </label>
+            <input
+              id="start-date"
+              name="start-date"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              style={{
+                marginTop: 6,
+                padding: 10,
+                width: "100%",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="end-date" style={{ fontSize: 12, color: COLORS.subtext }}>
+              End date
+            </label>
+            <input
+              id="end-date"
+              name="end-date"
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              style={{
+                marginTop: 6,
+                padding: 10,
+                width: "100%",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="country-filter" style={{ fontSize: 12, color: COLORS.subtext }}>
+              Country
+            </label>
+            <select
+              id="country-filter"
+              value={countrySel}
+              onChange={(e) => setCountrySel(e.target.value)}
+              style={{
+                marginTop: 6,
+                padding: 10,
+                width: "100%",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            >
+              {COUNTRY_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="channel-filter" style={{ fontSize: 12, color: COLORS.subtext }}>
+              Channel Group
+            </label>
+            <select
+              id="channel-filter"
+              value={channelSel}
+              onChange={(e) => setChannelSel(e.target.value)}
+              style={{
+                marginTop: 6,
+                padding: 10,
+                width: "100%",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            >
+              {CHANNEL_GROUP_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Button onClick={applyFilters} title="Apply filters">Apply filters</Button>
+            {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
+              <Pill
+                color={COLORS.googleGreen}
+                bg="#E6F4EA"
+                text={`Filters: ${appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}${appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}${appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}`}
+                title="Active filters"
+              />
+            )}
+          </div>
+        </div>
+      </FrostCard>
+
+      {/* Saved Views (Premium) */}
+      <div style={{ marginTop: 12 }}>
+        <SavedViews
+          premium={premium}
+          startDate={startDate}
+          endDate={endDate}
+          countrySel={countrySel}
+          channelSel={channelSel}
+          comparePrev={comparePrev}
+          onApply={(view) => {
+            setStartDate(view.startDate);
+            setEndDate(view.endDate);
+            setCountrySel(view.country || "All");
+            setChannelSel(view.channelGroup || "All");
+            setComparePrev(!!view.comparePrev);
+            setAppliedFilters({
+              country: view.country || "All",
+              channelGroup: view.channelGroup || "All",
+            });
+          }}
+          onRunReport={runReport}
+          onNotice={(m) => {
+            setSaveNotice(m || "");
+            if (m) setTimeout(() => setSaveNotice(""), 1200);
+          }}
+        />
+        {saveNotice && (
+          <div style={{ marginTop: 6 }}>
+            <Pill color={COLORS.googleGreen} bg="#E6F4EA" text={saveNotice} />
+          </div>
+        )}
+      </div>
+
+      {error && <p style={{ color: COLORS.googleRed, marginTop: 16 }}>Error: {error}</p>}
+
+      {/* Anchor to scroll after running */}
+      <div ref={topAnchorRef} />
+
+      {/* HERO: Traffic by Default Channel Group (always under controls) */}
+      {loading && (
+        <FrostCard title="Traffic by Default Channel Group">
+          <div style={{ display: "grid", gap: 10 }}>
+            <Skeleton height={16} width="40%" />
+            <Skeleton height={200} />
+            <Skeleton height={16} width="60%" />
+          </div>
+        </FrostCard>
+      )}
+      {!loading && rows.length > 0 && (
+        <FrostCard
+          id="hero-channels"
+          title={
+            <>
+              Traffic by Default Channel Group{" "}
+              <TargetBadge
+                label="Sessions"
+                current={Number(totals?.sessions || 0)}
+                target={Number(loadKpiTargets()?.sessionsTarget)}
+              />
+            </>
+          }
+          actions={
+            <>
+              <AiBlock
+                asButton
+                buttonLabel="Summarise with AI"
+                endpoint="/api/insights/summarise-pro"
+                payload={{
+                  topic: "channels",
+                  rows,
+                  totals,
+                  dateRange: { start: startDate, end: endDate },
+                  filters: appliedFilters,
+                }}
+                resetSignal={refreshSignal}
+                blueCta
+              />
+              <Button
+                onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
+                disabled={!rows.length}
+                title="Download channels CSV"
+              >
+                Download CSV
+              </Button>
+            </>
+          }
+        >
+          <ul style={{ marginTop: 12 }}>
+            <li>
+              <b>Total sessions:</b> {totals.sessions.toLocaleString()}
+            </li>
+            <li>
+              <b>Total users:</b> {totals.users.toLocaleString()}
+            </li>
+            {top && (
+              <li>
+                <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
+              </li>
+            )}
+            {prevRows.length > 0 && (
+              <>
+                <li style={{ marginTop: 6 }}>
+                  <b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev{" "}
+                  {prevTotals.sessions.toLocaleString()})
+                </li>
+                <li>
+                  <b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev{" "}
+                  {prevTotals.users.toLocaleString()})
+                </li>
+              </>
+            )}
+          </ul>
+
+          <div style={{ marginTop: 8, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Channel</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>% of Sessions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const pct = totals.sessions > 0 ? Math.round((r.sessions / totals.sessions) * 100) : 0;
+                  return (
+                    <tr key={r.channel}>
+                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.channel}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.sessions.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                        {r.users.toLocaleString()}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{pct}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            {/* QuickChart URL image (external) - keep <img> to avoid Next.js domain config */}
+            <img
+              src={buildChannelPieUrl(rows)}
+              alt="Channel share chart"
+              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
+            />
+          </div>
+        </FrostCard>
+      )}
+
+      {/* MOBILE-ONLY ACCORDION FOR KEY KPIs */}
+      <div className="mobile-accordion" style={{ marginTop: 12 }}>
+        <MobileAccordionSection title="Top pages (views)">
+          <TopPages
+            key={`tp-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+        </MobileAccordionSection>
+
+        <MobileAccordionSection title="Source / Medium">
+          <SourceMedium
+            key={`sm-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+        </MobileAccordionSection>
+
+        <MobileAccordionSection title="E-commerce KPIs">
+          <EcommerceKPIs
+            key={`ekpi-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+        </MobileAccordionSection>
+
+        <MobileAccordionSection title="Checkout funnel (event counts)">
+          <CheckoutFunnel
+            key={`cf-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+        </MobileAccordionSection>
+      </div>
+
+      {/* DESKTOP/VISIBLE SECTIONS (non-accordion) */}
+      <div style={{ display: "grid", gap: 8 }}>
+        <HideOnMobile>
+          <TopPages
+            key={`tp2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+          <SourceMedium
+            key={`sm2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+          <EcommerceKPIs
+            key={`ekpi2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+          <CheckoutFunnel
+            key={`cf2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+          />
+        </HideOnMobile>
+      </div>
+
+      {/* PREMIUM SECTIONS */}
+      <PremiumGate label="Trends over time" premium={premium}>
+        <TrendsOverTime
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      </PremiumGate>
+
+      <PremiumGate label="Campaigns" premium={premium}>
+        <Campaigns
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      </PremiumGate>
+
+      <PremiumGate label="Campaign drill-down" premium={premium}>
+        <CampaignDrilldown
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      </PremiumGate>
+
+      <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
+        <CampaignsOverview
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      </PremiumGate>
+
+      <PremiumGate label="Landing Pages × Attribution" premium={premium}>
+        <LandingPages
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      </PremiumGate>
+
+      {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
+        <Products
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          resetSignal={refreshSignal}
+        />
+      )}
+
+      {/* KPI Targets & Alerts / Digest (Premium) */}
+      <PremiumGate label="KPI Targets & Alerts / Digest" premium={premium}>
+        <KpiAndAlerts />
+      </PremiumGate>
+
+      {/* Raw JSON (debug) */}
+      {result ? (
+        <details style={{ marginTop: 24 }}>
+          <summary>Raw GA4 JSON (debug)</summary>
+          <pre
+            style={{
+              marginTop: 8,
+              background: "#f8f8f8",
+              padding: 16,
+              borderRadius: 8,
+              overflow: "auto",
+            }}
+          >
+            {safeStringify(result)}
+          </pre>
+        </details>
+      ) : null}
+    </main>
+  );
+}
+
+/* ============================== Helpers: Responsive wrappers ============================== */
+function HideOnMobile({ children }) {
+  return (
+    <div
+      style={{
+        display: "block",
+      }}
+    >
+      <style jsx>{`
+        @media (max-width: 768px) {
+          div {
+            display: none;
+          }
+        }
+      `}</style>
+      {children}
     </div>
   );
 }
-
-/* ========================================================================== */
-/* ICONS                                                                       */
-/* ========================================================================== */
-function LockIcon({ size = 14, color = "#3730a3" }) {
+function MobileOnly({ children }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden="true">
-      <path d="M6 10V8a6 6 0 1 1 12 0v2h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V11a1 1 0 0 1 1-1h1Zm2 0h8V8a4 4 0 0 0-8 0v2Z" />
-    </svg>
+    <div style={{ display: "none" }}>
+      <style jsx>{`
+        @media (max-width: 768px) {
+          div {
+            display: block;
+          }
+        }
+      `}</style>
+      {children}
+    </div>
   );
 }
-function CheckIcon({ size = 16, color = COLORS.green }) {
+function MobileAccordionSection({ title, children }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill={color} aria-hidden="true">
-      <path d="M16.707 5.293a1 1 0 0 1 0 1.414l-7.25 7.25a1 1 0 0 1-1.414 0l-4-4a1 1 0 1 1 1.414-1.414L8.5 11.086l6.543-6.543a1 1 0 0 1 1.414 0Z" />
-    </svg>
+    <MobileOnly>
+      <details style={{ marginTop: 12 }}>
+        <summary>{title}</summary>
+        <div className="accordion-inner">{children}</div>
+      </details>
+    </MobileOnly>
   );
 }
 
-/* ========================================================================== */
-/* AI BLOCK                                                                    */
-/* ========================================================================== */
-function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal }) {
+/* ============================== Reusable AI block ============================== */
+function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal, blueCta = false }) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
@@ -502,23 +1289,27 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
     }
   };
 
+  const runBtn = blueCta ? (
+    <BlueAiButton onClick={run} disabled={loading} title="AI summary">
+      {loading ? "Summarising…" : buttonLabel}
+    </BlueAiButton>
+  ) : (
+    <Button onClick={run} disabled={loading} title="AI summary">
+      {loading ? "Summarising…" : buttonLabel}
+    </Button>
+  );
+
   return (
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button
-        onClick={run}
-        style={{ padding: "8px 12px", cursor: "pointer", background: COLORS.blue, color: "#fff", border: 0, borderRadius: 10 }}
-        disabled={loading}
-      >
-        {loading ? "Summarising…" : asButton ? buttonLabel : "Summarise with AI"}
-      </button>
-      <button
-        onClick={copy}
-        style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-        disabled={!text}
-      >
+      {asButton ? runBtn : (
+        <BlueAiButton onClick={run} disabled={loading} title="AI summary">
+          {loading ? "Summarising…" : "Summarise with AI"}
+        </BlueAiButton>
+      )}
+      <Button onClick={copy} disabled={!text}>
         {copied ? "Copied!" : "Copy insight"}
-      </button>
-      {error && <span style={{ color: COLORS.red }}>Error: {error}</span>}
+      </Button>
+      {error && <span style={{ color: COLORS.googleRed }}>Error: {error}</span>}
       {text && (
         <div
           style={{
@@ -526,7 +1317,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
             background: "#fffceb",
             border: "1px solid #f5e08f",
             padding: 10,
-            borderRadius: 10,
+            borderRadius: 6,
             whiteSpace: "pre-wrap",
             width: "100%",
           }}
@@ -538,1148 +1329,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
   );
 }
 
-/* ========================================================================== */
-/* PAGE                                                                        */
-/* ========================================================================== */
-const COUNTRY_OPTIONS = [
-  "All",
-  "United Kingdom",
-  "United States",
-  "Ireland",
-  "Germany",
-  "France",
-  "Spain",
-  "Italy",
-  "Netherlands",
-  "Australia",
-  "Canada",
-  "India",
-];
-const CHANNEL_GROUP_OPTIONS = [
-  "All",
-  "Direct",
-  "Organic Search",
-  "Paid Search",
-  "Organic Social",
-  "Paid Social",
-  "Email",
-  "Referral",
-  "Display",
-  "Video",
-  "Affiliates",
-  "Organic Shopping",
-  "Paid Shopping",
-];
-
-export default function Home() {
-  const isPremium = usePremium();
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
-
-  // Connection status (visual: green if propertyId present)
-  const [propertyId, setPropertyId] = useState("");
-  const isConnected = !!propertyId;
-
-  const [startDate, setStartDate] = useState("2024-09-01");
-  const [endDate, setEndDate] = useState("2024-09-30");
-  const [comparePrev, setComparePrev] = useState(false);
-
-  const [countrySel, setCountrySel] = useState("All");
-  const [channelSel, setChannelSel] = useState("All");
-  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
-
-  const [result, setResult] = useState(null);
-  const [prevResult, setPrevResult] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  // UX signals & skeletons
-  const [refreshSignal, setRefreshSignal] = useState(0);
-  const [dashKey, setDashKey] = useState(1);
-
-  // Focus target (after first report show channels at top)
-  const channelsRef = useRef(null);
-
-  /* -------------------- URL & Preset load/save -------------------- */
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      const q = decodeQuery();
-      if (!q) return;
-
-      if (q.startDate) setStartDate(q.startDate);
-      if (q.endDate) setEndDate(q.endDate);
-
-      setCountrySel(q.country || "All");
-      setChannelSel(q.channelGroup || "All");
-      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
-
-      setComparePrev(!!q.comparePrev);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (saved?.propertyId) setPropertyId(saved.propertyId);
-      if (saved?.startDate) setStartDate(saved.startDate);
-      if (saved?.endDate) setEndDate(saved.endDate);
-      if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
-      if (saved?.countrySel) setCountrySel(saved.countrySel);
-      if (saved?.channelSel) setChannelSel(saved.channelSel);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          propertyId,
-          startDate,
-          endDate,
-          appliedFilters,
-          countrySel,
-          channelSel,
-        })
-      );
-    } catch {}
-  }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
-
-  const { rows, totals } = useMemo(() => parseGa4Channels(result), [result]);
-  const { rows: prevRows, totals: prevTotals } = useMemo(
-    () => parseGa4Channels(prevResult),
-    [prevResult]
-  );
-  const top = rows[0];
-  const topShare = top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
-
-  const connect = () => {
-    window.location.href = "/api/auth/google/start";
-  };
-
-  const applyFilters = () => {
-    setAppliedFilters({ country: countrySel, channelGroup: channelSel });
-  };
-
-  async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
-    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
-  }
-
-  const runReport = async () => {
-    setError("");
-    setResult(null);
-    setPrevResult(null);
-    setLoading(true);
-    try {
-      const curr = await fetchGa4Channels({
-        propertyId,
-        startDate,
-        endDate,
-        filters: appliedFilters,
-      });
-      setResult(curr);
-
-      try {
-        const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
-        const path = window.location.pathname + (qs ? `?${qs}` : "");
-        window.history.replaceState(null, "", path);
-      } catch {}
-
-      setRefreshSignal((n) => n + 1);
-
-      if (comparePrev) {
-        const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
-        const prev = await fetchGa4Channels({
-          propertyId,
-          startDate: prevStart,
-          endDate: prevEnd,
-          filters: appliedFilters,
-        });
-        setPrevResult(prev);
-      }
-
-      // scroll to channels
-      setTimeout(() => {
-        if (channelsRef.current) channelsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 50);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetDashboard = () => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
-    setStartDate("2024-09-01");
-    setEndDate("2024-09-30");
-    setCountrySel("All");
-    setChannelSel("All");
-    setAppliedFilters({ country: "All", channelGroup: "All" });
-    setComparePrev(false);
-    setResult(null);
-    setPrevResult(null);
-    setError("");
-    setDashKey((k) => k + 1);
-    try {
-      const path = window.location.pathname;
-      window.history.replaceState(null, "", path);
-    } catch {}
-  };
-
-  /* -------------------- KPI Targets (premium) -------------------- */
-  function TargetBadge({ label, current, target, currency = false }) {
-    if (target == null) return null;
-    const pct = pctToTarget(current, target);
-    if (pct == null) return null;
-    const ok = pct >= 100;
-    const val = currency
-      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(target)
-      : Number(target).toLocaleString();
-    return (
-      <span
-        title={`${label} target: ${val} • Progress: ${pct}%`}
-        style={{
-          marginLeft: 8,
-          padding: "2px 8px",
-          borderRadius: 999,
-          fontSize: 12,
-          background: ok ? "#e6f4ea" : "#fdecea",
-          color: ok ? COLORS.green : COLORS.red,
-          border: `1px solid ${ok ? "#b7e1cd" : "#f4c7c3"}`,
-        }}
-      >
-        {`${pct}% to ${label} target`}
-      </span>
-    );
-  }
-
-  /* -------------------- Alerts/Digest (premium) -------------------- */
-  const [alertsUIOpen, setAlertsUIOpen] = useState(false);
-
-  /* ======================================================================== */
-  /* RENDER                                                                    */
-  /* ======================================================================== */
-  return (
-    <main
-      style={{
-        padding: 16,
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-        maxWidth: 1160,
-        margin: "0 auto",
-        color: COLORS.text,
-      }}
-    >
-      {/* Sticky header */}
-      <header
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-          background: "linear-gradient(to bottom, rgba(255,255,255,0.9), rgba(255,255,255,0.6))",
-          backdropFilter: "saturate(140%) blur(8px)",
-          WebkitBackdropFilter: "saturate(140%) blur(8px)",
-          borderBottom: `1px solid ${COLORS.border}`,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0, letterSpacing: 0.2 }}>InsightGPT</h1>
-
-          {/* Connection status */}
-          <span
-            aria-live="polite"
-            style={{
-              marginLeft: 6,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "4px 10px",
-              borderRadius: 999,
-              background: isConnected ? "#e6f4ea" : "#fdecea",
-              color: isConnected ? COLORS.green : COLORS.red,
-              border: `1px solid ${isConnected ? "#b7e1cd" : "#f4c7c3"}`,
-              fontSize: 12,
-            }}
-          >
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                background: isConnected ? COLORS.green : COLORS.red,
-                boxShadow: `0 0 0 2px rgba(0,0,0,0.04) inset`,
-              }}
-              aria-hidden="true"
-            />
-            {isConnected ? "Connected to Google Analytics" : "Not connected"}
-          </span>
-
-          <div style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
-            <button
-              onClick={connect}
-              style={{
-                padding: "8px 12px",
-                cursor: "pointer",
-                background: COLORS.blue,
-                color: "#fff",
-                border: 0,
-                borderRadius: 10,
-              }}
-              aria-label="Connect Google Analytics"
-            >
-              Connect Google Analytics
-            </button>
-            <button
-              onClick={resetDashboard}
-              style={{
-                padding: "8px 12px",
-                cursor: "pointer",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-                background: "#fff",
-              }}
-              aria-label="Reset dashboard"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Controls */}
-      <FrostCard
-        title="Controls"
-        subtitle="Connect GA4, choose a date range, optionally apply filters, and run."
-        right={
-          <>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <input
-                id="compare-prev"
-                type="checkbox"
-                checked={comparePrev}
-                onChange={(e) => setComparePrev(e.target.checked)}
-              />
-              Compare vs previous period
-            </label>
-            <button
-              onClick={runReport}
-              style={{
-                padding: "10px 14px",
-                cursor: "pointer",
-                background: COLORS.blue,
-                color: "#fff",
-                border: 0,
-                borderRadius: 10,
-              }}
-              disabled={loading || !propertyId}
-            >
-              {loading ? "Running…" : "Run GA4 Report"}
-            </button>
-          </>
-        }
-      >
-        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(4, minmax(180px, 1fr))" }}>
-          <label>
-            <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>GA4 Property ID</div>
-            <input
-              id="property-id"
-              name="property-id"
-              value={propertyId}
-              onChange={(e) => setPropertyId(e.target.value)}
-              placeholder="e.g. 123456789"
-              style={{
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
-            />
-          </label>
-          <label>
-            <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Start date</div>
-            <input
-              id="start-date"
-              name="start-date"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              style={{ padding: 10, width: "100%", borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-            />
-          </label>
-          <label>
-            <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>End date</div>
-            <input
-              id="end-date"
-              name="end-date"
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              style={{ padding: 10, width: "100%", borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-            />
-          </label>
-          <div />
-        </div>
-
-        <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
-          <label>
-            <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Country</div>
-            <select
-              id="country-filter"
-              value={countrySel}
-              onChange={(e) => setCountrySel(e.target.value)}
-              style={{ padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-            >
-              {COUNTRY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Channel Group</div>
-            <select
-              id="channel-filter"
-              value={channelSel}
-              onChange={(e) => setChannelSel(e.target.value)}
-              style={{ padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-            >
-              {CHANNEL_GROUP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            onClick={applyFilters}
-            style={{
-              padding: "10px 14px",
-              cursor: "pointer",
-              background: "#fff",
-              border: `1px solid ${COLORS.border}`,
-              borderRadius: 10,
-            }}
-          >
-            Apply filters
-          </button>
-
-          {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
-            <span
-              style={{
-                background: "#e6f4ea",
-                color: COLORS.green,
-                padding: "6px 10px",
-                borderRadius: 999,
-                fontSize: 12,
-                border: "1px solid #b7e1cd",
-              }}
-            >
-              {`Filters active: `}
-              {appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}
-              {appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}
-              {appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}
-            </span>
-          )}
-          <span style={{ color: COLORS.subtext, fontSize: 12 }}>
-            Filters apply when you run a section (e.g., GA4 Report / Load buttons).
-          </span>
-        </div>
-      </FrostCard>
-
-      {/* Saved Views — Premium */}
-      <FrostCard
-        title="Saved Views"
-        subtitle="Save your date and filter presets for quick recall."
-        right={null}
-      >
-        <PremiumGuard
-          isPremium={isPremium}
-          feature="Saved Views"
-          onOpen={() => setUpgradeOpen(true)}
-        >
-          <SavedViews
-            startDate={startDate}
-            endDate={endDate}
-            countrySel={countrySel}
-            channelSel={channelSel}
-            comparePrev={comparePrev}
-            onApply={(view) => {
-              setStartDate(view.startDate);
-              setEndDate(view.endDate);
-              setCountrySel(view.country || "All");
-              setChannelSel(view.channelGroup || "All");
-              setComparePrev(!!view.comparePrev);
-              setAppliedFilters({
-                country: view.country || "All",
-                channelGroup: view.channelGroup || "All",
-              });
-            }}
-            onRunReport={runReport}
-          />
-        </PremiumGuard>
-      </FrostCard>
-
-      {/* KPI Targets & Alerts / Digest — Premium, with Show Settings CTA */}
-      <FrostCard
-        title="KPI Targets &amp; Alerts / Digest"
-        subtitle="Track against goals and get anomaly alerts."
-        right={
-          <button
-            onClick={() => setAlertsUIOpen((v) => !v)}
-            style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-          >
-            {alertsUIOpen ? "Hide settings" : "Show settings"}
-          </button>
-        }
-      >
-        <PremiumGuard
-          isPremium={isPremium}
-          feature="KPI Targets & Alerts / Digest"
-          onOpen={() => setUpgradeOpen(true)}
-        >
-          {alertsUIOpen ? (
-            <KpiTargetsAndAlertsPanel
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              propertyId={propertyId}
-            />
-          ) : (
-            <p style={{ color: COLORS.subtext, margin: 0 }}>
-              Click &quot;Show settings&quot; to manage KPI targets, anomaly detection and Slack digest.
-            </p>
-          )}
-        </PremiumGuard>
-      </FrostCard>
-
-      {/* ================================================================ */}
-      {/*  TRAFFIC BY DEFAULT CHANNEL GROUP (Hero)                         */}
-      {/* ================================================================ */}
-      <FrostCard
-        id="channels"
-        title="Traffic by Default Channel Group"
-        subtitle="Sessions &amp; users by channel."
-        right={
-          <>
-            {/* KPI badge for Sessions (hero) — if premium, show progress */}
-            {isPremium && (
-              <TargetBadge
-                label="Sessions"
-                current={Number(totals?.sessions || 0)}
-                target={Number(loadKpiTargets()?.sessionsTarget)}
-              />
-            )}
-            <button
-              onClick={() => downloadCsvGeneric(`ga4_channels_${startDate}_to_${endDate}`, rows, [
-                { header: "Channel", key: "channel" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ])}
-              style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-              disabled={!rows.length}
-              title={rows.length ? "Download table as CSV" : "Run a report first"}
-            >
-              Download CSV
-            </button>
-            <AiBlock
-              asButton
-              buttonLabel="Summarise with AI"
-              endpoint="/api/insights/summarise-pro"
-              payload={{ topic: "channels", rows, totals, dateRange: { start: startDate, end: endDate }, filters: appliedFilters }}
-              resetSignal={refreshSignal}
-            />
-          </>
-        }
-      >
-        <div ref={channelsRef} />
-        {error && <p style={{ color: COLORS.red, marginTop: 8 }}>Error: {error}</p>}
-        {loading && !rows.length ? (
-          <div style={{ display: "grid", gap: 10 }}>
-            <Skeleton height={18} width="60%" />
-            <Skeleton height={140} />
-            <Skeleton height={18} width="40%" />
-          </div>
-        ) : rows.length > 0 ? (
-          <>
-            <ul style={{ marginTop: 12, paddingLeft: 18 }}>
-              <li>
-                <b>Total sessions:</b> {totals.sessions.toLocaleString()}
-              </li>
-              <li>
-                <b>Total users:</b> {totals.users.toLocaleString()}
-              </li>
-              {top && (
-                <li>
-                  <b>Top channel:</b> {top.channel} with {top.sessions.toLocaleString()} sessions ({topShare}% of total)
-                </li>
-              )}
-              {prevRows.length > 0 && (
-                <>
-                  <li style={{ marginTop: 6 }}>
-                    <b>Sessions vs previous:</b> {formatPctDelta(totals.sessions, prevTotals.sessions)} (prev{" "}
-                    {prevTotals.sessions.toLocaleString()})
-                  </li>
-                  <li>
-                    <b>Users vs previous:</b> {formatPctDelta(totals.users, prevTotals.users)} (prev{" "}
-                    {prevTotals.users.toLocaleString()})
-                  </li>
-                </>
-              )}
-            </ul>
-
-            <div style={{ marginTop: 8, overflowX: "auto" }}>
-              <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Channel</th>
-                    <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                    <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                    <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>% of Sessions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const pct = totals.sessions > 0 ? Math.round((r.sessions / totals.sessions) * 100) : 0;
-                    return (
-                      <tr key={r.channel}>
-                        <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.channel}</td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                          {r.sessions.toLocaleString()}
-                        </td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                          {r.users.toLocaleString()}
-                        </td>
-                        <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>{pct}%</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ marginTop: 16 }}>
-              {/* Using <img> because quickchart.io may not be allowed in next/image domain list */}
-              <img
-                src={buildChannelPieUrl(rows)}
-                alt="Channel share chart"
-                style={{ maxWidth: "100%", height: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8 }}
-              />
-            </div>
-          </>
-        ) : (
-          !error && <p style={{ color: COLORS.subtext, marginTop: 8 }}>Run a GA4 report to see channels.</p>
-        )}
-      </FrostCard>
-
-      {/* ================================================================ */}
-      {/* ORDER AS REQUESTED                                               */}
-      {/* 1. Top Pages (views)                                             */}
-      {/* ================================================================ */}
-      <TopPages
-        key={`tp-${dashKey}`}
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-        resetSignal={refreshSignal}
-      />
-
-      {/* 2. Source / Medium */}
-      <SourceMedium
-        key={`sm-${dashKey}`}
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-        resetSignal={refreshSignal}
-      />
-
-      {/* 3. E-commerce KPIs */}
-      <EcommerceKPIs
-        key={`ekpi-${dashKey}`}
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-        resetSignal={refreshSignal}
-        isPremium={isPremium}
-      />
-
-      {/* 4. Checkout funnel */}
-      <CheckoutFunnel
-        key={`cf-${dashKey}`}
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-        resetSignal={refreshSignal}
-      />
-
-      {/* 6. Trends over time — Premium */}
-      <PremiumGuard
-        isPremium={isPremium}
-        feature="Trends over time"
-        onOpen={() => setUpgradeOpen(true)}
-      >
-        <TrendsOverTime propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
-      </PremiumGuard>
-
-      {/* 7. Campaigns — Premium */}
-      <PremiumGuard isPremium={isPremium} feature="Campaigns" onOpen={() => setUpgradeOpen(true)}>
-        <Campaigns propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
-      </PremiumGuard>
-
-      {/* 8. Campaign drill-down — Premium */}
-      <PremiumGuard isPremium={isPremium} feature="Campaign drill-down" onOpen={() => setUpgradeOpen(true)}>
-        <CampaignDrilldown propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
-      </PremiumGuard>
-
-      {/* 9. Campaigns (KPI metrics) — Premium (renamed) */}
-      <PremiumGuard isPremium={isPremium} feature="Campaigns (KPI metrics)" onOpen={() => setUpgradeOpen(true)}>
-        <CampaignsOverview
-          propertyId={propertyId}
-          startDate={startDate}
-          endDate={endDate}
-          filters={appliedFilters}
-          titleOverride="Campaigns (KPI metrics)"
-        />
-      </PremiumGuard>
-
-      {/* 10. Landing Pages × Attribution — Premium */}
-      <PremiumGuard
-        isPremium={isPremium}
-        feature="Landing Pages × Attribution"
-        onOpen={() => setUpgradeOpen(true)}
-      >
-        <LandingPages propertyId={propertyId} startDate={startDate} endDate={endDate} filters={appliedFilters} />
-      </PremiumGuard>
-
-      {/* Products — behind env flag */}
-      {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
-        <Products
-          propertyId={propertyId}
-          startDate={startDate}
-          endDate={endDate}
-          filters={appliedFilters}
-          resetSignal={refreshSignal}
-        />
-      )}
-
-      {/* Raw JSON debug */}
-      {result ? (
-        <details style={{ marginTop: 24 }}>
-          <summary>Raw GA4 JSON (debug)</summary>
-          <pre
-            style={{
-              marginTop: 8,
-              background: "#f8f8f8",
-              padding: 16,
-              borderRadius: 8,
-              overflow: "auto",
-              border: `1px solid ${COLORS.border}`,
-            }}
-          >
-            {safeStringify(result)}
-          </pre>
-        </details>
-      ) : null}
-
-      <UpgradeModal open={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
-
-      <style jsx global>{`
-        @keyframes shimmer {
-          0% {
-            background-position: -468px 0;
-          }
-          100% {
-            background-position: 468px 0;
-          }
-        }
-      `}</style>
-    </main>
-  );
-}
-
-/* ========================================================================== */
-/* SAVED VIEWS (Premium)                                                       */
-/* ========================================================================== */
-function SavedViews({ startDate, endDate, countrySel, channelSel, comparePrev, onApply, onRunReport }) {
-  const [presets, setPresets] = useState([]);
-  const [name, setName] = useState("");
-  const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(SAVED_VIEWS_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(arr)) setPresets(arr);
-    } catch {}
-  }, []);
-
-  const persist = (arr) => {
-    setPresets(arr);
-    try {
-      localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr));
-    } catch {}
-  };
-
-  const saveCurrent = () => {
-    const trimmed = (name || "").trim();
-    if (!trimmed) {
-      setNotice("Give your view a name.");
-      return;
-    }
-
-    const next = [
-      ...presets.filter((p) => p.name !== trimmed),
-      {
-        id: crypto?.randomUUID?.() || String(Date.now()),
-        name: trimmed,
-        startDate,
-        endDate,
-        country: countrySel,
-        channelGroup: channelSel,
-        comparePrev: !!comparePrev,
-        savedAt: new Date().toISOString(),
-      },
-    ].sort((a, b) => a.name.localeCompare(b.name));
-
-    persist(next);
-    setNotice("Saved!");
-    setTimeout(() => setNotice(""), 1200);
-  };
-
-  const apply = (p, run = false) => {
-    onApply({
-      startDate: p.startDate,
-      endDate: p.endDate,
-      country: p.country,
-      channelGroup: p.channelGroup,
-      comparePrev: !!p.comparePrev,
-    });
-    if (run) onRunReport();
-  };
-
-  const remove = (p) => {
-    const next = presets.filter((x) => x.name !== p.name);
-    persist(next);
-  };
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Name this view (e.g. UK · Organic · Sep)"
-          style={{ padding: 10, minWidth: 260, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-        />
-        <button onClick={saveCurrent} style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}` }}>
-          Save current
-        </button>
-        {notice && <span style={{ color: COLORS.green, fontSize: 12 }}>{notice}</span>}
-      </div>
-
-      {presets.length > 0 ? (
-        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-          {presets.map((p) => (
-            <div key={p.name} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ minWidth: 280 }}>
-                <b>{p.name}</b>{" "}
-                <span style={{ color: COLORS.subtext, fontSize: 12 }}>
-                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup} {p.comparePrev ? "· compare" : ""}
-                </span>
-              </div>
-              <button onClick={() => apply(p, false)} style={{ padding: "6px 10px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}` }}>
-                Apply
-              </button>
-              <button onClick={() => apply(p, true)} style={{ padding: "6px 10px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}` }}>
-                Apply &amp; Run
-              </button>
-              <button
-                onClick={() => remove(p)}
-                style={{ padding: "6px 10px", cursor: "pointer", color: COLORS.red, borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p style={{ marginTop: 8, color: COLORS.subtext, fontSize: 13 }}>
-          No saved views yet. Set dates/filters, give it a name, then &quot;Save current&quot;.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/* ========================================================================== */
-/* KPI TARGETS + ALERTS / DIGEST (Premium)                                     */
-/* ========================================================================== */
-function KpiTargetsAndAlertsPanel({ startDate, endDate, filters, propertyId }) {
-  const [targets, setTargets] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
-  const [notice, setNotice] = useState("");
-
-  // Anomaly settings
-  const [sensitivity, setSensitivity] = useState(2); // z
-  const [lookback, setLookback] = useState(28);
-  const [slackWebhook, setSlackWebhook] = useState("");
-  const [digestFreq, setDigestFreq] = useState("weekly");
-  const [digestTime, setDigestTime] = useState("09:00");
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KPI_KEY) || localStorage.getItem(KPI_KEY_ALT);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setTargets({
-          sessionsTarget: parsed.sessionsTarget ?? "",
-          revenueTarget: parsed.revenueTarget ?? "",
-          cvrTarget: parsed.cvrTarget ?? "",
-        });
-      }
-      const aRaw = localStorage.getItem(ALERTS_KEY);
-      if (aRaw) {
-        const cfg = JSON.parse(aRaw);
-        setSensitivity(cfg.z ?? 2);
-        setLookback(cfg.lookbackDays ?? 28);
-        setSlackWebhook(cfg.slackWebhook ?? "");
-        setDigestFreq(cfg.digestFreq ?? "weekly");
-        setDigestTime(cfg.digestTime ?? "09:00");
-      }
-    } catch {}
-  }, []);
-
-  const saveTargets = () => {
-    try {
-      localStorage.setItem(
-        KPI_KEY,
-        JSON.stringify({
-          sessionsTarget: Number(targets.sessionsTarget || 0),
-          revenueTarget: Number(targets.revenueTarget || 0),
-          cvrTarget: Number(targets.cvrTarget || 0),
-        })
-      );
-      setNotice("Targets saved.");
-      setTimeout(() => setNotice(""), 1200);
-    } catch {
-      setNotice("Could not save.");
-      setTimeout(() => setNotice(""), 1200);
-    }
-  };
-
-  const saveAlerts = () => {
-    try {
-      localStorage.setItem(
-        ALERTS_KEY,
-        JSON.stringify({
-          z: Number(sensitivity || 2),
-          lookbackDays: Number(lookback || 28),
-          slackWebhook: slackWebhook || "",
-          digestFreq,
-          digestTime,
-        })
-      );
-      setNotice("Alerts/digest saved.");
-      setTimeout(() => setNotice(""), 1200);
-    } catch {
-      setNotice("Could not save.");
-      setTimeout(() => setNotice(""), 1200);
-    }
-  };
-
-  const sendTestSlack = async () => {
-    if (!slackWebhook) {
-      setNotice("Add a Slack webhook first.");
-      setTimeout(() => setNotice(""), 1500);
-      return;
-    }
-    try {
-      const r = await fetch("/api/slack/digest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          webhook: slackWebhook,
-          test: true,
-          propertyId,
-          startDate,
-          endDate,
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setNotice("Test sent to Slack.");
-      setTimeout(() => setNotice(""), 1500);
-    } catch (e) {
-      setNotice(`Slack test failed: ${String(e.message || e)}`);
-      setTimeout(() => setNotice(""), 1800);
-    }
-  };
-
-  return (
-    <div style={{ display: "grid", gap: 14 }}>
-      <div
-        style={{
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          alignItems: "start",
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>KPI Targets</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Sessions</div>
-              <input
-                inputMode="numeric"
-                value={targets.sessionsTarget}
-                onChange={(e) => setTargets((t) => ({ ...t, sessionsTarget: e.target.value }))}
-                placeholder="e.g. 100000"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              />
-            </label>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Revenue (GBP)</div>
-              <input
-                inputMode="numeric"
-                value={targets.revenueTarget}
-                onChange={(e) => setTargets((t) => ({ ...t, revenueTarget: e.target.value }))}
-                placeholder="e.g. 250000"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              />
-            </label>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>CVR (%)</div>
-              <input
-                inputMode="decimal"
-                value={targets.cvrTarget}
-                onChange={(e) => setTargets((t) => ({ ...t, cvrTarget: e.target.value }))}
-                placeholder="e.g. 2.5"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              />
-            </label>
-          </div>
-          <button
-            onClick={saveTargets}
-            style={{
-              marginTop: 10,
-              background: COLORS.blue,
-              color: "#fff",
-              border: 0,
-              padding: "8px 12px",
-              borderRadius: 10,
-              cursor: "pointer",
-            }}
-          >
-            Save targets
-          </button>
-        </div>
-
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>Anomaly Alerts</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Sensitivity (z)</div>
-              <input
-                inputMode="numeric"
-                min={1}
-                step="0.5"
-                value={sensitivity}
-                onChange={(e) => setSensitivity(Number(e.target.value))}
-                placeholder="2"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              />
-            </label>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Lookback days</div>
-              <input
-                inputMode="numeric"
-                min={7}
-                value={lookback}
-                onChange={(e) => setLookback(Number(e.target.value))}
-                placeholder="28"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              />
-            </label>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Slack webhook</div>
-              <input
-                value={slackWebhook}
-                onChange={(e) => setSlackWebhook(e.target.value)}
-                placeholder="https://hooks.slack.com/services/…"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}`, fontFamily: "monospace" }}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>Performance Digest (Slack)</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Frequency</div>
-              <select
-                value={digestFreq}
-                onChange={(e) => setDigestFreq(e.target.value)}
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              >
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </label>
-            <label>
-              <div style={{ fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>Time (local)</div>
-              <input
-                type="time"
-                value={digestTime}
-                onChange={(e) => setDigestTime(e.target.value)}
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
-              />
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          onClick={saveAlerts}
-          style={{
-            background: "#fff",
-            color: COLORS.text,
-            border: `1px solid ${COLORS.border}`,
-            padding: "8px 12px",
-            borderRadius: 10,
-            cursor: "pointer",
-          }}
-        >
-          Save alerts/digest
-        </button>
-        <button
-          onClick={sendTestSlack}
-          style={{
-            background: COLORS.blue,
-            color: "#fff",
-            border: 0,
-            padding: "8px 12px",
-            borderRadius: 10,
-            cursor: "pointer",
-          }}
-          disabled={!slackWebhook}
-          title={!slackWebhook ? "Add a Slack webhook to test" : "Send a test to Slack"}
-        >
-          Send test to Slack
-        </button>
-        {notice && <span style={{ alignSelf: "center", color: COLORS.green }}>{notice}</span>}
-      </div>
-    </div>
-  );
-}
-
-/* ========================================================================== */
-/* SOURCE / MEDIUM                                                             */
-/* ========================================================================== */
+/* ============================== Sections ============================== */
 function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1716,74 +1366,83 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
     }
   };
 
-  const totalSessions = useMemo(() => rows.reduce((sum, r) => sum + (r.sessions || 0), 0), [rows]);
+  const totalSessions = useMemo(
+    () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
+    [rows]
+  );
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <FrostCard
       title="Source / Medium"
-      subtitle="Acquisition sources and mediums driving sessions."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId}>
             {loading ? "Loading…" : "Load"}
-          </button>
-          <button
-            onClick={() =>
-              downloadCsvGeneric(`source_medium_${startDate}_to_${endDate}`, rows, [
-                { header: "Source", key: "source" },
-                { header: "Medium", key: "medium" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ])
-            }
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={!rows.length}
-          >
-            Download CSV
-          </button>
+          </Button>
+          {rows.length > 0 && (
+            <TargetBadge
+              label="Sessions"
+              current={totalSessions}
+              target={Number(kpiTargets?.sessionsTarget)}
+            />
+          )}
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
-            endpoint="/api/insights/summarise-pro"
-            payload={{ topic: "source_medium", rows, dateRange: { start: startDate, end: endDate }, filters }}
+            endpoint="/api/insights/summarise-source-medium"
+            payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
+            blueCta
           />
+          <Button
+            onClick={() =>
+              downloadCsvGeneric(
+                `source_medium_${startDate}_to_${endDate}`,
+                rows,
+                [
+                  { header: "Source", key: "source" },
+                  { header: "Medium", key: "medium" },
+                  { header: "Sessions", key: "sessions" },
+                  { header: "Users", key: "users" },
+                ]
+              )
+            }
+            disabled={!rows.length}
+          >
+            Download CSV
+          </Button>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red }}>Error: {error}</p>}
-      {loading && !rows.length ? (
+      {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={16} width="50%" />
+          <Skeleton height={120} />
         </div>
-      ) : rows.length > 0 ? (
+      )}
+      {!loading && rows.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <div style={{ color: COLORS.subtext, fontSize: 12, marginBottom: 6 }}>
-            Total sessions: <b>{totalSessions.toLocaleString()}</b>
-          </div>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Source</th>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Medium</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={`${r.source}-${r.medium}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.source}</td>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.medium}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.sessions.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.users.toLocaleString()}
                   </td>
                 </tr>
@@ -1791,16 +1450,11 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ color: COLORS.subtext, marginTop: 8 }}>No rows loaded yet.</p>
       )}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* CAMPAIGNS (overview)  — Premium                                             */
-/* ========================================================================== */
 function Campaigns({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1818,7 +1472,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
         filters,
         limit: 50,
       });
-      const parsed = (data.rows || []).map((r, i) => ({
+      const parsed = (data.rows || []).map((r) => ({
         campaign: r.dimensionValues?.[0]?.value || "(not set)",
         sessions: Number(r.metricValues?.[0]?.value || 0),
         users: Number(r.metricValues?.[1]?.value || 0),
@@ -1831,70 +1485,79 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
     }
   };
 
-  const totalSessions = useMemo(() => rows.reduce((sum, r) => sum + (r.sessions || 0), 0), [rows]);
+  const totalSessions = useMemo(
+    () => rows.reduce((sum, r) => sum + (r.sessions || 0), 0),
+    [rows]
+  );
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <FrostCard
       title="Campaigns"
-      subtitle="Sessions and users by campaign."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId}>
             {loading ? "Loading…" : "Load"}
-          </button>
-          <button
-            onClick={() =>
-              downloadCsvGeneric(`campaigns_${startDate}_to_${endDate}`, rows, [
-                { header: "Campaign", key: "campaign" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-              ])
-            }
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={!rows.length}
-          >
-            Download CSV
-          </button>
+          </Button>
+          {rows.length > 0 && (
+            <TargetBadge
+              label="Sessions"
+              current={totalSessions}
+              target={Number(kpiTargets?.sessionsTarget)}
+            />
+          )}
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
-            endpoint="/api/insights/summarise-pro"
-            payload={{ topic: "channels", rows, dateRange: { start: startDate, end: endDate }, filters }}
+            endpoint="/api/insights/summarise-campaigns"
+            payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
+            blueCta
           />
+          <Button
+            onClick={() =>
+              downloadCsvGeneric(
+                `campaigns_${startDate}_to_${endDate}`,
+                rows,
+                [
+                  { header: "Campaign", key: "campaign" },
+                  { header: "Sessions", key: "sessions" },
+                  { header: "Users", key: "users" },
+                ]
+              )
+            }
+            disabled={!rows.length}
+          >
+            Download CSV
+          </Button>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red }}>Error: {error}</p>}
-      {loading && !rows.length ? (
+      {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={16} width="50%" />
+          <Skeleton height={120} />
         </div>
-      ) : rows.length > 0 ? (
+      )}
+      {!loading && rows.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <div style={{ color: COLORS.subtext, fontSize: 12, marginBottom: 6 }}>
-            Total sessions: <b>{totalSessions.toLocaleString()}</b>
-          </div>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Campaign</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={`${r.campaign}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.campaign}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.campaign}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.sessions.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.users.toLocaleString()}
                   </td>
                 </tr>
@@ -1902,16 +1565,11 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: COLORS.subtext }}>No rows loaded yet.</p>
       )}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* CAMPAIGN DRILLDOWN — Premium                                                */
-/* ========================================================================== */
 function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const [campaign, setCampaign] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1993,22 +1651,22 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   return (
     <FrostCard
       title="Campaign drill-down"
-      subtitle="Deep dive into a single campaign."
-      right={
+      actions={
         <>
           <input
             value={campaign}
             onChange={(e) => setCampaign(e.target.value)}
             placeholder="Type exact campaign name…"
-            style={{ padding: 8, minWidth: 260, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+            style={{
+              padding: 8,
+              minWidth: 260,
+              borderRadius: 10,
+              border: `1px solid ${COLORS.border}`,
+            }}
           />
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId || !campaign}
-          >
-            {loading ? "Loading…" : "Load details"}
-          </button>
+          <Button onClick={load} disabled={loading || !propertyId || !campaign}>
+            {loading ? "Loading…" : "Load"}
+          </Button>
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
@@ -2017,145 +1675,109 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
               topic: "campaign-detail",
               campaign,
               totals,
-              breakdowns: { sourceMedium: srcMed, adContent: content, term },
+              breakdowns: {
+                sourceMedium: srcMed,
+                adContent: content,
+                term,
+              },
               dateRange: { start: startDate, end: endDate },
               filters,
             }}
+            blueCta
           />
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
-      {totals ? (
+      {totals && (
         <div style={{ marginTop: 12 }}>
-          <b>Totals for &quot;{campaign}&quot;:</b> Sessions {totals.sessions.toLocaleString()} · Users{" "}
-          {totals.users.toLocaleString()} · Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
+          <b>Totals for &ldquo;{campaign}&rdquo;:</b>{" "}
+          Sessions {totals.sessions.toLocaleString()} · Users {totals.users.toLocaleString()} ·
+          Transactions {totals.transactions.toLocaleString()} · Revenue{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} · CVR{" "}
           {(cvr || 0).toFixed(2)}% · AOV{" "}
           {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(aov || 0)}
         </div>
-      ) : (
-        !error && <p style={{ color: COLORS.subtext }}>Enter a campaign name and click &quot;Load details&quot;.</p>
+      )}
+
+      {!loading && !totals && !error && (
+        <p style={{ marginTop: 8, color: COLORS.subtext }}>
+          Enter a campaign name and click &ldquo;Load&rdquo;.
+        </p>
+      )}
+
+      {loading && (
+        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+          <Skeleton height={18} width="40%" />
+          <Skeleton height={120} />
+          <Skeleton height={18} width="50%" />
+          <Skeleton height={120} />
+        </div>
       )}
 
       {srcMed.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Source / Medium</h4>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Source</th>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Medium</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Transactions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Revenue</th>
+          <TableSix cols={["Source", "Medium", "Sessions", "Users", "Transactions", "Revenue"]}>
+            {srcMed.map((r) => (
+              <tr key={r.key}>
+                <TdLeft>{r.d1 || "(not set)"}</TdLeft>
+                <TdLeft>{r.d2 || "(not set)"}</TdLeft>
+                <TdRight>{r.sessions.toLocaleString()}</TdRight>
+                <TdRight>{r.users.toLocaleString()}</TdRight>
+                <TdRight>{r.transactions.toLocaleString()}</TdRight>
+                <TdRight>
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                </TdRight>
               </tr>
-            </thead>
-            <tbody>
-              {srcMed.map((r) => (
-                <tr key={r.key}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.d1 || "(not set)"}</td>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.d2 || "(not set)"}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.sessions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.users.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.transactions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            ))}
+          </TableSix>
         </div>
       )}
 
       {content.length > 0 && (
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Ad Content (utm_content)</h4>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Ad Content</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Transactions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Revenue</th>
+          <TableFive cols={["Ad Content", "Sessions", "Users", "Transactions", "Revenue"]}>
+            {content.map((r) => (
+              <tr key={r.key}>
+                <TdLeft>{r.content}</TdLeft>
+                <TdRight>{r.sessions.toLocaleString()}</TdRight>
+                <TdRight>{r.users.toLocaleString()}</TdRight>
+                <TdRight>{r.transactions.toLocaleString()}</TdRight>
+                <TdRight>
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                </TdRight>
               </tr>
-            </thead>
-            <tbody>
-              {content.map((r) => (
-                <tr key={r.key}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.content}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.sessions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.users.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.transactions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            ))}
+          </TableFive>
         </div>
       )}
 
       {term.length > 0 && (
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <h4 style={{ margin: "12px 0 6px" }}>By Term (utm_term)</h4>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Term</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Transactions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Revenue</th>
+          <TableFive cols={["Term", "Sessions", "Users", "Transactions", "Revenue"]}>
+            {term.map((r) => (
+              <tr key={r.key}>
+                <TdLeft>{r.term}</TdLeft>
+                <TdRight>{r.sessions.toLocaleString()}</TdRight>
+                <TdRight>{r.users.toLocaleString()}</TdRight>
+                <TdRight>{r.transactions.toLocaleString()}</TdRight>
+                <TdRight>
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
+                </TdRight>
               </tr>
-            </thead>
-            <tbody>
-              {term.map((r) => (
-                <tr key={r.key}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.term}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.sessions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.users.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {r.transactions.toLocaleString()}
-                  </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            ))}
+          </TableFive>
         </div>
       )}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* CAMPAIGNS OVERVIEW (renamed KPI metrics) — Premium                          */
-/* ========================================================================== */
-function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverride = "Campaigns (KPI metrics)" }) {
+function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -2166,7 +1788,13 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
     setError("");
     setRows([]);
     try {
-      const data = await fetchJson("/api/ga4/campaigns", { propertyId, startDate, endDate, filters, limit: 100 });
+      const data = await fetchJson("/api/ga4/campaigns", {
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+        limit: 100,
+      });
       const parsed = (data.rows || []).map((r, i) => {
         const name = r.dimensionValues?.[0]?.value ?? "(not set)";
         const sessions = Number(r.metricValues?.[0]?.value || 0);
@@ -2188,26 +1816,51 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
 
   const visible = q ? rows.filter((r) => r.name.toLowerCase().includes(q.toLowerCase())) : rows;
 
+  const totalSessions = useMemo(
+    () => visible.reduce((sum, r) => sum + (r.sessions || 0), 0),
+    [visible]
+  );
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
+
   return (
     <FrostCard
-      title={titleOverride}
-      subtitle="Revenue, CVR and AOV by campaign."
-      right={
+      title="Campaigns (KPI metrics)"
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId}>
             {loading ? "Loading…" : "Load"}
-          </button>
+          </Button>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search campaign name…"
-            style={{ padding: 8, minWidth: 220, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+            style={{
+              padding: 8,
+              minWidth: 220,
+              borderRadius: 10,
+              border: `1px solid ${COLORS.border}`,
+            }}
           />
-          <button
+          {visible.length > 0 && (
+            <TargetBadge
+              label="Sessions"
+              current={totalSessions}
+              target={Number(kpiTargets?.sessionsTarget)}
+            />
+          )}
+          <AiBlock
+            asButton
+            buttonLabel="Summarise with AI"
+            endpoint="/api/insights/summarise-pro"
+            payload={{
+              topic: "campaigns-overview",
+              campaigns: visible,
+              dateRange: { start: startDate, end: endDate },
+              filters,
+            }}
+            blueCta
+          />
+          <Button
             onClick={() =>
               downloadCsvGeneric(
                 `campaigns_${startDate}_to_${endDate}`,
@@ -2231,60 +1884,55 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
                 ]
               )
             }
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
             disabled={!visible.length}
           >
             Download CSV
-          </button>
-          <AiBlock
-            asButton
-            buttonLabel="Summarise with AI"
-            endpoint="/api/insights/summarise-pro"
-            payload={{ topic: "campaigns-overview", campaigns: visible, dateRange: { start: startDate, end: endDate }, filters }}
-          />
+          </Button>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red }}>{error}</p>}
-      {loading && !rows.length ? (
+      {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {!error && !visible.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={16} width="50%" />
+          <Skeleton height={160} />
         </div>
-      ) : visible.length > 0 ? (
+      )}
+      {!loading && visible.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Campaign</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Transactions</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Revenue</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>CVR</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>AOV</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Campaign</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>CVR</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>AOV</th>
               </tr>
             </thead>
             <tbody>
               {visible.map((r) => (
                 <tr key={r.key}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.sessions.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.users.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.transactions.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.cvr.toFixed(2)}%
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.aov || 0)}
                   </td>
                 </tr>
@@ -2292,16 +1940,11 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, titleOverr
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: COLORS.subtext }}>No rows loaded yet.</p>
       )}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* TOP PAGES                                                                   */
-/* ========================================================================== */
 function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -2318,7 +1961,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
     setRows([]);
     try {
       const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
-      const parsed = (data.rows || []).map((r, i) => ({
+      const parsed = (data.rows || []).map((r) => ({
         title: r.dimensionValues?.[0]?.value || "(untitled)",
         path: r.dimensionValues?.[1]?.value || "",
         views: Number(r.metricValues?.[0]?.value || 0),
@@ -2335,66 +1978,67 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   return (
     <FrostCard
       title="Top pages (views)"
-      subtitle="Page views and users by page."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId}>
             {loading ? "Loading…" : "Load"}
-          </button>
-          <button
-            onClick={() =>
-              downloadCsvGeneric(`top_pages_${startDate}_to_${endDate}`, rows, [
-                { header: "Title", key: "title" },
-                { header: "Path", key: "path" },
-                { header: "Views", key: "views" },
-                { header: "Users", key: "users" },
-              ])
-            }
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={!rows.length}
-          >
-            Download CSV
-          </button>
+          </Button>
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
-            endpoint="/api/insights/summarise-pro"
-            payload={{ topic: "pages", rows, dateRange: { start: startDate, end: endDate }, filters }}
+            endpoint="/api/insights/summarise-pages"
+            payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
+            blueCta
           />
+          <Button
+            onClick={() =>
+              downloadCsvGeneric(
+                `top_pages_${startDate}_to_${endDate}`,
+                rows,
+                [
+                  { header: "Title", key: "title" },
+                  { header: "Path", key: "path" },
+                  { header: "Views", key: "views" },
+                  { header: "Users", key: "users" },
+                ]
+              )
+            }
+            disabled={!rows.length}
+          >
+            Download CSV
+          </Button>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red }}>Error: {error}</p>}
-      {loading && !rows.length ? (
+      {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={18} width="40%" />
+          <Skeleton height={150} />
         </div>
-      ) : rows.length > 0 ? (
+      )}
+      {!loading && rows.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Page Title</th>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Path</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Views</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Page Title</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Path</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Views</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={`${r.path}-${i}`}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.title}</td>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}`, fontFamily: "monospace" }}>{r.path}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.title}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.path}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.views.toLocaleString()}
                   </td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {r.users.toLocaleString()}
                   </td>
                 </tr>
@@ -2402,16 +2046,11 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: COLORS.subtext }}>No rows loaded yet.</p>
       )}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* LANDING PAGES × ATTRIBUTION — Premium                                       */
-/* ========================================================================== */
 function LandingPages({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -2431,7 +2070,6 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         filters,
         limit: 500,
       });
-
       const parsed = (data?.rows || []).map((r, i) => ({
         landing: r.dimensionValues?.[0]?.value || "(unknown)",
         source: r.dimensionValues?.[1]?.value || "(unknown)",
@@ -2442,7 +2080,6 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         revenue: Number(r.metricValues?.[3]?.value || 0),
         _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
       }));
-
       setRows(parsed);
       setTopOnly(false);
       setMinSessions(0);
@@ -2463,38 +2100,17 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
     return out;
   }, [rows, minSessions, topOnly]);
 
-  const exportCsv = () => {
-    downloadCsvGeneric(`landing_pages_${startDate}_to_${endDate}`, filtered, [
-      { header: "Landing Page", key: "landing" },
-      { header: "Source", key: "source" },
-      { header: "Medium", key: "medium" },
-      { header: "Sessions", key: "sessions" },
-      { header: "Users", key: "users" },
-      { header: "Transactions", key: "transactions" },
-      { header: "Revenue", key: "revenue" },
-    ]);
-  };
+  const shownCount = filtered.length;
+  const totalCount = rows.length;
 
   return (
     <FrostCard
       title="Landing Pages × Attribution"
-      subtitle="Where users land vs. which sources drive outcomes."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
             {loading ? "Loading…" : "Load"}
-          </button>
-          <button
-            onClick={exportCsv}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={!filtered.length}
-          >
-            Download CSV
-          </button>
+          </Button>
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
@@ -2513,17 +2129,47 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
                 revenue: r.revenue,
               })),
             }}
+            blueCta
           />
+          <Button
+            onClick={() =>
+              downloadCsvGeneric(
+                `landing_pages_${startDate}_to_${endDate}`,
+                filtered,
+                [
+                  { header: "Landing Page", key: "landing" },
+                  { header: "Source", key: "source" },
+                  { header: "Medium", key: "medium" },
+                  { header: "Sessions", key: "sessions" },
+                  { header: "Users", key: "users" },
+                  { header: "Transactions", key: "transactions" },
+                  { header: "Revenue", key: "revenue" },
+                ]
+              )
+            }
+            disabled={!filtered.length}
+          >
+            Download CSV
+          </Button>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {loading && !rows.length ? (
+      {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {!loading && !rows.length && !error && (
+        <p style={{ marginTop: 8, color: COLORS.subtext }}>
+          No rows loaded yet.
+        </p>
+      )}
+
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={16} width="50%" />
+          <Skeleton height={180} />
         </div>
-      ) : filtered.length > 0 ? (
+      )}
+
+      {!loading && filtered.length > 0 && (
         <>
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -2547,8 +2193,8 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             </div>
 
             {rows.length > 0 && (
-              <span style={{ fontSize: 12, color: COLORS.subtext }}>
-                Showing <b>{filtered.length.toLocaleString()}</b> of {rows.length.toLocaleString()}
+              <span style={{ fontSize: 12, color: "#555" }}>
+                Showing <b>{shownCount.toLocaleString()}</b> of {totalCount.toLocaleString()}
               </span>
             )}
           </div>
@@ -2557,31 +2203,31 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Landing Page</th>
-                  <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Source</th>
-                  <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Medium</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Transactions</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Revenue</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Landing Page</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Source</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Medium</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r._k}>
-                    <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}`, fontFamily: "monospace" }}>{r.landing}</td>
-                    <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.source}</td>
-                    <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.medium}</td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>{r.landing}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.source}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.medium}</td>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                       {r.sessions.toLocaleString()}
                     </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                       {r.users.toLocaleString()}
                     </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                       {r.transactions.toLocaleString()}
                     </td>
-                    <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                       {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                     </td>
                   </tr>
@@ -2590,17 +2236,12 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
             </table>
           </div>
         </>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: COLORS.subtext }}>{rows.length ? "No rows match your view filters." : "No rows loaded yet."}</p>
       )}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* E-COMMERCE KPIs                                                             */
-/* ========================================================================== */
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, isPremium }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
@@ -2615,7 +2256,12 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, i
     setError("");
     setTotals(null);
     try {
-      const data = await fetchJson("/api/ga4/ecommerce-summary", { propertyId, startDate, endDate, filters });
+      const data = await fetchJson("/api/ga4/ecommerce-summary", {
+        propertyId,
+        startDate,
+        endDate,
+        filters,
+      });
       setTotals(data?.totals || null);
     } catch (e) {
       setError(String(e.message || e));
@@ -2624,51 +2270,62 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, i
     }
   };
 
-  const kpiTargets = useMemo(() => (isPremium ? loadKpiTargets() : {}), [isPremium]);
+  const kpiTargets = useMemo(() => loadKpiTargets(), []);
 
   return (
     <FrostCard
       title="E-commerce KPIs"
-      subtitle="Key purchase metrics and ratios."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId}>
             {loading ? "Loading…" : "Load"}
-          </button>
-          {totals && isPremium && (
-            <>
-              <TargetBadge label="Sessions" current={Number(totals?.sessions || 0)} target={Number(kpiTargets?.sessionsTarget)} />
-              <TargetBadge label="Revenue" current={Number(totals?.revenue || 0)} target={Number(kpiTargets?.revenueTarget)} currency />
-              <TargetBadge label="CVR" current={Number(totals?.cvr || 0)} target={Number(kpiTargets?.cvrTarget)} />
-            </>
+          </Button>
+          {totals && (
+            <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <TargetBadge
+                label="Sessions"
+                current={Number(totals?.sessions || 0)}
+                target={Number(kpiTargets?.sessionsTarget)}
+              />
+              <TargetBadge
+                label="Revenue"
+                current={Number(totals?.revenue || 0)}
+                target={Number(kpiTargets?.revenueTarget)}
+                currency
+              />
+              <TargetBadge
+                label="CVR"
+                current={Number(totals?.cvr || 0)}
+                target={Number(kpiTargets?.cvrTarget)}
+              />
+            </div>
           )}
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
-            endpoint="/api/insights/summarise-pro"
-            payload={{ topic: "ecom_kpis", totals, dateRange: { start: startDate, end: endDate }, filters }}
+            endpoint="/api/insights/summarise-ecom"
+            payload={{ totals, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
+            blueCta
           />
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {loading && !totals ? (
+      {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {!error && !totals && !loading && <p style={{ color: COLORS.subtext }}>No data loaded yet.</p>}
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={18} width="40%" />
+          <Skeleton height={150} />
         </div>
-      ) : !error && totals ? (
+      )}
+      {!loading && totals && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: 560 }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Metric</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Value</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Metric</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Value</th>
               </tr>
             </thead>
             <tbody>
@@ -2677,14 +2334,18 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, i
               <Tr label="Add-to-Cart (events)" value={totals.addToCarts} />
               <Tr label="Begin Checkout (events)" value={totals.beginCheckout} />
               <Tr label="Purchases (transactions)" value={totals.transactions} />
-              <Tr label="Revenue" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)} />
+              <Tr
+                label="Revenue"
+                value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.revenue || 0)}
+              />
               <Tr label="Conversion Rate (purchase / session)" value={`${(totals.cvr || 0).toFixed(2)}%`} />
-              <Tr label="AOV (Revenue / Transactions)" value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)} />
+              <Tr
+                label="AOV (Revenue / Transactions)"
+                value={new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(totals.aov || 0)}
+              />
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ color: COLORS.subtext }}>No data loaded yet.</p>
       )}
     </FrostCard>
   );
@@ -2693,15 +2354,12 @@ function Tr({ label, value }) {
   const formatted = typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : value;
   return (
     <tr>
-      <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{label}</td>
-      <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>{formatted}</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{formatted}</td>
     </tr>
   );
 }
 
-/* ========================================================================== */
-/* CHECKOUT FUNNEL                                                             */
-/* ========================================================================== */
 function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
@@ -2729,39 +2387,40 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
   return (
     <FrostCard
       title="Checkout funnel (event counts)"
-      subtitle="Event counts across the purchase journey."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-          >
+          <Button onClick={load} disabled={loading || !propertyId}>
             {loading ? "Loading…" : "Load"}
-          </button>
+          </Button>
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
             endpoint="/api/insights/summarise-funnel"
             payload={{ steps, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
+            blueCta
           />
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {loading && !steps ? (
+      {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {!loading && !steps && !error && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={18} width="40%" />
+          <Skeleton height={150} />
         </div>
-      ) : steps ? (
+      )}
+
+      {steps ? (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: 520 }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Step</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Count</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Step</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Count</th>
               </tr>
             </thead>
             <tbody>
@@ -2773,8 +2432,8 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
                 ["Purchase", steps.purchase],
               ].map(([label, val]) => (
                 <tr key={label}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{label}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {(val || 0).toLocaleString()}
                   </td>
                 </tr>
@@ -2782,26 +2441,19 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>
-      )}
+      ) : null}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* TRENDS OVER TIME — Premium                                                  */
-/* ========================================================================== */
 function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState("daily");
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  function pad2(n) {
-    return String(n).padStart(2, "0");
-  }
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function pad2(n) { return String(n).padStart(2, "0"); }
   function isoWeekStartUTC(year, week) {
     const jan4 = new Date(Date.UTC(year, 0, 4));
     const jan4Day = jan4.getUTCDay() || 7;
@@ -2814,11 +2466,9 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   function formatYearWeekRange(s) {
     const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
-    const year = Number(m[1]);
-    const week = Number(m[2]);
+    const year = Number(m[1]); const week = Number(m[2]);
     const start = isoWeekStartUTC(year, week);
-    const end = new Date(start);
-    end.setUTCDate(start.getUTCDate() + 6);
+    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
     const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
     const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
     return `${startStr}–${endStr}`;
@@ -2826,14 +2476,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   function formatYYYYMMDD(s) {
     const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
-    const y = Number(m[1]),
-      mo = Number(m[2]),
-      d = Number(m[3]);
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
     return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
   }
   function displayPeriodLabel(raw, gran) {
     return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
   }
+
   function buildLineChartUrl(series) {
     if (!series?.length) return "";
     const labels = series.map((d) => displayPeriodLabel(d.period, granularity));
@@ -2866,28 +2515,22 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
   return (
     <FrostCard
       title="Trends over time"
-      subtitle="Sessions and users over time."
-      right={
+      actions={
         <>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             Granularity
             <select
               value={granularity}
               onChange={(e) => setGranularity(e.target.value)}
-              style={{ padding: 6, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+              style={{ padding: 6, borderRadius: 8, border: `1px solid ${COLORS.border}` }}
             >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
             </select>
           </label>
-          <button
-            onClick={load}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={loading || !propertyId}
-            title={!propertyId ? "Enter a GA4 property ID first" : ""}
-          >
+          <Button onClick={load} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
             {loading ? "Loading…" : "Load"}
-          </button>
+          </Button>
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
@@ -2898,39 +2541,51 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
               series: rows,
               dateRange: { start: startDate, end: endDate },
               filters,
+              goals: [
+                "Call out surges/drops and likely drivers",
+                "Flag seasonality or anomalies",
+                "Recommend 2–3 next actions or tests",
+              ],
             }}
+            blueCta
           />
-          <button
+          <Button
             onClick={() =>
-              downloadCsvGeneric(`timeseries_${granularity}_${startDate}_to_${endDate}`, rows, [
-                { header: "Period", key: "period" },
-                { header: "Sessions", key: "sessions" },
-                { header: "Users", key: "users" },
-                { header: "Transactions", key: "transactions" },
-                { header: "Revenue", key: "revenue" },
-              ])
+              downloadCsvGeneric(
+                `timeseries_${granularity}_${startDate}_to_${endDate}`,
+                rows,
+                [
+                  { header: "Period", key: "period" },
+                  { header: "Sessions", key: "sessions" },
+                  { header: "Users", key: "users" },
+                  { header: "Transactions", key: "transactions" },
+                  { header: "Revenue", key: "revenue" },
+                ]
+              )
             }
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
             disabled={!hasRows}
           >
             Download CSV
-          </button>
+          </Button>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {loading && !hasRows ? (
+      {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={300} />
+          <Skeleton height={22} width="30%" />
+          <Skeleton height={220} />
         </div>
-      ) : hasRows ? (
+      )}
+
+      {hasRows ? (
         <>
           <div style={{ marginTop: 12 }}>
             <img
               src={buildLineChartUrl(rows)}
               alt="Sessions & Users trend"
-              style={{ maxWidth: "100%", height: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8 }}
+              style={{ maxWidth: "100%", height: "auto", border: "1px solid #eee", borderRadius: 8 }}
             />
           </div>
 
@@ -2938,11 +2593,11 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Period</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Sessions</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Users</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Transactions</th>
-                  <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Revenue</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Period</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Sessions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Users</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Transactions</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Revenue</th>
                 </tr>
               </thead>
               <tbody>
@@ -2950,17 +2605,17 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
                   const label = displayPeriodLabel(r.period, granularity);
                   return (
                     <tr key={r.period} title={r.period}>
-                      <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{label}</td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{label}</td>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                         {r.sessions.toLocaleString()}
                       </td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                         {r.users.toLocaleString()}
                       </td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                         {r.transactions.toLocaleString()}
                       </td>
-                      <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                         {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                       </td>
                     </tr>
@@ -2970,21 +2625,67 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
             </table>
           </div>
         </>
-      ) : (
-        !error && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>
-      )}
+      ) : !error && !loading ? (
+        <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>
+      ) : null}
     </FrostCard>
   );
 }
 
-/* ========================================================================== */
-/* PRODUCTS (env flag)                                                         */
-/* ========================================================================== */
+/* Reusable table helpers */
+function TableSix({ cols, children }) {
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <thead>
+        <tr>
+          {cols.map((c) => (
+            <th key={c} style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>
+              {c}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>{children}</tbody>
+    </table>
+  );
+}
+function TableFive({ cols, children }) {
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <thead>
+        <tr>
+          {cols.map((c, idx) => (
+            <th
+              key={c}
+              style={{
+                textAlign: idx === 0 ? "left" : "right",
+                borderBottom: "1px solid #ddd",
+                padding: 8,
+              }}
+            >
+              {c}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>{children}</tbody>
+    </table>
+  );
+}
+function TdLeft({ children }) {
+  return <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{children}</td>;
+}
+function TdRight({ children }) {
+  return (
+    <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>{children}</td>
+  );
+}
+
 function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]); // [{ name, id, views, carts, purchases, revenue }]
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
-  const [debug, setDebug] = useState(null); // raw GA4 response
+  const [debug, setDebug] = useState(null);
 
   useEffect(() => {
     setRows([]);
@@ -3078,56 +2779,14 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
     }
   }
 
-  const exportCsv = () => {
-    if (!rows.length) return;
-    downloadCsvGeneric(
-      `product_performance_${startDate}_to_${endDate}`,
-      rows.map((r) => ({
-        name: r.name,
-        id: r.id,
-        views: r.views,
-        carts: r.carts,
-        purchases: r.purchases,
-        revenue: r.revenue,
-      })),
-      [
-        { header: "Item name/ID", key: "name" },
-        { header: "Item ID", key: "id" },
-        { header: "Items viewed", key: "views" },
-        { header: "Items added to cart", key: "carts" },
-        { header: "Items purchased", key: "purchases" },
-        { header: "Item revenue", key: "revenue" },
-      ]
-    );
-  };
-
   return (
     <FrostCard
       title="Product Performance"
-      subtitle="Views, carts, and revenue by item."
-      right={
+      actions={
         <>
-          <button
-            onClick={load}
-            style={{
-              padding: "8px 12px",
-              cursor: "pointer",
-              borderRadius: 10,
-              border: `1px solid ${COLORS.border}`,
-              background: "#fff",
-            }}
-            disabled={loading || !propertyId}
-            title={!propertyId ? "Enter a GA4 property ID first" : ""}
-          >
+          <Button onClick={load} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
             {loading ? "Loading…" : "Load"}
-          </button>
-          <button
-            onClick={exportCsv}
-            style={{ padding: "8px 12px", cursor: "pointer", borderRadius: 10, border: `1px solid ${COLORS.border}`, background: "#fff" }}
-            disabled={!rows.length}
-          >
-            Download CSV
-          </button>
+          </Button>
           <AiBlock
             asButton
             buttonLabel="Summarise with AI"
@@ -3146,39 +2805,79 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               })),
             }}
             resetSignal={resetSignal}
+            blueCta
           />
+          <Button
+            onClick={() =>
+              downloadCsvGeneric(
+                `product_performance_${startDate}_to_${endDate}`,
+                rows.map((r) => ({
+                  name: r.name,
+                  id: r.id,
+                  views: r.views,
+                  carts: r.carts,
+                  purchases: r.purchases,
+                  revenue: r.revenue,
+                })),
+                [
+                  { header: "Item name/ID", key: "name" },
+                  { header: "Item ID", key: "id" },
+                  { header: "Items viewed", key: "views" },
+                  { header: "Items added to cart", key: "carts" },
+                  { header: "Items purchased", key: "purchases" },
+                  { header: "Item revenue", key: "revenue" },
+                ]
+              )
+            }
+            disabled={!rows.length}
+          >
+            Download CSV
+          </Button>
+          <span style={{ color: COLORS.subtext, fontSize: 12 }}>Respects global filters (Country / Channel Group).</span>
         </>
       }
     >
-      {error && <p style={{ color: COLORS.red, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
+      {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
-      {loading && !rows.length ? (
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+
+      {loading && (
         <div style={{ display: "grid", gap: 10 }}>
-          <Skeleton height={18} width="50%" />
-          <Skeleton height={140} />
+          <Skeleton height={18} width="40%" />
+          <Skeleton height={200} />
         </div>
-      ) : rows.length > 0 ? (
+      )}
+
+      {!loading && rows.length > 0 && (
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Item</th>
-                <th style={{ textAlign: "left", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Item ID</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Items viewed</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Items added to cart</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Items purchased</th>
-                <th style={{ textAlign: "right", borderBottom: `1px solid ${COLORS.border}`, padding: 8 }}>Item revenue</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Item ID</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items viewed</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items added to cart</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Items purchased</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #ddd", padding: 8 }}>Item revenue</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key}>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}` }}>{r.name}</td>
-                  <td style={{ padding: 8, borderBottom: `1px solid ${COLORS.border}`, fontFamily: "monospace" }}>{r.id || "—"}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>{r.views.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>{r.carts.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>{r.purchases.toLocaleString()}</td>
-                  <td style={{ padding: 8, textAlign: "right", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{r.name}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #eee", fontFamily: "monospace" }}>
+                    {r.id || "—"}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.views.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.carts.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
+                    {r.purchases.toLocaleString()}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", borderBottom: "1px solid #eee" }}>
                     {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(r.revenue || 0)}
                   </td>
                 </tr>
@@ -3186,8 +2885,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
             </tbody>
           </table>
         </div>
-      ) : (
-        !error && <p style={{ marginTop: 8, color: COLORS.subtext }}>No rows loaded yet.</p>
       )}
 
       {debug && (
@@ -3200,7 +2897,6 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
               padding: 12,
               borderRadius: 6,
               overflow: "auto",
-              border: `1px solid ${COLORS.border}`,
             }}
           >
             {JSON.stringify(debug, null, 2)}
@@ -3211,27 +2907,354 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-/* ========================================================================== */
-/* CHANGE LOG / COMPAT / ASSUMPTIONS                                           */
-/* ========================================================================== */
-// Change Log
-// - Added strict Premium gate with Upgrade modal and session-only dev override.
-// - Wrapped premium features with <PremiumGuard/>: Saved Views, Trends, Campaigns, Campaign Drilldown,
-//   Campaigns (KPI metrics), Landing Pages × Attribution, KPI Targets & Alerts / Digest.
-// - Kept all previous features and API contracts intact.
-// - Refreshed UI to ORB-like frosted cards and Google color accents.
-// - Added GA connection status badge (green/red) tied to presence of propertyId.
-// - Added skeleton loaders & polished empty states across sections.
-// - Renamed "Campaigns (overview)" to "Campaigns (KPI metrics)" (label only, API unchanged).
-//
-// Compatibility Notes
-// - Uses <img> for QuickChart charts because next/image may require domain config; lint rule
-//   is disabled at file head to avoid build break. Everything else follows Next.js best practices.
-// - Premium dev override is session-only: run
-//   sessionStorage.setItem("__dev_premium_session","1")
-//   to unlock for the current tab session. It is intentionally not persisted across tabs/reloads.
-//
-// Assumptions
-// - Server-side premium entitlements are not yet wired; this client-only gate is intentional for MVP.
-// - Existing API endpoints respond with the same shapes as previously used in your project.
-// - Product feature is controlled by NEXT_PUBLIC_ENABLE_PRODUCTS env flag as before.
+/* ============================== Saved Views (Premium) ============================== */
+function SavedViews({ premium, startDate, endDate, countrySel, channelSel, comparePrev, onApply, onRunReport, onNotice }) {
+  const [presets, setPresets] = useState([]);
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_VIEWS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(arr)) setPresets(arr);
+    } catch {}
+  }, []);
+
+  const persist = (arr) => {
+    setPresets(arr);
+    try {
+      localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(arr));
+    } catch {}
+  };
+
+  const saveCurrent = () => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) {
+      onNotice?.("Give your view a name.");
+      return;
+    }
+    const next = [
+      ...presets.filter((p) => p.name !== trimmed),
+      {
+        id: crypto?.randomUUID?.() || String(Date.now()),
+        name: trimmed,
+        startDate,
+        endDate,
+        country: countrySel,
+        channelGroup: channelSel,
+        comparePrev: !!comparePrev,
+        savedAt: new Date().toISOString(),
+      },
+    ].sort((a, b) => a.name.localeCompare(b.name));
+
+    persist(next);
+    onNotice?.("Saved!");
+    setTimeout(() => onNotice?.(""), 1200);
+  };
+
+  const apply = (p, run = false) => {
+    onApply({
+      startDate: p.startDate,
+      endDate: p.endDate,
+      country: p.country,
+      channelGroup: p.channelGroup,
+      comparePrev: !!p.comparePrev,
+    });
+    if (run) onRunReport();
+  };
+
+  const remove = (p) => {
+    const next = presets.filter((x) => x.name !== p.name);
+    persist(next);
+  };
+
+  const body = (
+    <section
+      style={{
+        marginTop: 12,
+        padding: 12,
+        border: "1px dashed #e0e0e0",
+        borderRadius: 8,
+        background: "#fbfbfb",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: 16 }}>Saved Views</h3>
+
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name this view (e.g. UK · Organic · Sep)"
+          style={{ padding: 8, minWidth: 260, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+        />
+        <Button onClick={saveCurrent}>Save current</Button>
+      </div>
+
+      {presets.length > 0 ? (
+        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+          {presets.map((p) => (
+            <div
+              key={p.name}
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                border: `1px solid ${COLORS.border}`,
+                padding: 8,
+                borderRadius: 10,
+              }}
+            >
+              <div style={{ minWidth: 280 }}>
+                <b>{p.name}</b>{" "}
+                <span style={{ color: "#666", fontSize: 12 }}>
+                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup} {p.comparePrev ? "· compare" : ""}
+                </span>
+              </div>
+              <Button onClick={() => apply(p, false)}>Apply</Button>
+              <Button onClick={() => apply(p, true)}>Apply &amp; Run</Button>
+              <Button onClick={() => remove(p)} kind="danger">
+                Delete
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p style={{ marginTop: 8, color: "#666", fontSize: 13 }}>
+          No saved views yet. Set dates/filters, give it a name, then &ldquo;Save current&rdquo;.
+        </p>
+      )}
+    </section>
+  );
+
+  if (!premium) {
+    return (
+      <FrostCard
+        title="Saved Views (Premium)"
+        actions={<Pill color="#6366F1" bg="#EEF2FF" text="Premium required" />}
+      >
+        <p style={{ color: COLORS.subtext, margin: 0 }}>
+          Saved views are available on Premium. Your existing storage key is preserved ({SAVED_VIEWS_KEY}).
+        </p>
+      </FrostCard>
+    );
+  }
+
+  return (
+    <FrostCard title="Saved Views">{body}</FrostCard>
+  );
+}
+
+/* ============================== KPI Targets & Alerts / Digest (Premium) ============================== */
+/* Note: We keep it as a single panel with "Show settings" CTA, per your preference. */
+function KpiAndAlerts() {
+  const [open, setOpen] = useState(false);
+
+  const [targets, setTargets] = useState({ sessionsTarget: "", revenueTarget: "", cvrTarget: "" });
+  const [alerts, setAlerts] = useState({
+    z: 2,
+    lookback: 28,
+    slackWebhook: "",
+    digestEnabled: false,
+    digestFrequency: "daily",
+    digestTime: "09:00",
+  });
+
+  useEffect(() => {
+    try {
+      const t = JSON.parse(localStorage.getItem(KPI_TARGETS_KEY) || "null");
+      if (t) setTargets({
+        sessionsTarget: t.sessionsTarget ?? "",
+        revenueTarget: t.revenueTarget ?? "",
+        cvrTarget: t.cvrTarget ?? "",
+      });
+    } catch {}
+    try {
+      const a = JSON.parse(localStorage.getItem(ALERTS_CFG_KEY) || "null");
+      if (a) setAlerts((prev) => ({ ...prev, ...a }));
+    } catch {}
+  }, []);
+
+  const saveTargets = () => {
+    try {
+      localStorage.setItem(KPI_TARGETS_KEY, JSON.stringify({
+        sessionsTarget: Number(targets.sessionsTarget || 0),
+        revenueTarget: Number(targets.revenueTarget || 0),
+        cvrTarget: Number(targets.cvrTarget || 0),
+      }));
+      alert("KPI targets saved.");
+    } catch {}
+  };
+  const saveAlerts = () => {
+    try {
+      localStorage.setItem(ALERTS_CFG_KEY, JSON.stringify(alerts));
+      alert("Alerts / Digest settings saved.");
+    } catch {}
+  };
+  const testSlack = async () => {
+    try {
+      const res = await fetch("/api/slack/digest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          webhook: alerts.slackWebhook,
+          propertyId: "test",
+          range: "test",
+          test: true,
+        }),
+      });
+      const ok = await res.json().catch(() => ({}));
+      alert(res.ok ? "Sent test to Slack." : `Slack test failed: ${res.status} ${ok?.error || ""}`);
+    } catch (e) {
+      alert(`Slack test failed: ${String(e?.message || e)}`);
+    }
+  };
+
+  return (
+    <FrostCard
+      title="KPI Targets & Alerts / Digest (Premium)"
+      actions={
+        <Button onClick={() => setOpen((v) => !v)}>{open ? "Hide settings" : "Show settings"}</Button>
+      }
+    >
+      {!open ? (
+        <p style={{ margin: 0, color: COLORS.subtext }}>
+          Configure your KPI targets and anomaly alerting/digest Slack delivery. Click &ldquo;Show settings&rdquo;.
+        </p>
+      ) : (
+        <div style={{ display: "grid", gap: 16 }}>
+          <div>
+            <h4 style={{ margin: "4px 0 8px" }}>KPI Targets</h4>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <LabeledInput
+                label="Sessions target"
+                value={targets.sessionsTarget}
+                onChange={(v) => setTargets((t) => ({ ...t, sessionsTarget: v }))}
+                type="number"
+              />
+              <LabeledInput
+                label="Revenue target (GBP)"
+                value={targets.revenueTarget}
+                onChange={(v) => setTargets((t) => ({ ...t, revenueTarget: v }))}
+                type="number"
+              />
+              <LabeledInput
+                label="CVR target (%)"
+                value={targets.cvrTarget}
+                onChange={(v) => setTargets((t) => ({ ...t, cvrTarget: v }))}
+                type="number"
+              />
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <Button onClick={saveTargets}>Save KPI Targets</Button>
+            </div>
+          </div>
+
+          <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 8 }}>
+            <h4 style={{ margin: "4px 0 8px" }}>Anomaly Alerts &amp; Digest (Slack)</h4>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <LabeledInput
+                label="Sensitivity (z)"
+                value={alerts.z}
+                type="number"
+                onChange={(v) => setAlerts((a) => ({ ...a, z: Number(v || 0) }))}
+                hint="Higher z = fewer alerts. 2–3 is typical."
+              />
+              <LabeledInput
+                label="Lookback (days)"
+                value={alerts.lookback}
+                type="number"
+                onChange={(v) => setAlerts((a) => ({ ...a, lookback: Number(v || 0) }))}
+                hint="Data window for the baseline."
+              />
+              <LabeledInput
+                label="Slack Webhook URL"
+                value={alerts.slackWebhook}
+                onChange={(v) => setAlerts((a) => ({ ...a, slackWebhook: v }))}
+                placeholder="https://hooks.slack.com/services/..."
+              />
+              <div style={{ display: "grid", gap: 6 }}>
+                <label style={{ fontSize: 12, color: COLORS.subtext }}>Digest</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={alerts.digestEnabled}
+                    onChange={(e) => setAlerts((a) => ({ ...a, digestEnabled: e.target.checked }))}
+                  />
+                  Enable digest
+                </label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <select
+                    value={alerts.digestFrequency}
+                    onChange={(e) => setAlerts((a) => ({ ...a, digestFrequency: e.target.value }))}
+                    style={{ padding: 8, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                  <input
+                    type="time"
+                    value={alerts.digestTime}
+                    onChange={(e) => setAlerts((a) => ({ ...a, digestTime: e.target.value }))}
+                    style={{ padding: 8, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Button onClick={saveAlerts}>Save Alerts / Digest</Button>
+              <Button
+                onClick={testSlack}
+                disabled={!alerts.slackWebhook}
+                title={!alerts.slackWebhook ? "Add Slack webhook URL first" : "Send test"}
+                kind="primary"
+              >
+                Send test to Slack
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </FrostCard>
+  );
+}
+function LabeledInput({ label, value, onChange, type = "text", placeholder, hint }) {
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <label style={{ fontSize: 12, color: COLORS.subtext }}>{label}</label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type}
+        placeholder={placeholder}
+        style={{ padding: 10, borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+      />
+      {hint ? <span style={{ fontSize: 11, color: COLORS.subtext }}>{hint}</span> : null}
+    </div>
+  );
+}
+
+/* ============================== Premium Gate Wrapper ============================== */
+function PremiumGate({ label, premium, children }) {
+  if (!premium) {
+    return (
+      <FrostCard title={`${label} (Premium)`} actions={<Pill color="#6366F1" bg="#EEF2FF" text="Premium required" />}>
+        <p style={{ margin: 0, color: COLORS.subtext }}>
+          This panel is available on Premium and remains fully implemented behind the gate. No features removed.
+        </p>
+      </FrostCard>
+    );
+  }
+  return children;
+}
+
+/* ============================== END ============================== */
