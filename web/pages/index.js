@@ -5,19 +5,11 @@ import Image from "next/image";
 
 /**
  * ============================================================================
- * InsightGPT Dashboard (MVP)
- * - Keeps all existing features intact.
- * - Adds: GA4 connection + Property ID status pills (green/red),
- *         Blue "Summarise with AI" CTA styling,
- *         Mobile-only accordion for key KPI sections to reduce scroll.
- *
- * FEATURE REMINDERS / GUARANTEES:
- * - Premium gating preserved (localStorage key insightgpt_premium_flag_v1).
- * - Saved Views, KPI Targets, Alerts/Digest use existing storage keys.
- * - All API routes unchanged.
- * - No new dependencies.
- * - Escapes quotes to satisfy react/no-unescaped-entities.
- * - Uses <Image> where relevant; leaves externally-hosted chart images (QuickChart) as <img>.
+ * InsightGPT Dashboard — GA4-first UX with robust GA session status + CTAs
+ * - Fixes: GA session status not updating & "Run GA4 report" appearing dead.
+ * - Adds: Status polling + visibility/focus refresh; primary CTA styling for
+ *         "Connect Google Analytics" & "Run GA4 Report".
+ * - Keeps all existing features & APIs intact (no deps).
  * ============================================================================
  */
 
@@ -26,7 +18,7 @@ const STORAGE_KEY = "insightgpt_preset_v2";
 const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
 const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
 const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
-const PREMIUM_FLAG_KEY = "insightgpt_premium_flag_v1"; // "Alpha" or "Pro" to unlock premium UI (dev/testing)
+const PREMIUM_FLAG_KEY = "insightgpt_premium_flag_v1"; // "Alpha" or "Pro"
 
 const COLORS = {
   googleBlue: "#4285F4",
@@ -97,11 +89,11 @@ function decodeQuery() {
     comparePrev: q.compare === "1",
   };
 }
-async function fetchJson(url, payload) {
+async function fetchJson(url, payload, opts = {}) {
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
+    method: opts.method || "POST",
+    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    body: opts.method === "GET" ? undefined : JSON.stringify(payload || {}),
   });
   const text = await res.text();
   let data = null;
@@ -115,7 +107,9 @@ async function fetchJson(url, payload) {
       data?.details?.error?.message ||
       text ||
       `HTTP ${res.status}`;
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   return data || {};
 }
@@ -300,7 +294,7 @@ function FrostCard({ title, actions, children, id }) {
         }}
       >
         <h3 style={{ margin: 0, fontSize: 16, color: COLORS.text }}>{title}</h3>
-        {actions ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div> : null}
+        {actions ? <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>{actions}</div> : null}
       </div>
       <div style={{ padding: 14 }}>{children}</div>
     </section>
@@ -308,14 +302,16 @@ function FrostCard({ title, actions, children, id }) {
 }
 function Button({ onClick, children, disabled, kind = "default", title, id, style }) {
   const base = {
-    padding: "10px 14px",
-    borderRadius: 10,
+    padding: "11px 16px",
+    borderRadius: 12,
     border: `1px solid ${COLORS.border}`,
     background: "#fff",
     color: COLORS.text,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.6 : 1,
-    fontWeight: 600,
+    fontWeight: 700,
+    letterSpacing: "0.01em",
+    boxShadow: "0 1px 0 rgba(16,24,40,0.05)",
   };
   const kinds = {
     default: base,
@@ -324,6 +320,14 @@ function Button({ onClick, children, disabled, kind = "default", title, id, styl
       background: COLORS.googleBlue,
       borderColor: "#2C6AD9",
       color: "#fff",
+    },
+    primaryCta: {
+      ...base,
+      background: COLORS.googleBlue,
+      borderColor: "#1b5bd6",
+      color: "#fff",
+      boxShadow: "0 6px 20px rgba(66,133,244,0.35)",
+      transform: "translateZ(0)",
     },
     subtle: {
       ...base,
@@ -346,7 +350,6 @@ function Button({ onClick, children, disabled, kind = "default", title, id, styl
   );
 }
 function BlueAiButton(props) {
-  // Enforces a consistent prominent CTA for "Summarise with AI"
   return <Button kind="primary" {...props} />;
 }
 function Skeleton({ height = 16, width = "100%", radius = 6 }) {
@@ -365,7 +368,7 @@ function Skeleton({ height = 16, width = "100%", radius = 6 }) {
   );
 }
 
-/* Keyframe for Skeleton */
+/* Keyframe for Skeleton + mobile accordion styles (once) */
 if (typeof document !== "undefined" && !document.getElementById("sweep-keyframes")) {
   const style = document.createElement("style");
   style.id = "sweep-keyframes";
@@ -496,8 +499,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   // Connection status (session + property id)
-  const [gaSessionConnected, setGaSessionConnected] = useState(false); // true if GA OAuth session active
-  const [hasProperty, setHasProperty] = useState(false); // true if propertyId entered (non-empty)
+  const [gaSessionConnected, setGaSessionConnected] = useState(false);
+  const [gaStatusLoading, setGaStatusLoading] = useState(true);
+  const [hasProperty, setHasProperty] = useState(false);
 
   // Saved views notice
   const [saveNotice, setSaveNotice] = useState("");
@@ -505,8 +509,8 @@ export default function Home() {
   // Refs
   const topAnchorRef = useRef(null);
 
+  /* ------------------------ Init from URL + preset ------------------------ */
   useEffect(() => {
-    // URL params -> initial state
     try {
       if (typeof window === "undefined") return;
       const q = decodeQuery();
@@ -521,7 +525,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    // Load preset
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
       if (saved?.propertyId) setPropertyId(saved.propertyId);
@@ -534,7 +537,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    // Persist preset
     try {
       localStorage.setItem(
         STORAGE_KEY,
@@ -551,24 +553,70 @@ export default function Home() {
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
   useEffect(() => {
-    // Determine connection status
-    async function checkAuth() {
-      try {
-        const res = await fetch("/api/auth/google/status", { method: "GET" });
-        const ok = res.ok ? await res.json() : null;
-        setGaSessionConnected(!!ok?.connected);
-      } catch {
-        setGaSessionConnected(false);
-      }
-    }
-    // Session status
-    checkAuth();
-  }, []);
-
-  // Property ID presence -> status
-  useEffect(() => {
     setHasProperty(!!(propertyId && String(propertyId).trim()));
   }, [propertyId]);
+
+  /* ------------------------ Robust GA session status ------------------------ */
+  useEffect(() => {
+    let mounted = true;
+    let pollId = null;
+    let attempts = 0;
+
+    const markConnected = (val) => {
+      if (!mounted) return;
+      setGaSessionConnected(!!val);
+      setGaStatusLoading(false);
+      try {
+        localStorage.setItem("insightgpt_ga_session_connected", val ? "1" : "0");
+      } catch {}
+    };
+
+    const checkAuth = async () => {
+      try {
+        setGaStatusLoading(true);
+        // GET to allow simple middleware-based status endpoints
+        const data = await fetchJson("/api/auth/google/status", null, { method: "GET" });
+        markConnected(!!data?.connected);
+      } catch {
+        // Fallback to last-known state
+        try {
+          const last = localStorage.getItem("insightgpt_ga_session_connected");
+          if (last === "1") markConnected(true);
+          else markConnected(false);
+        } catch {
+          markConnected(false);
+        }
+      }
+    };
+
+    checkAuth();
+
+    // Poll for first minute (6x / 10s) to catch OAuth callback updates
+    pollId = setInterval(async () => {
+      attempts += 1;
+      if (attempts > 6) {
+        clearInterval(pollId);
+        pollId = null;
+        return;
+      }
+      await checkAuth();
+    }, 10000);
+
+    // Refresh on tab focus or when user returns
+    const onFocus = () => checkAuth();
+    const onVis = () => {
+      if (document.visibilityState === "visible") checkAuth();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      mounted = false;
+      if (pollId) clearInterval(pollId);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
 
   const connect = () => {
     window.location.href = "/api/auth/google/start";
@@ -593,6 +641,12 @@ export default function Home() {
         endDate,
         filters: appliedFilters,
       });
+      // If the call works, we are definitely connected
+      setGaSessionConnected(true);
+      try {
+        localStorage.setItem("insightgpt_ga_session_connected", "1");
+      } catch {}
+
       setResult(curr);
 
       // Update URL to reflect the view we just ran
@@ -623,7 +677,18 @@ export default function Home() {
         setPrevResult(prev);
       }
     } catch (e) {
-      setError(e.message);
+      // If auth issue, reflect in status & helpful error
+      if (e.status === 401 || e.status === 403) {
+        setGaSessionConnected(false);
+        try {
+          localStorage.setItem("insightgpt_ga_session_connected", "0");
+        } catch {}
+        setError(
+          "Google session expired or missing. Click \"Connect Google Analytics\" to re-authorise, then run again."
+        );
+      } else {
+        setError(String(e.message || e));
+      }
     } finally {
       setLoading(false);
     }
@@ -654,7 +719,9 @@ export default function Home() {
     top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
   /* ============================== Sticky header ============================== */
-  const sessionStatus = gaSessionConnected
+  const sessionStatus = gaStatusLoading
+    ? { s: "unknown", label: "Google session: Checking…" }
+    : gaSessionConnected
     ? { s: "good", label: "Google session: Connected" }
     : { s: "bad", label: "Google session: Not connected" };
   const propertyStatus = hasProperty
@@ -663,6 +730,8 @@ export default function Home() {
 
   /* ============================== Premium ============================== */
   const premium = isPremium();
+
+  const runDisabled = loading || !hasProperty; // <-- no longer blocked by session flag
 
   return (
     <main
@@ -681,7 +750,7 @@ export default function Home() {
           position: "sticky",
           top: 0,
           zIndex: 20,
-          background: "rgba(255,255,255,0.85)",
+          background: "rgba(255,255,255,0.9)",
           backdropFilter: "blur(8px)",
           borderBottom: `1px solid ${COLORS.frostEdge}`,
         }}
@@ -709,7 +778,12 @@ export default function Home() {
           <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <StatusDot status={sessionStatus.s} label={sessionStatus.label} />
             <StatusDot status={propertyStatus.s} label={propertyStatus.label} />
-            <Button onClick={connect} title="Connect Google Analytics">
+            <Button
+              onClick={connect}
+              title="Connect Google Analytics"
+              kind="primaryCta"
+              id="cta-connect-google"
+            >
               Connect Google Analytics
             </Button>
           </div>
@@ -718,7 +792,7 @@ export default function Home() {
 
       {/* Subheading */}
       <p style={{ marginTop: 12, color: COLORS.subtext }}>
-        Connect GA4, choose a date range, optionally apply filters, and run your report.
+        Connect GA4, enter a Property ID, choose a date range, optionally apply filters, and run your report.
       </p>
 
       {/* Controls */}
@@ -728,8 +802,10 @@ export default function Home() {
           <>
             <Button
               onClick={runReport}
-              disabled={loading || !gaSessionConnected || !hasProperty}
-              title={!gaSessionConnected ? "Connect Google first" : !hasProperty ? "Enter a GA4 Property ID" : "Run"}
+              disabled={runDisabled}
+              title={!hasProperty ? "Enter a GA4 Property ID" : "Run"}
+              kind="primaryCta"
+              id="cta-run-report"
             >
               {loading ? "Running…" : "Run GA4 Report"}
             </Button>
@@ -918,7 +994,21 @@ export default function Home() {
         )}
       </div>
 
-      {error && <p style={{ color: COLORS.googleRed, marginTop: 16 }}>Error: {error}</p>}
+      {error && (
+        <div
+          role="alert"
+          style={{
+            color: COLORS.googleRed,
+            background: "#fff5f5",
+            border: "1px solid #ffd6d6",
+            padding: 12,
+            borderRadius: 10,
+            marginTop: 16,
+          }}
+        >
+          <b>Error:</b> <span style={{ whiteSpace: "pre-wrap" }}>{error}</span>
+        </div>
+      )}
 
       {/* Anchor to scroll after running */}
       <div ref={topAnchorRef} />
@@ -3046,7 +3136,6 @@ function SavedViews({ premium, startDate, endDate, countrySel, channelSel, compa
 }
 
 /* ============================== KPI Targets & Alerts / Digest (Premium) ============================== */
-/* Note: We keep it as a single panel with "Show settings" CTA, per your preference. */
 function KpiAndAlerts() {
   const [open, setOpen] = useState(false);
 
