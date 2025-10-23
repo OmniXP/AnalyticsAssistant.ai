@@ -1,115 +1,128 @@
-// pages/api/stripe/webhook.js
-// Stripe webhook endpoint using raw body + HMAC verification (no Stripe SDK).
-// Handles subscription lifecycle events and logs them.
-// You can extend the "entitlements update" area to write to your DB if you add one later.
+// /pages/api/stripe/webhook.js
+import Stripe from "stripe";
 
 export const config = {
   api: {
-    bodyParser: false, // we need the raw body to verify the Stripe signature
+    // We need the raw body to verify Stripe's signature
+    bodyParser: false,
   },
 };
+
+// Read raw body helper (no extra deps)
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function isTruthy(x) {
+  return x === true || x === "true" || x === "1" || x === 1;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
-    return res.status(405).send("Method Not Allowed");
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  const WH_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!WH_SECRET) {
-    console.error("Missing STRIPE_WEBHOOK_SECRET");
-    return res.status(500).send("Missing STRIPE_WEBHOOK_SECRET");
+  const secret = process.env.STRIPE_SECRET_KEY;
+  const whSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) return res.status(500).json({ error: "Missing STRIPE_SECRET_KEY" });
+  if (!whSecret) return res.status(500).json({ error: "Missing STRIPE_WEBHOOK_SECRET" });
+
+  const stripe = new Stripe(secret, { apiVersion: "2024-06-20" });
+
+  let buf;
+  let event;
+  try {
+    buf = await readRawBody(req);
+    const signature = req.headers["stripe-signature"];
+    event = stripe.webhooks.constructEvent(buf, signature, whSecret);
+  } catch (err) {
+    console.error("⚠️  Webhook signature verification failed.", err.message);
+    return res.status(400).json({ error: `Webhook signature verification failed: ${err.message}` });
   }
 
   try {
-    const buf = await readBuffer(req);
-    const sig = req.headers["stripe-signature"];
-    if (!sig) return res.status(400).send("Missing Stripe-Signature header");
-
-    // Verify signature
-    if (!verifyStripeSignature(buf, sig, WH_SECRET)) {
-      return res.status(400).send("Invalid signature");
-    }
-
-    const event = JSON.parse(buf.toString("utf8"));
-    const type = event?.type || "unknown";
-
-    // Handle relevant events
-    switch (type) {
+    switch (event.type) {
       case "checkout.session.completed": {
-        // subscription created / paid
-        // const email = event.data.object.customer_details?.email;
-        // const customerId = event.data.object.customer;
-        // -> Update entitlements in your DB if you add one later.
+        // Payment successful: mark customer premium=true
+        const session = event.data.object;
+        const customerId = session.customer;
+        if (customerId) {
+          await stripe.customers.update(customerId, {
+            metadata: { ...(session.metadata || {}), insightgpt_premium: "true" },
+          });
+        }
         break;
       }
-      case "customer.subscription.updated":
+
+      case "checkout.session.expired": {
+        // If it expired before paying, we can choose to mark as false (no-op if no customer)
+        const session = event.data.object;
+        const customerId = session.customer;
+        if (customerId) {
+          // Don't downgrade if already true due to another purchase
+          const customer = await stripe.customers.retrieve(customerId);
+          const already = isTruthy(customer?.metadata?.insightgpt_premium);
+          if (!already) {
+            await stripe.customers.update(customerId, {
+              metadata: { ...(customer.metadata || {}), insightgpt_premium: "false" },
+            });
+          }
+        }
+        break;
+      }
+
       case "customer.subscription.created":
-      case "customer.subscription.deleted": {
-        // const sub = event.data.object;
-        // const customerId = sub.customer;
-        // const status = sub.status;
-        // -> Update entitlements in your DB if you add one later.
+      case "customer.subscription.updated": {
+        // Subscription status controls premium flag
+        const sub = event.data.object;
+        const customerId = sub.customer;
+        const activeish = ["trialing", "active", "past_due"].includes(sub.status);
+        if (customerId) {
+          await stripe.customers.update(customerId, {
+            metadata: { insightgpt_premium: activeish ? "true" : "false" },
+          });
+        }
         break;
       }
+
+      case "customer.subscription.deleted": {
+        const sub = event.data.object;
+        const customerId = sub.customer;
+        if (customerId) {
+          await stripe.customers.update(customerId, {
+            metadata: { insightgpt_premium: "false" },
+          });
+        }
+        break;
+      }
+
+      case "charge.refunded": {
+        // Optional: if a one-off purchase was refunded, you may want to revoke premium
+        const charge = event.data.object;
+        const customerId = charge.customer;
+        if (customerId) {
+          await stripe.customers.update(customerId, {
+            metadata: { insightgpt_premium: "false" },
+          });
+        }
+        break;
+      }
+
       default:
+        // For observability; keep but don’t fail the webhook
+        // console.log(`Unhandled event type ${event.type}`);
         break;
     }
 
     return res.status(200).json({ received: true });
   } catch (err) {
-    console.error("stripe webhook error", err);
-    return res.status(400).send(`Webhook Error`);
+    console.error("Webhook handler error:", err);
+    return res.status(500).json({ error: "Webhook processing error" });
   }
-}
-
-/* ----------------------------- Helpers ---------------------------------- */
-
-function timingSafeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-import crypto from "crypto";
-
-/**
- * Stripe signs the payload as: HMAC_SHA256(secret, `${timestamp}.${rawBody}`)
- * Header looks like: t=1699999999,v1=abcdef...,v0=...
- */
-function verifyStripeSignature(rawBody, signatureHeader, secret) {
-  try {
-    const entries = signatureHeader
-      .split(",")
-      .map((p) => p.trim().split("="))
-      .filter((kv) => kv.length === 2)
-      .reduce((acc, [k, v]) => ((acc[k] = v), acc), {});
-
-    const t = entries.t;
-    const v1 = entries.v1;
-    if (!t || !v1) return false;
-
-    const signedPayload = `${t}.${rawBody.toString("utf8")}`;
-    const expected = crypto
-      .createHmac("sha256", secret)
-      .update(signedPayload, "utf8")
-      .digest("hex");
-
-    return timingSafeEqual(expected, v1);
-  } catch (e) {
-    console.error("verifyStripeSignature error", e);
-    return false;
-  }
-}
-
-function readBuffer(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", (e) => reject(e));
-  });
 }
