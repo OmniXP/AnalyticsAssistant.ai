@@ -20,3 +20,10 @@
     "eslint-config-next": "15.5.3"
   }
 }
+{
+  "dependencies": {
+    // …your other deps…
+    "stripe": "^14.25.0"
+  }
+}
+
