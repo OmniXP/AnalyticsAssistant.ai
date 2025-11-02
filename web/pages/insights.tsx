@@ -1,10 +1,12 @@
 import { getServerSession } from "next-auth/next";
 import type { GetServerSideProps } from "next";
-import { authOptions } from "./api/auth/[...nextauth]";
+import { authOptions } from "../lib/authOptions";
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const session = await getServerSession(ctx.req, ctx.res, authOptions);
-  if (!session) return { redirect: { destination: "/start", permanent: false } };
+  if (!session) {
+    return { redirect: { destination: "/start", permanent: false } };
+  }
   return { props: {} };
 };
 
