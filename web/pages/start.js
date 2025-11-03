@@ -1,9 +1,9 @@
+// web/pages/start.js
 import { signIn, getSession } from "next-auth/react";
 import { useState } from "react";
 
 export async function getServerSideProps(ctx) {
   const session = await getSession({ req: ctx.req });
-  // If already signed in, keep them here so they can upgrade
   return { props: { signedIn: !!session } };
 }
 
@@ -27,12 +27,8 @@ export default function StartPage({ signedIn }) {
 
   return (
     <main style={{ maxWidth: 520, margin: "64px auto", textAlign: "center" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>
-        AnalyticsAssistant
-      </h1>
-      <p style={{ marginBottom: 24 }}>
-        Connect GA4 and get clear, actionable insights.
-      </p>
+      <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>AnalyticsAssistant</h1>
+      <p style={{ marginBottom: 24 }}>Connect GA4 and get clear, actionable insights.</p>
 
       {!signedIn ? (
         <button
@@ -49,9 +45,7 @@ export default function StartPage({ signedIn }) {
         </button>
       ) : (
         <>
-          <p style={{ margin: "16px 0 8px" }}>
-            Upgrade to unlock full reports:
-          </p>
+          <p style={{ margin: "16px 0 8px" }}>Upgrade to unlock full reports:</p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
             <button
               disabled={loading}
@@ -80,6 +74,10 @@ export default function StartPage({ signedIn }) {
               Go Pro — Annual
             </button>
           </div>
+
+          <p style={{ marginTop: 16 }}>
+            <a href="/connections">Connect GA4 & choose a property →</a>
+          </p>
         </>
       )}
     </main>

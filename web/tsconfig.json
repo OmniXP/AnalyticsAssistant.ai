@@ -21,7 +21,7 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx"
-, "pages/insights.js", "pages/start.js"  ],
+, "pages/insights.js", "pages/start.js", "pages/admin/users.js"  ],
   "exclude": [
     "node_modules"
   ]
