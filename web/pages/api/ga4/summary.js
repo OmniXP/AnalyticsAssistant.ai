@@ -3,17 +3,10 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../lib/authOptions";
 import { PrismaClient } from "@prisma/client";
 
+// Use CommonJS require to import our Node helper
+const { getAccessTokenFromRequest } = require("../../../server/ga4-session");
+
 const prisma = new PrismaClient();
-
-// Helper: call a URL and forward the original request's cookies so GA status can see the session
-async function fetchWithCookies(req, url, init = {}) {
-  const headers = Object.assign({}, init.headers || {}, {
-    // Forward the cookie header from the user's request
-    cookie: req.headers.cookie || "",
-  });
-
-  return fetch(url, { ...init, headers });
-}
 
 async function runReport(accessToken, property, dateRange) {
   const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/${property}:runReport`, {
@@ -36,33 +29,38 @@ async function runReport(accessToken, property, dateRange) {
 
 export default async function handler(req, res) {
   try {
+    // 1) user must be signed in to our app
     const session = await getServerSession(req, res, authOptions);
     if (!session?.user?.email) return res.status(401).json({ error: "Unauthorised" });
 
+    // 2) must have selected a property
     const user = await prisma.user.findUnique({ where: { email: session.user.email } });
     if (!user?.ga4PropertyId) {
       return res.status(400).json({ error: "No GA4 property selected" });
     }
 
-    // IMPORTANT: forward cookies when calling status so it can read the aa_auth cookie
-    const base = process.env.NEXTAUTH_URL || "http://localhost:3000";
-    const statusResp = await fetchWithCookies(req, `${base}/api/auth/google/status`, { cache: "no-store" });
-    const status = await statusResp.json();
-
-    if (!status.connected || !status.access_token) {
+    // 3) get a valid Google access token from the same request's cookie
+    const accessToken = await getAccessTokenFromRequest(req);
+    if (!accessToken) {
       return res.status(401).json({
-        error: "Google session expired or missing. Click \"Connect Google Analytics\" to re-authorise, then run again.",
+        error:
+          'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.',
       });
     }
 
-    const at = status.access_token;
+    // 4) run two reports: last 28 days and prior 28 days
+    const now = await runReport(accessToken, user.ga4PropertyId, { startDate: "28daysAgo", endDate: "today" });
+    const prev = await runReport(accessToken, user.ga4PropertyId, { startDate: "56daysAgo", endDate: "29daysAgo" });
 
-    const now = await runReport(at, user.ga4PropertyId, { startDate: "28daysAgo", endDate: "today" });
-    const prev = await runReport(at, user.ga4PropertyId, { startDate: "56daysAgo", endDate: "29daysAgo" });
-
+    // 5) small diff summary
     const mv = (r, i) => Number(r?.rows?.[0]?.metricValues?.[i]?.value || 0);
-    const sNow = mv(now, 0), uNow = mv(now, 1), cNow = mv(now, 2);
-    const sPrev = mv(prev, 0), uPrev = mv(prev, 1), cPrev = mv(prev, 2);
+    const sNow = mv(now, 0),
+      uNow = mv(now, 1),
+      cNow = mv(now, 2);
+    const sPrev = mv(prev, 0),
+      uPrev = mv(prev, 1),
+      cPrev = mv(prev, 2);
+
     const pct = (a, b) => (b === 0 ? null : ((a - b) / Math.abs(b)) * 100);
 
     res.json({
