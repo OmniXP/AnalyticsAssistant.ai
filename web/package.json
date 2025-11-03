@@ -16,7 +16,8 @@
     "next": "^14.2.5",
     "next-auth": "^4.24.7",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "stripe": "^19.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",
