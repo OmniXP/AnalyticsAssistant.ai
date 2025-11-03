@@ -1,9 +1,12 @@
 // web/pages/api/stripe/webhook.js
 import Stripe from "stripe";
+import { PrismaClient } from "@prisma/client";
 
 export const config = {
   api: { bodyParser: false }, // raw body required for Stripe signature verification
 };
+
+const prisma = new PrismaClient();
 
 // ---- helpers ----
 function readRawBody(req) {
@@ -77,10 +80,8 @@ export default async function handler(req, res) {
         }
 
         // Persist to your DB (User row) by email
-        try {
-          const { PrismaClient } = await import("@prisma/client");
-          const prisma = new PrismaClient();
-          if (customerEmail) {
+        if (customerEmail) {
+          try {
             await prisma.user.update({
               where: { email: customerEmail },
               data: {
@@ -90,9 +91,9 @@ export default async function handler(req, res) {
                 stripeSubId: subscriptionId || "",
               },
             });
+          } catch (e) {
+            console.error("DB write failed (checkout.session.completed):", e);
           }
-        } catch (e) {
-          console.error("DB write failed (checkout.session.completed):", e);
         }
 
         break;
@@ -143,7 +144,84 @@ export default async function handler(req, res) {
 
         // Update your DB row using the customer's email from Stripe
         try {
-          const { PrismaClient } = await import("@prisma/client");
-          const prisma = new PrismaClient();
+          const cust = await stripe.customers.retrieve(customerId);
+          const email = cust?.email || null;
 
-          // Fetch customer to get email
+          if (email) {
+            await prisma.user.update({
+              where: { email },
+              data: {
+                premium: activeish,
+                plan,
+                stripeCustomerId: customerId,
+                stripeSubId: sub.id,
+              },
+            });
+          }
+        } catch (e) {
+          console.error("DB write failed (subscription.updated):", e);
+        }
+
+        break;
+      }
+
+      case "customer.subscription.deleted": {
+        const sub = event.data.object;
+        const customerId = sub.customer;
+
+        // Update Stripe metadata
+        if (customerId) {
+          await stripe.customers.update(customerId, {
+            metadata: {
+              insightgpt_premium: "false",
+              insightgpt_plan: "",
+              insightgpt_subscription_id: "",
+            },
+          });
+        }
+
+        // Update DB (set premium=false, clear plan/sub)
+        try {
+          const cust = await stripe.customers.retrieve(customerId);
+          const email = cust?.email || null;
+
+          if (email) {
+            await prisma.user.update({
+              where: { email },
+              data: {
+                premium: false,
+                plan: null,
+                stripeSubId: "",
+              },
+            });
+          }
+        } catch (e) {
+          console.error("DB write failed (subscription.deleted):", e);
+        }
+
+        break;
+      }
+
+      // Optional: one-off refund handling (not typical for subscriptions)
+      case "charge.refunded": {
+        const charge = event.data.object;
+        const customerId = charge.customer;
+        if (customerId) {
+          await stripe.customers.update(customerId, {
+            metadata: { insightgpt_premium: "false" },
+          });
+        }
+        break;
+      }
+
+      default:
+        // Unhandled event types are fine to ignore.
+        break;
+    }
+
+    return res.status(200).json({ received: true });
+  } catch (err) {
+    console.error("Webhook handler error:", err);
+    return res.status(500).json({ error: "Webhook processing error" });
+  }
+}
