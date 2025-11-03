@@ -1,11 +1,11 @@
-// /pages/api/stripe/webhook.js
+// web/pages/api/stripe/webhook.js
 import Stripe from "stripe";
 
 export const config = {
-  api: { bodyParser: false }, // raw body for signature verification
+  api: { bodyParser: false }, // raw body required for Stripe signature verification
 };
 
-// raw body helper (no extra deps)
+// ---- helpers ----
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -19,6 +19,7 @@ function isTruthy(x) {
   return x === true || x === "true" || x === "1" || x === 1;
 }
 
+// ---- handler ----
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -38,13 +39,15 @@ export default async function handler(req, res) {
     const signature = req.headers["stripe-signature"];
     event = stripe.webhooks.constructEvent(buf, signature, whSecret);
   } catch (err) {
-    console.error("⚠️  Webhook signature verification failed.", err.message);
+    console.error("⚠️  Webhook signature verification failed:", err.message);
     return res.status(400).json({ error: `Webhook signature verification failed: ${err.message}` });
   }
 
   try {
     switch (event.type) {
-      // ===== Checkout completed (subscription sign-up) =====
+      // ================================
+      // Checkout completed (new signup)
+      // ================================
       case "checkout.session.completed": {
         const session = event.data.object; // mode === 'subscription'
         const customerId = session.customer || null;
@@ -59,31 +62,45 @@ export default async function handler(req, res) {
             ? "annual"
             : "monthly"; // default to monthly if unsure
 
-        const subscriptionId = session.subscription || null;
+        const subscriptionId = session.subscription || "";
 
+        // Update Stripe customer metadata
         if (customerId) {
           await stripe.customers.update(customerId, {
             metadata: {
               ...(session.metadata || {}),
               insightgpt_premium: "true",
               insightgpt_plan: plan,
-              insightgpt_subscription_id: subscriptionId || "",
+              insightgpt_subscription_id: subscriptionId,
             },
           });
         }
 
-        // Optional: persist to your DB using customerEmail (NextAuth user)
-        // const prisma = new PrismaClient();
-        // if (customerEmail) {
-        //   await prisma.user.update({
-        //     where: { email: customerEmail },
-        //     data: { premium: true, plan, stripeCustomerId: customerId || "", stripeSubId: subscriptionId || "" },
-        //   });
-        // }
+        // Persist to your DB (User row) by email
+        try {
+          const { PrismaClient } = await import("@prisma/client");
+          const prisma = new PrismaClient();
+          if (customerEmail) {
+            await prisma.user.update({
+              where: { email: customerEmail },
+              data: {
+                premium: true,
+                plan,
+                stripeCustomerId: customerId || "",
+                stripeSubId: subscriptionId || "",
+              },
+            });
+          }
+        } catch (e) {
+          console.error("DB write failed (checkout.session.completed):", e);
+        }
+
         break;
       }
 
-      // ===== Session expired before paying =====
+      // ===========================================
+      // Session expired (didn't complete checkout)
+      // ===========================================
       case "checkout.session.expired": {
         const session = event.data.object;
         const customerId = session.customer;
@@ -99,18 +116,21 @@ export default async function handler(req, res) {
         break;
       }
 
-      // ===== Subscription lifecycle (keeps premium flag in sync) =====
+      // ===========================================
+      // Subscription lifecycle (keep DB in sync)
+      // ===========================================
       case "customer.subscription.created":
       case "customer.subscription.updated": {
         const sub = event.data.object;
         const customerId = sub.customer;
         const activeish = ["trialing", "active", "past_due"].includes(sub.status);
 
-        // Try to infer plan from items (fallback to existing metadata)
+        // Infer plan from current item price
         let plan = "monthly";
         const priceId = sub.items?.data?.[0]?.price?.id || null;
         if (priceId === process.env.STRIPE_PRICE_ID_ANNUAL) plan = "annual";
 
+        // Update Stripe customer metadata
         if (customerId) {
           await stripe.customers.update(customerId, {
             metadata: {
@@ -120,44 +140,10 @@ export default async function handler(req, res) {
             },
           });
         }
-        break;
-      }
 
-      case "customer.subscription.deleted": {
-        const sub = event.data.object;
-        const customerId = sub.customer;
-        if (customerId) {
-          await stripe.customers.update(customerId, {
-            metadata: {
-              insightgpt_premium: "false",
-              insightgpt_plan: "", // cleared
-              insightgpt_subscription_id: "",
-            },
-          });
-        }
-        break;
-      }
+        // Update your DB row using the customer's email from Stripe
+        try {
+          const { PrismaClient } = await import("@prisma/client");
+          const prisma = new PrismaClient();
 
-      // ===== Optional: one-off refund handling =====
-      case "charge.refunded": {
-        const charge = event.data.object;
-        const customerId = charge.customer;
-        if (customerId) {
-          await stripe.customers.update(customerId, {
-            metadata: { insightgpt_premium: "false" },
-          });
-        }
-        break;
-      }
-
-      default:
-        // console.log(`Unhandled event type ${event.type}`);
-        break;
-    }
-
-    return res.status(200).json({ received: true });
-  } catch (err) {
-    console.error("Webhook handler error:", err);
-    return res.status(500).json({ error: "Webhook processing error" });
-  }
-}
+          // Fetch customer to get email
