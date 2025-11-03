@@ -2,17 +2,14 @@
 import Stripe from "stripe";
 
 export const config = {
-  api: {
-    // We need the raw body to verify Stripe's signature
-    bodyParser: false,
-  },
+  api: { bodyParser: false }, // raw body for signature verification
 };
 
-// Read raw body helper (no extra deps)
+// raw body helper (no extra deps)
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("data", (c) => chunks.push(c));
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
@@ -35,10 +32,9 @@ export default async function handler(req, res) {
 
   const stripe = new Stripe(secret, { apiVersion: "2024-06-20" });
 
-  let buf;
   let event;
   try {
-    buf = await readRawBody(req);
+    const buf = await readRawBody(req);
     const signature = req.headers["stripe-signature"];
     event = stripe.webhooks.constructEvent(buf, signature, whSecret);
   } catch (err) {
@@ -48,24 +44,50 @@ export default async function handler(req, res) {
 
   try {
     switch (event.type) {
+      // ===== Checkout completed (subscription sign-up) =====
       case "checkout.session.completed": {
-        // Payment successful: mark customer premium=true
-        const session = event.data.object;
-        const customerId = session.customer;
+        const session = event.data.object; // mode === 'subscription'
+        const customerId = session.customer || null;
+        const customerEmail = session.customer_details?.email || null;
+
+        // Determine plan by the purchased price ID
+        const lineItems = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
+        const priceId = lineItems.data[0]?.price?.id || null;
+
+        const plan =
+          priceId === process.env.STRIPE_PRICE_ID_ANNUAL
+            ? "annual"
+            : "monthly"; // default to monthly if unsure
+
+        const subscriptionId = session.subscription || null;
+
         if (customerId) {
           await stripe.customers.update(customerId, {
-            metadata: { ...(session.metadata || {}), insightgpt_premium: "true" },
+            metadata: {
+              ...(session.metadata || {}),
+              insightgpt_premium: "true",
+              insightgpt_plan: plan,
+              insightgpt_subscription_id: subscriptionId || "",
+            },
           });
         }
+
+        // Optional: persist to your DB using customerEmail (NextAuth user)
+        // const prisma = new PrismaClient();
+        // if (customerEmail) {
+        //   await prisma.user.update({
+        //     where: { email: customerEmail },
+        //     data: { premium: true, plan, stripeCustomerId: customerId || "", stripeSubId: subscriptionId || "" },
+        //   });
+        // }
         break;
       }
 
+      // ===== Session expired before paying =====
       case "checkout.session.expired": {
-        // If it expired before paying, we can choose to mark as false (no-op if no customer)
         const session = event.data.object;
         const customerId = session.customer;
         if (customerId) {
-          // Don't downgrade if already true due to another purchase
           const customer = await stripe.customers.retrieve(customerId);
           const already = isTruthy(customer?.metadata?.insightgpt_premium);
           if (!already) {
@@ -77,15 +99,25 @@ export default async function handler(req, res) {
         break;
       }
 
+      // ===== Subscription lifecycle (keeps premium flag in sync) =====
       case "customer.subscription.created":
       case "customer.subscription.updated": {
-        // Subscription status controls premium flag
         const sub = event.data.object;
         const customerId = sub.customer;
         const activeish = ["trialing", "active", "past_due"].includes(sub.status);
+
+        // Try to infer plan from items (fallback to existing metadata)
+        let plan = "monthly";
+        const priceId = sub.items?.data?.[0]?.price?.id || null;
+        if (priceId === process.env.STRIPE_PRICE_ID_ANNUAL) plan = "annual";
+
         if (customerId) {
           await stripe.customers.update(customerId, {
-            metadata: { insightgpt_premium: activeish ? "true" : "false" },
+            metadata: {
+              insightgpt_premium: activeish ? "true" : "false",
+              insightgpt_plan: plan,
+              insightgpt_subscription_id: sub.id,
+            },
           });
         }
         break;
@@ -96,14 +128,18 @@ export default async function handler(req, res) {
         const customerId = sub.customer;
         if (customerId) {
           await stripe.customers.update(customerId, {
-            metadata: { insightgpt_premium: "false" },
+            metadata: {
+              insightgpt_premium: "false",
+              insightgpt_plan: "", // cleared
+              insightgpt_subscription_id: "",
+            },
           });
         }
         break;
       }
 
+      // ===== Optional: one-off refund handling =====
       case "charge.refunded": {
-        // Optional: if a one-off purchase was refunded, you may want to revoke premium
         const charge = event.data.object;
         const customerId = charge.customer;
         if (customerId) {
@@ -115,7 +151,6 @@ export default async function handler(req, res) {
       }
 
       default:
-        // For observability; keep but don’t fail the webhook
         // console.log(`Unhandled event type ${event.type}`);
         break;
     }
