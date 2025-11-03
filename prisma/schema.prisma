@@ -18,8 +18,18 @@ model User {
   accounts  Account[]
   sessions  Session[]
 
-  // Opposite side of the one-to-one relation with Profile
-  profile Profile?
+  // One-to-one profile
+  profile   Profile?
+
+  // --- Access / billing ---
+  premium          Boolean  @default(false)
+  plan             String?  // "monthly" | "annual"
+  stripeCustomerId String?
+  stripeSubId      String?
+
+  // --- GA4 selection ---
+  ga4PropertyId    String?  // e.g. "properties/123456789"
+  ga4PropertyName  String?  // display label
 }
 
 model Account {
