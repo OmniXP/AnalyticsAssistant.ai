@@ -1,98 +1,100 @@
-// /web/pages/api/ga4/query.js
-import { getIronSession } from "iron-session";
+// web/pages/api/ga4/query.js
+// Generic GA4 query endpoint that is both app-authenticated (NextAuth)
+// and Google-authenticated (reads GA session cookie and fetches a fresh access token).
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../../../lib/authOptions";
+import { PrismaClient } from "@prisma/client";
 
-function buildFilterExpression({ country, channel }) {
-  const exprs = [];
+// Use the same Node helper that reads the cookie and gets/refreshes the token
+const { getAccessTokenFromRequest } = require("../../../server/ga4-session");
 
-  // Country (stringEquals on "country")
-  if (country) {
-    exprs.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { matchType: "EXACT", value: String(country) },
-      },
-    });
-  }
-
-  // Channel Group (stringEquals on "sessionDefaultChannelGroup")
-  if (channel) {
-    exprs.push({
-      filter: {
-        fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { matchType: "EXACT", value: String(channel) },
-      },
-    });
-  }
-
-  if (exprs.length === 0) return undefined;
-  if (exprs.length === 1) return exprs[0];
-
-  return { andGroup: { expressions: exprs } };
-}
+const prisma = new PrismaClient();
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
   try {
-    const session = await getIronSession(req, res, sessionOptions);
-    const ga = session.gaTokens;
-    if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
-
-    const { propertyId, startDate, endDate, country, channel } = req.body || {};
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST");
+      return res.status(405).json({ error: "Method Not Allowed" });
     }
 
-    const filterExpression = buildFilterExpression({
-      country: normalise(country),
-      channel: normalise(channel),
-    });
+    // 1) Must be signed in to the app
+    const session = await getServerSession(req, res, authOptions);
+    if (!session?.user?.email) {
+      return res.status(401).json({ error: "Unauthorised (app session missing)" });
+    }
 
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-    const body = {
-      dateRanges: [{ startDate, endDate }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-      dimensions: [{ name: "sessionDefaultChannelGroup" }],
-      ...(filterExpression ? { dimensionFilter: filterExpression } : {}),
+    // 2) Must have selected a GA4 property
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email },
+      select: { ga4PropertyId: true, ga4PropertyName: true },
+    });
+    if (!user?.ga4PropertyId) {
+      return res.status(400).json({ error: "No GA4 property selected" });
+    }
+
+    // 3) Get Google access token tied to this browser session (from cookie)
+    const accessToken = await getAccessTokenFromRequest(req);
+    if (!accessToken) {
+      return res.status(401).json({
+        error:
+          'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.',
+      });
+    }
+
+    // 4) Build the GA4 request body (sane defaults if none provided)
+    let body = {};
+    try {
+      body = req.body && typeof req.body === "object" ? req.body : {};
+    } catch {
+      body = {};
+    }
+
+    const dateRanges = Array.isArray(body.dateRanges) && body.dateRanges.length
+      ? body.dateRanges
+      : [{ startDate: "28daysAgo", endDate: "today" }];
+
+    const metrics = Array.isArray(body.metrics) && body.metrics.length
+      ? body.metrics
+      : [{ name: "sessions" }, { name: "totalUsers" }, { name: "conversions" }];
+
+    const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
+
+    const requestPayload = {
+      dateRanges,
+      metrics,
+      dimensions,
+      // You can pass orderBys, limit, etc. in the POST body if needed
     };
 
-    const apiRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    // 5) Call GA4 Data API
+    const r = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/${user.ga4PropertyId}:runReport`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(requestPayload),
+      }
+    );
 
-    const data = await apiRes.json().catch(() => null);
-    if (!apiRes.ok) {
+    if (!r.ok) {
+      const txt = await r.text();
       return res
-        .status(apiRes.status)
-        .json({ error: "GA4 API error (query)", details: data });
+        .status(r.status)
+        .json({ error: `GA4 runReport failed: ${r.status}`, details: txt });
     }
 
-    return res.status(200).json(data);
+    const data = await r.json();
+    return res.json({
+      property: user.ga4PropertyName || user.ga4PropertyId,
+      request: requestPayload,
+      report: data,
+    });
   } catch (e) {
-    return res.status(500).json({ error: "Server error (query)", details: String(e?.message || e) });
+    console.error("GA4 query error:", e);
+    return res.status(500).json({ error: "GA4 query failed", details: e.message });
   }
-}
-
-// "All", "", null, undefined -> null
-function normalise(v) {
-  if (v == null) return null;
-  const s = String(v).trim().toLowerCase();
-  if (s === "" || s === "all") return null;
-  return v;
 }
