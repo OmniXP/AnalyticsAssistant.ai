@@ -5,6 +5,16 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+// Helper: call a URL and forward the original request's cookies so GA status can see the session
+async function fetchWithCookies(req, url, init = {}) {
+  const headers = Object.assign({}, init.headers || {}, {
+    // Forward the cookie header from the user's request
+    cookie: req.headers.cookie || "",
+  });
+
+  return fetch(url, { ...init, headers });
+}
+
 async function runReport(accessToken, property, dateRange) {
   const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/${property}:runReport`, {
     method: "POST",
@@ -30,10 +40,20 @@ export default async function handler(req, res) {
     if (!session?.user?.email) return res.status(401).json({ error: "Unauthorised" });
 
     const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user?.ga4PropertyId) return res.status(400).json({ error: "No GA4 property selected" });
+    if (!user?.ga4PropertyId) {
+      return res.status(400).json({ error: "No GA4 property selected" });
+    }
 
-    const status = await (await fetch(process.env.NEXTAUTH_URL + "/api/auth/google/status", { cache: "no-store" })).json();
-    if (!status.connected || !status.access_token) return res.status(401).json({ error: "GA4 not connected" });
+    // IMPORTANT: forward cookies when calling status so it can read the aa_auth cookie
+    const base = process.env.NEXTAUTH_URL || "http://localhost:3000";
+    const statusResp = await fetchWithCookies(req, `${base}/api/auth/google/status`, { cache: "no-store" });
+    const status = await statusResp.json();
+
+    if (!status.connected || !status.access_token) {
+      return res.status(401).json({
+        error: "Google session expired or missing. Click \"Connect Google Analytics\" to re-authorise, then run again.",
+      });
+    }
 
     const at = status.access_token;
 

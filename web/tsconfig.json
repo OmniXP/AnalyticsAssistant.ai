@@ -21,7 +21,7 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx"
-, "pages/insights.js", "pages/start.js", "pages/admin/users.js"  ],
+, "pages/insights.js", "pages/start.js", "pages/admin/users.js", "lib/authOptions.js", "pages/api/auth/[...nextauth].js"  ],
   "exclude": [
     "node_modules"
   ]
