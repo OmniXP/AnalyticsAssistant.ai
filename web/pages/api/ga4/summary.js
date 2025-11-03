@@ -1,6 +1,6 @@
 // web/pages/api/ga4/summary.js
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "../../lib/authOptions";
+import { authOptions } from "../../../lib/authOptions";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -32,7 +32,6 @@ export default async function handler(req, res) {
     const user = await prisma.user.findUnique({ where: { email: session.user.email } });
     if (!user?.ga4PropertyId) return res.status(400).json({ error: "No GA4 property selected" });
 
-    // Get access token from the updated status endpoint
     const status = await (await fetch(process.env.NEXTAUTH_URL + "/api/auth/google/status", { cache: "no-store" })).json();
     if (!status.connected || !status.access_token) return res.status(401).json({ error: "GA4 not connected" });
 
@@ -42,13 +41,8 @@ export default async function handler(req, res) {
     const prev = await runReport(at, user.ga4PropertyId, { startDate: "56daysAgo", endDate: "29daysAgo" });
 
     const mv = (r, i) => Number(r?.rows?.[0]?.metricValues?.[i]?.value || 0);
-    const sNow = mv(now, 0),
-      uNow = mv(now, 1),
-      cNow = mv(now, 2);
-    const sPrev = mv(prev, 0),
-      uPrev = mv(prev, 1),
-      cPrev = mv(prev, 2);
-
+    const sNow = mv(now, 0), uNow = mv(now, 1), cNow = mv(now, 2);
+    const sPrev = mv(prev, 0), uPrev = mv(prev, 1), cPrev = mv(prev, 2);
     const pct = (a, b) => (b === 0 ? null : ((a - b) / Math.abs(b)) * 100);
 
     res.json({

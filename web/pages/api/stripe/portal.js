@@ -1,7 +1,7 @@
 // web/pages/api/stripe/portal.js
 import Stripe from "stripe";
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "../../lib/authOptions";
+import { authOptions } from "../../../lib/authOptions";
 import { PrismaClient } from "@prisma/client";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);

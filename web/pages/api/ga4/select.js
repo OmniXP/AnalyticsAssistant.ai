@@ -1,6 +1,6 @@
 // web/pages/api/ga4/select.js
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "../../lib/authOptions";
+import { authOptions } from "../../../lib/authOptions";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
