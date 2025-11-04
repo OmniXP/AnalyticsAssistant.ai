@@ -17,16 +17,33 @@ const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "aa_auth";
 
+// --- Upstash Redis env fallbacks ---
+const REDIS_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.KV_REST_API_URL ||
+  "";
+const REDIS_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.KV_REST_API_TOKEN ||
+  "";
+
+if (!REDIS_URL || !REDIS_TOKEN) {
+  console.warn(
+    "Upstash Redis env missing. Set UPSTASH_REDIS_REST_URL & ..._TOKEN (or KV_REST_API_URL & KV_REST_API_TOKEN)."
+  );
+}
+
 // --- Redis (Upstash) ---
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  url: REDIS_URL,
+  token: REDIS_TOKEN,
 });
 
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
-const b64url = (buf) => buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64url = (buf) =>
+  buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 function sha256(input) {
   return crypto.createHash("sha256").update(input).digest();
 }
@@ -209,7 +226,7 @@ module.exports = (app) => {
     res.json({ ok: true });
   });
 
-  // 4) Status (now includes access_token for server/API use)
+  // 4) Status (includes access_token)
   app.get("/api/auth/google/status", async (req, res) => {
     const sid = requireSession(req);
     if (!sid) return res.json({ connected: false });
@@ -229,7 +246,9 @@ module.exports = (app) => {
       const accessToken = await ensureAccessToken(sid);
       if (!accessToken) return res.status(401).json({ error: "Not authenticated" });
 
-      const r = await fetch(ADMIN_API_SUMMARIES, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const r = await fetch(ADMIN_API_SUMMARIES, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (!r.ok) {
         const text = await r.text();
         return res.status(r.status).json({ error: "Failed to fetch account summaries", details: text });

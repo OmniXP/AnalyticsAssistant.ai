@@ -8,10 +8,26 @@ const { Redis } = require("@upstash/redis");
 const APP_ENC_KEY = process.env.APP_ENC_KEY || "change_me_please_change_me_please_";
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "aa_auth";
 
+// --- Upstash Redis env fallbacks ---
+const REDIS_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.KV_REST_API_URL ||
+  "";
+const REDIS_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.KV_REST_API_TOKEN ||
+  "";
+
+if (!REDIS_URL || !REDIS_TOKEN) {
+  console.warn(
+    "Upstash Redis env missing. Set UPSTASH_REDIS_REST_URL & ..._TOKEN (or KV_REST_API_URL & KV_REST_API_TOKEN)."
+  );
+}
+
 // --- redis (same Upstash instance) ---
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  url: REDIS_URL,
+  token: REDIS_TOKEN,
 });
 
 function nowSec() {
