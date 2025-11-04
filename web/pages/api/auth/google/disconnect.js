@@ -1,29 +1,21 @@
-// /workspaces/insightsgpt/web/pages/api/auth/google/disconnect.js
-import { getIronSession } from 'iron-session';
+// web/pages/api/auth/google/disconnect.js
+const { readSessionIdFromRequest, kvSet } = require("../../../../server/ga4-session");
+const { Redis } = require("@upstash/redis");
+const { serializeCookie } = require("../../../lib/cookies");
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: 'aa_auth',
-  cookieOptions: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/'
-  }
-};
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "";
+const redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
+
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "aa_auth";
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
-
-  const session = await getIronSession(req, res, sessionOptions);
-  if (session?.gaTokens) {
-    delete session.gaTokens;
+  const sid = readSessionIdFromRequest(req);
+  if (sid) {
+    try { await redis.del(`aa:ga4:${sid}`); } catch {}
   }
-  // iron-session has destroy(); fall back to save() if not available
-  if (typeof session.destroy === 'function') {
-    await session.destroy();
-  } else {
-    await session.save();
-  }
-  res.status(200).json({ ok: true });
+  res.setHeader("Set-Cookie", serializeCookie(SESSION_COOKIE_NAME, "", {
+    httpOnly: true, secure: true, sameSite: "Lax", maxAge: 0, path: "/",
+  }));
+  res.json({ ok: true });
 }
