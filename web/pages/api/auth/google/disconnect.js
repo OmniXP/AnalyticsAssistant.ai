@@ -1,7 +1,7 @@
 // web/pages/api/auth/google/disconnect.js
 const { readSessionIdFromRequest, kvSet } = require("../../../../server/ga4-session");
 const { Redis } = require("@upstash/redis");
-const { serializeCookie } = require("../../../lib/cookies");
+const { serializeCookie } = require("../../../../lib/cookies");
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "";

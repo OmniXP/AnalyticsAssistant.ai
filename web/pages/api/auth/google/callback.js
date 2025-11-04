@@ -4,6 +4,7 @@
 const crypto = require("crypto");
 const { URLSearchParams } = require("url");
 const { Redis } = require("@upstash/redis");
+const { serializeCookie } = require("../../../../lib/cookies");
 
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 const APP_ENC_KEY = process.env.APP_ENC_KEY || "change_me_please_change_me_please_";
@@ -67,7 +68,7 @@ export default async function handler(req, res) {
 
     const tokens = await exchangeCodeForTokens({ code, code_verifier: verifier });
 
-    // Store tokens in Redis keyed by our own random sid
+    // Store tokens keyed by our own random sid
     const sid = b64url(crypto.randomBytes(24));
     await redis.hset(`aa:ga4:${sid}`, {
       refresh_token: tokens.refresh_token || "",
@@ -76,27 +77,18 @@ export default async function handler(req, res) {
       created_at: String(Date.now()),
     });
 
-    // Set the encrypted cookie with sid only
+    // Set encrypted cookie with sid only
     const payload = JSON.stringify({ sid, ts: Date.now() });
     const enc = encrypt(payload);
 
-    const { serializeCookie } = await import("../../../lib/cookies");
     res.setHeader("Set-Cookie", [
-      // our GA cookie
+      // GA cookie
       serializeCookie(SESSION_COOKIE_NAME, enc, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "Lax",
-        maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-        path: "/",
+        httpOnly: true, secure: true, sameSite: "Lax", maxAge: 1000 * 60 * 60 * 24 * 30, path: "/",
       }),
       // clear pkce helper cookie
       serializeCookie("aa_pkce", "", {
-        httpOnly: true,
-        secure: true,
-        sameSite: "Lax",
-        maxAge: 0,
-        path: "/",
+        httpOnly: true, secure: true, sameSite: "Lax", maxAge: 0, path: "/",
       }),
     ]);
 

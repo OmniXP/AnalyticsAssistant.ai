@@ -3,6 +3,7 @@
 
 const crypto = require("crypto");
 const { URLSearchParams } = require("url");
+const { serializeCookie } = require("../../../../lib/cookies");
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
@@ -21,8 +22,6 @@ export default async function handler(req, res) {
   const challenge = b64url(sha256(verifier));
   pkceStore.set(state, { verifier, createdAt: Date.now() });
 
-  // Keep in-memory store on this lambda instance
-  // Pass state back in query so callback can retrieve it.
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
@@ -36,19 +35,10 @@ export default async function handler(req, res) {
     include_granted_scopes: "true",
   });
 
-  // Encode state+verifier in a short-lived cookie so callback can recover if lambda instance changed
-  const { serializeCookie } = await import("../../../lib/cookies");
-  const stateCookie = {
-    state,
-    verifier,
-    ts: Date.now(),
-  };
+  // short-lived cookie so callback can recover if lambda instance changed
+  const stateCookie = { state, verifier, ts: Date.now() };
   res.setHeader("Set-Cookie", serializeCookie("aa_pkce", JSON.stringify(stateCookie), {
-    httpOnly: true,
-    secure: true,
-    sameSite: "Lax",
-    maxAge: 5 * 60 * 1000, // 5 min
-    path: "/",
+    httpOnly: true, secure: true, sameSite: "Lax", maxAge: 5 * 60 * 1000, path: "/",
   }));
 
   res.redirect(`${GOOGLE_AUTH}?${params.toString()}`);
