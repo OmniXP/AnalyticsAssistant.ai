@@ -11,10 +11,13 @@ async function getFirstProperty(token) {
     headers: { Authorization: `Bearer ${token}` }
   });
   const js = await resp.json();
-  if (!resp.ok) throw new Error('Failed to fetch accountSummaries');
+  if (!resp.ok) {
+    console.error('Admin API error while fetching accountSummaries', js);
+    throw new Error('Failed to fetch accountSummaries');
+  }
   for (const acc of js.accountSummaries || []) {
     if (acc.propertySummaries && acc.propertySummaries.length > 0) {
-      return acc.propertySummaries[0].property; // e.g. "properties/123"
+      return acc.propertySummaries[0].property; // "properties/123"
     }
   }
   return null;
@@ -42,7 +45,9 @@ export default async function handler(req, res) {
       metrics: [{ name: 'sessions' }]
     };
 
-    const url = `https://analyticsdata.googleapis.com/v1beta/${encodeURIComponent(property)}:runReport`;
+    // IMPORTANT: do NOT encode the property path (it already contains "properties/123")
+    const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
+
     const resp = await fetch(url, {
       method: 'POST',
       headers: {
@@ -52,14 +57,18 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload)
     });
 
-    const json = await resp.json();
+    const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      console.error('Data API error', json);
-      return res.status(resp.status).json({ error: 'Data API failed', details: json });
+      console.error('Data API error', { status: resp.status, json });
+      return res.status(resp.status).json({
+        error: 'Data API failed',
+        status: resp.status,
+        details: json
+      });
     }
     return res.status(200).json({ propertyUsed: property, ...json });
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ error: 'Query failed' });
+    return res.status(500).json({ error: 'Query failed', message: e.message });
   }
 }
