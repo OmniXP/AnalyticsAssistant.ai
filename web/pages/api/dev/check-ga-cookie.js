@@ -1,8 +1,5 @@
 // web/pages/api/dev/check-ga-cookie.js
-// Checks if the server can read + decrypt the GA cookie and extract sid.
-// Includes non-sensitive fingerprints to verify env consistency.
-
-const crypto = require("crypto");
+// Verifies server can read + decrypt GA cookie and extract sid, plus env fingerprints.
 
 const {
   readSessionIdFromRequest,
@@ -20,7 +17,7 @@ function envFingerprints() {
     },
     ga: {
       sessionCookieName: SESSION_COOKIE_NAME,
-      appEncKeyFingerprint: appEncKeyFingerprint(), // first 8 hex of sha256(APP_ENC_KEY)
+      appEncKeyFingerprint: appEncKeyFingerprint(), // first 8 hex chars of hash(APP_ENC_KEY)
     },
     upstash: {
       urlPresent: REDIS_URL_PRESENT,

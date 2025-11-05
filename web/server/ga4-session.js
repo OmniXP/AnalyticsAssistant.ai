@@ -17,7 +17,7 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN ||
   "";
 
-// Create Redis if envs exist
+// Init Redis if envs exist
 let redis = null;
 if (REDIS_URL && REDIS_TOKEN) {
   redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
@@ -25,12 +25,9 @@ if (REDIS_URL && REDIS_TOKEN) {
 
 // ---- Utils ----
 function nowSec() { return Math.floor(Date.now() / 1000); }
-function b64ToBufUrlSafe(str) {
-  return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-}
-function shaKey() {
-  return crypto.createHash("sha256").update(APP_ENC_KEY).digest();
-}
+function b64ToBufUrlSafe(str) { return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64"); }
+function shaKey() { return crypto.createHash("sha256").update(APP_ENC_KEY).digest(); }
+
 function decryptCookiePayload(urlSafeB64) {
   const raw = b64ToBufUrlSafe(urlSafeB64);
   const iv = raw.subarray(0, 12);
@@ -122,19 +119,15 @@ async function getAccessTokenFromRequest(req) {
   return updated.access_token || null;
 }
 
-// small helper for diagnostics (no secrets leaked)
+// diagnostics (no secrets)
 function appEncKeyFingerprint() {
   return crypto.createHash("sha256").update(APP_ENC_KEY).digest("hex").slice(0, 8);
 }
 
 module.exports = {
-  // main helpers
   getAccessTokenFromRequest,
   readSessionIdFromRequest,
-  kvSet,
-  kvGet,
-  kvDel,
-  // diagnostics
+  kvSet, kvGet, kvDel,
   appEncKeyFingerprint,
   SESSION_COOKIE_NAME,
   REDIS_URL_PRESENT: !!REDIS_URL,
