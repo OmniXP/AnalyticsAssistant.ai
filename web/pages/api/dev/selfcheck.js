@@ -1,14 +1,8 @@
 // pages/api/dev/selfcheck.js
-// Consolidated diagnostics:
-// - Confirms bearer token + scopes
-// - Lists GA4 properties
-// - Validates a given property (optional)
-// - Attempts a minimal runReport on given or first property
-//
-// GET params (all optional):
-//   ?property=properties/123456789
+// One-stop diagnostics: token scopes, property list, property GET, and minimal runReport.
+// GET ?property=properties/######## (optional)
 
-import { getBearerForRequest } from '../../../server/ga4-session';
+import { getBearerForRequest } from '../_ga4-session';
 export const config = { runtime: 'nodejs' };
 
 async function fetchJSON(res) {
@@ -24,8 +18,7 @@ async function tokenInfo(token) {
 
 async function listProperties(token) {
   const r = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
+    headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
   });
   const out = await fetchJSON(r);
   if (!out.ok) return { error: { where: 'accountSummaries', status: out.status, details: out.json || out.text } };
@@ -33,10 +26,8 @@ async function listProperties(token) {
   for (const acc of (out.json?.accountSummaries || [])) {
     for (const p of (acc.propertySummaries || [])) {
       props.push({
-        account: acc.name,
-        accountDisplayName: acc.displayName,
-        property: p.property,                // "properties/########"
-        propertyDisplayName: p.displayName,
+        account: acc.name, accountDisplayName: acc.displayName,
+        property: p.property, propertyDisplayName: p.displayName,
       });
     }
   }
@@ -45,8 +36,7 @@ async function listProperties(token) {
 
 async function adminGetProperty(token, property) {
   const r = await fetch(`https://analyticsadmin.googleapis.com/v1beta/${property}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
+    headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
   });
   return fetchJSON(r);
 }
@@ -79,7 +69,6 @@ export default async function handler(req, res) {
       tokeninfoStatus: info.status,
     };
 
-    // List properties
     const listing = await listProperties(token);
     results.properties = listing.properties || [];
     results.propertiesRawStatus = listing.error ? listing.error.status : 200;
@@ -88,7 +77,6 @@ export default async function handler(req, res) {
       return res.status(200).json(results);
     }
 
-    // Choose property: query param or first available
     const qProp = req.query.property;
     const property = qProp || (results.properties[0]?.property);
     results.propertyChosen = property || null;
@@ -98,19 +86,14 @@ export default async function handler(req, res) {
       return res.status(200).json(results);
     }
 
-    // Validate property via Admin API
     const propCheck = await adminGetProperty(token, property);
     results.propertyCheck = {
       ok: propCheck.ok,
       status: propCheck.status,
       details: propCheck.json || propCheck.text,
     };
-    if (!propCheck.ok) {
-      // Don’t attempt runReport if we can’t read the property
-      return res.status(200).json(results);
-    }
+    if (!propCheck.ok) return res.status(200).json(results);
 
-    // Run minimal report
     const sample = await runSample(token, property);
     results.sample = {
       ok: sample.ok,

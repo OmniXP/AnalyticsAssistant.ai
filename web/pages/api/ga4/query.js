@@ -1,11 +1,8 @@
-// web/pages/api/ga4/query.js
+// pages/api/ga4/query.js
 // POST { property?: "properties/123456789", report?: {...} }
-// If property is omitted, we pick the first GA4 property from Admin API.
-//
-// Surfaces Google's error payload verbatim so we can diagnose quickly.
+// If property omitted, falls back to first GA4 property from Admin API.
 
-import { getBearerForRequest } from '../../../server/ga4-session';
-
+import { getBearerForRequest } from '../_ga4-session';
 export const config = { runtime: 'nodejs' };
 
 async function fetchJSON(res) {
@@ -20,9 +17,7 @@ async function getFirstProperty(token) {
     cache: 'no-store',
   });
   const { json, text, ok, status } = await fetchJSON(r);
-  if (!ok) {
-    return { error: { where: 'accountSummaries', status, details: json || text } };
-  }
+  if (!ok) return { error: { where: 'accountSummaries', status, details: json || text } };
   for (const acc of (json?.accountSummaries || [])) {
     if (acc.propertySummaries?.length) return { property: acc.propertySummaries[0].property };
   }
@@ -40,7 +35,7 @@ export default async function handler(req, res) {
     if (!property) {
       const fp = await getFirstProperty(token);
       if (fp.error) return res.status(fp.error.status).json({ error: 'Admin API failed', ...fp.error });
-      property = fp.property; // "properties/123"
+      property = fp.property; // e.g. "properties/123456789"
     }
 
     const payload = report || {
@@ -49,7 +44,7 @@ export default async function handler(req, res) {
       metrics: [{ name: 'sessions' }],
     };
 
-    // IMPORTANT: do NOT encode property — Google expects "properties/123"
+    // IMPORTANT: do NOT encode the property string
     const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
 
     const r = await fetch(url, {
