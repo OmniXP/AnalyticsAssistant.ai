@@ -1,53 +1,46 @@
 // web/pages/api/ga4/query.js
-// Runs a GA4 Data API report using the bearer from the GA cookie only.
-// POST body:
-//   { property: "properties/123456789", report: {...} }
-// If "property" is omitted, it will fall back to the first property available.
+// POST { property?: "properties/123456789", report?: {...} }
+// If property is omitted, we pick the first GA4 property from Admin API.
 //
-// This version surfaces Google's error payloads verbatim to aid debugging
-// and forces Node.js runtime (not Edge) to avoid environment surprises.
+// Surfaces Google's error payload verbatim so we can diagnose quickly.
 
 import { getBearerForRequest } from '../../../server/ga4-session';
 
-export const config = {
-  runtime: 'nodejs',
-};
+export const config = { runtime: 'nodejs' };
+
+async function fetchJSON(res) {
+  const text = await res.text();
+  try { return { json: JSON.parse(text), text, ok: res.ok, status: res.status }; }
+  catch { return { json: null, text, ok: res.ok, status: res.status }; }
+}
 
 async function getFirstProperty(token) {
-  const resp = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
+  const r = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
     headers: { Authorization: `Bearer ${token}` },
     cache: 'no-store',
   });
-  const text = await resp.text();
-  let js;
-  try { js = JSON.parse(text); } catch { js = null; }
-  if (!resp.ok) {
-    console.error('Admin API error (accountSummaries)', { status: resp.status, text });
-    throw new Error(`Admin API failed (${resp.status})`);
+  const { json, text, ok, status } = await fetchJSON(r);
+  if (!ok) {
+    return { error: { where: 'accountSummaries', status, details: json || text } };
   }
-  for (const acc of (js?.accountSummaries || [])) {
-    if (acc.propertySummaries?.length) {
-      return acc.propertySummaries[0].property; // "properties/123"
-    }
+  for (const acc of (json?.accountSummaries || [])) {
+    if (acc.propertySummaries?.length) return { property: acc.propertySummaries[0].property };
   }
-  return null;
+  return { error: { where: 'accountSummaries', status: 400, details: 'No GA4 properties in account' } };
 }
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'POST only' });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
     const { token } = await getBearerForRequest(req);
     if (!token) return res.status(401).json({ error: 'Not connected' });
 
     let { property, report } = (req.body || {});
     if (!property) {
-      property = await getFirstProperty(token);
-      if (!property) {
-        return res.status(400).json({ error: 'No GA4 property selected or available on this account' });
-      }
+      const fp = await getFirstProperty(token);
+      if (fp.error) return res.status(fp.error.status).json({ error: 'Admin API failed', ...fp.error });
+      property = fp.property; // "properties/123"
     }
 
     const payload = report || {
@@ -56,10 +49,10 @@ export default async function handler(req, res) {
       metrics: [{ name: 'sessions' }],
     };
 
-    // IMPORTANT: do NOT encode the property string (it already has "properties/123")
+    // IMPORTANT: do NOT encode property — Google expects "properties/123"
     const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
 
-    const resp = await fetch(url, {
+    const r = await fetch(url, {
       method: 'POST',
       cache: 'no-store',
       headers: {
@@ -69,24 +62,18 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload),
     });
 
-    const text = await resp.text();
-    let json; try { json = JSON.parse(text); } catch { json = null; }
-
-    if (!resp.ok) {
-      // Bubble up exact details from Google so we can see the root cause
-      return res.status(resp.status).json({
+    const { json, text, ok, status } = await fetchJSON(r);
+    if (!ok) {
+      return res.status(status).json({
         error: 'Data API failed',
-        status: resp.status,
-        details: json || text || null,
+        status,
         propertyTried: property,
         payloadSent: payload,
+        details: json || text || null,
       });
     }
 
-    return res.status(200).json({
-      propertyUsed: property,
-      ...(json || { raw: text }),
-    });
+    return res.status(200).json({ propertyUsed: property, ...(json || { raw: text }) });
   } catch (e) {
     console.error('Query handler exception', e);
     return res.status(500).json({ error: 'Query failed', message: e?.message || String(e) });
