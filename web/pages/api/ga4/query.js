@@ -1,109 +1,65 @@
 // web/pages/api/ga4/query.js
-// GA4 query that does NOT depend on NextAuth. It uses the GA cookie (aa_auth).
-// You can pass { "property": "properties/123456789", ... } in the POST body as a fallback.
+// Runs a GA4 Data API report using bearer from GA cookie only.
+// Accepts POST body:
+// { property: "properties/123456789", report: {...} }
+// If no "property" provided, falls back to the first property from Admin API.
 
-import { PrismaClient } from "@prisma/client";
-const { getAccessTokenFromRequest } = require("../../../server/ga4-session");
+import { getBearerForRequest } from '../../../server/ga4-session';
 
-const prisma = new PrismaClient();
+async function getFirstProperty(token) {
+  const resp = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const js = await resp.json();
+  if (!resp.ok) throw new Error('Failed to fetch accountSummaries');
+  for (const acc of js.accountSummaries || []) {
+    if (acc.propertySummaries && acc.propertySummaries.length > 0) {
+      return acc.propertySummaries[0].property; // e.g. "properties/123"
+    }
+  }
+  return null;
+}
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
-      res.setHeader("Allow", "POST");
-      return res.status(405).json({ error: "Method Not Allowed" });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
-    // 1) Get Google access token from GA cookie
-    const accessToken = await getAccessTokenFromRequest(req);
-    if (!accessToken) {
-      return res.status(401).json({
-        error:
-          'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.',
-      });
-    }
+    const { token } = await getBearerForRequest(req);
+    if (!token) return res.status(401).json({ error: 'Not connected' });
 
-    // 2) Determine GA4 property
-    // 2a) Try NextAuth -> DB (non-fatal if missing)
-    let property = null;
-    let propertyName = null;
-    try {
-      const { getServerSession } = await import("next-auth/next");
-      const { authOptions } = await import("../../../lib/authOptions");
-      const session = await getServerSession(req, res, authOptions);
-      if (session?.user?.email) {
-        const user = await prisma.user.findUnique({
-          where: { email: session.user.email },
-          select: { ga4PropertyId: true, ga4PropertyName: true },
-        });
-        if (user?.ga4PropertyId) {
-          property = user.ga4PropertyId;
-          propertyName = user.ga4PropertyName || null;
-        }
-      }
-    } catch {
-      // ignore NextAuth errors
-    }
-
-    // 2b) Allow explicit override in body
-    let body = {};
-    try {
-      body = req.body && typeof req.body === "object" ? req.body : {};
-    } catch {
-      body = {};
-    }
-    if (!property && typeof body.property === "string" && body.property.startsWith("properties/")) {
-      property = body.property;
-    }
+    let { property, report } = req.body || {};
 
     if (!property) {
-      return res.status(400).json({ error: "No GA4 property selected or provided" });
-    }
-
-    // 3) Build request payload (fallback defaults)
-    const dateRanges =
-      Array.isArray(body.dateRanges) && body.dateRanges.length
-        ? body.dateRanges
-        : [{ startDate: "28daysAgo", endDate: "today" }];
-
-    const metrics =
-      Array.isArray(body.metrics) && body.metrics.length
-        ? body.metrics
-        : [{ name: "sessions" }, { name: "totalUsers" }, { name: "conversions" }];
-
-    const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
-
-    const requestPayload = { dateRanges, metrics, dimensions };
-
-    // 4) Call GA4 Data API
-    const r = await fetch(
-      `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(requestPayload),
+      property = await getFirstProperty(token);
+      if (!property) {
+        return res.status(400).json({ error: 'No GA4 property selected or available on this account' });
       }
-    );
-
-    if (!r.ok) {
-      const txt = await r.text();
-      return res.status(r.status).json({
-        error: `GA4 runReport failed: ${r.status}`,
-        details: txt,
-      });
     }
 
-    const data = await r.json();
-    return res.json({
-      property: propertyName || property,
-      request: requestPayload,
-      report: data,
+    const payload = report || {
+      dateRanges: [{ startDate: '7daysAgo', endDate: 'today' }],
+      dimensions: [{ name: 'date' }],
+      metrics: [{ name: 'sessions' }]
+    };
+
+    const url = `https://analyticsdata.googleapis.com/v1beta/${encodeURIComponent(property)}:runReport`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
+
+    const json = await resp.json();
+    if (!resp.ok) {
+      console.error('Data API error', json);
+      return res.status(resp.status).json({ error: 'Data API failed', details: json });
+    }
+    return res.status(200).json({ propertyUsed: property, ...json });
   } catch (e) {
-    console.error("GA4 query error:", e);
-    return res.status(500).json({ error: "GA4 query failed", details: e.message });
+    console.error(e);
+    return res.status(500).json({ error: 'Query failed' });
   }
 }
