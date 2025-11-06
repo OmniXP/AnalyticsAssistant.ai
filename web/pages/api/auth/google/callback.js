@@ -1,10 +1,5 @@
 import { setCookie, SESSION_COOKIE_NAME } from '../../_core/cookies';
-import {
-  readSidFromCookie,
-  popPkceVerifier,
-  verifyAndDeleteState,
-  setTokenRecordBySid
-} from '../../_core/ga4-session';
+import * as session from '../..//_core/ga4-session';
 
 export const config = { runtime: 'nodejs' };
 function nowSec(){ return Math.floor(Date.now()/1000); }
@@ -23,32 +18,17 @@ function htmlError(title, obj) {
 export default async function handler(req, res) {
   try {
     const { code, state, error } = req.query;
-    if (error) {
-      res.status(400).send(htmlError('OAuth error param from Google', { error }));
-      return;
-    }
-    if (!code || !state) {
-      res.status(400).send(htmlError('Missing code or state', { code: !!code, state: !!state }));
-      return;
-    }
+    if (error) { res.status(400).send(htmlError('OAuth error param from Google', { error })); return; }
+    if (!code || !state) { res.status(400).send(htmlError('Missing code or state', { code: !!code, state: !!state })); return; }
 
-    const sid = readSidFromCookie(req);
-    if (!sid) {
-      res.status(400).send(htmlError('Missing or invalid SID cookie', {}));
-      return;
-    }
+    const sid = session.readSidFromCookie(req);
+    if (!sid) { res.status(400).send(htmlError('Missing or invalid SID cookie', {})); return; }
 
-    const okState = await verifyAndDeleteState(sid, state);
-    if (!okState) {
-      res.status(400).send(htmlError('Invalid state (CSRF/flow restart)', { state }));
-      return;
-    }
+    const okState = await session.verifyAndDeleteState(sid, state);
+    if (!okState) { res.status(400).send(htmlError('Invalid state (CSRF/flow restart)', { state })); return; }
 
-    const code_verifier = await popPkceVerifier(sid);
-    if (!code_verifier) {
-      res.status(400).send(htmlError('Missing PKCE verifier (expired or storage issue)', {}));
-      return;
-    }
+    const code_verifier = await session.popPkceVerifier(sid);
+    if (!code_verifier) { res.status(400).send(htmlError('Missing PKCE verifier (expired or storage issue)', {})); return; }
 
     const params = new URLSearchParams();
     params.set('client_id', process.env.GOOGLE_CLIENT_ID || '');
@@ -91,13 +71,11 @@ export default async function handler(req, res) {
       return;
     }
 
-    await setTokenRecordBySid(sid, record);
+    await session.setTokenRecordBySid(sid, record);
 
-    // Refresh cookie max-age
     const enc = req.cookies?.[SESSION_COOKIE_NAME];
     if (enc) setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60 * 60 * 24 * 30 });
 
-    // Success → bounce to tester
     res.writeHead(302, { Location: '/dev/run-ga4-test' });
     res.end();
   } catch (e) {

@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import { setCookie, encryptSID, SESSION_COOKIE_NAME } from '../../_core/cookies';
-// 👇 use a namespace import to avoid any ESM/CJS interop weirdness
 import * as session from '../../_core/ga4-session';
 
 export const config = { runtime: 'nodejs' };
@@ -24,59 +23,35 @@ export default async function handler(req, res) {
       });
     }
     if (!process.env.APP_ENC_KEY) {
-      return res.status(500).json({
-        error: 'OAuth start failed',
-        reason: 'APP_ENC_KEY not set',
-      });
+      return res.status(500).json({ error: 'OAuth start failed', reason: 'APP_ENC_KEY not set' });
     }
 
-    const hasRedis = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
     const hasKV = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-    if (!hasRedis && !hasKV) {
-      return res.status(500).json({
-        error: 'OAuth start failed',
-        reason: 'No Upstash configured',
-      });
+    const hasRedis = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+    if (!hasKV && !hasRedis) {
+      return res.status(500).json({ error: 'OAuth start failed', reason: 'No Upstash configured' });
     }
 
-    // Create SID cookie
     const sid = b64url(crypto.randomBytes(24));
     let enc;
-    try {
-      enc = encryptSID(sid);
-    } catch (e) {
-      return res.status(500).json({
-        error: 'OAuth start failed',
-        reason: 'encryptSID failed',
-        message: e?.message || String(e),
-      });
-    }
+    try { enc = encryptSID(sid); }
+    catch (e) { return res.status(500).json({ error: 'OAuth start failed', reason: 'encryptSID failed', message: e?.message || String(e) }); }
     setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60*60*24*30 });
 
-    // PKCE + state (via session helpers)
     const code_verifier = b64url(crypto.randomBytes(32));
     const code_challenge = sha256b64url(code_verifier);
 
     if (typeof session.savePkceVerifier !== 'function') {
-      return res.status(500).json({
-        error: 'OAuth start failed',
-        reason: 'savePkceVerifier missing',
-        hint: 'Ensure web/pages/api/_core/ga4-session.js exports savePkceVerifier',
-      });
+      return res.status(500).json({ error: 'OAuth start failed', reason: 'savePkceVerifier missing' });
     }
     await session.savePkceVerifier(sid, code_verifier);
 
     if (typeof session.saveState !== 'function') {
-      return res.status(500).json({
-        error: 'OAuth start failed',
-        reason: 'saveState missing',
-        hint: 'Ensure web/pages/api/_core/ga4-session.js exports saveState',
-      });
+      return res.status(500).json({ error: 'OAuth start failed', reason: 'saveState missing' });
     }
     const nonce = b64url(crypto.randomBytes(16));
     await session.saveState(sid, nonce);
 
-    // Build Google auth URL
     const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     auth.searchParams.set('client_id', client_id);
     auth.searchParams.set('redirect_uri', redirect_uri);

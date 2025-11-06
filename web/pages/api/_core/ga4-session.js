@@ -57,7 +57,7 @@ async function redisCommand(cmd) {
   return json; // { result: ... }
 }
 
-// KV REST (set raw value as text/plain; TTL via query string)
+// Upstash KV (use documented JSON shape for set; robust normalisation on get)
 async function kvGetRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error('Upstash KV not configured');
   const resp = await fetch(KV_URL + '/get/' + encodeURIComponent(key), {
@@ -67,21 +67,34 @@ async function kvGetRaw(key) {
   const text = await resp.text();
   let json = null; try { json = JSON.parse(text); } catch {}
   if (!resp.ok) throw new Error(errorString('Upstash KV get error:', resp.status, json || text));
-  return json && Object.prototype.hasOwnProperty.call(json, 'result') ? json.result : null;
+
+  // KV returns { result: "<raw string>" | null }
+  let result = (json && Object.prototype.hasOwnProperty.call(json, 'result')) ? json.result : null;
+
+  // Normalise: if someone previously stored a JSON blob as a string, extract its .value
+  if (typeof result === 'string') {
+    try {
+      const parsed = JSON.parse(result);
+      if (parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'value')) {
+        return parsed.value;
+      }
+    } catch { /* not JSON string, leave as-is */ }
+  }
+  return result;
 }
 
 async function kvSetRaw(key, value, ttlSec) {
   if (!KV_URL || !KV_TOKEN) throw new Error('Upstash KV not configured');
-  const qs = ttlSec ? ('?expiration_ttl=' + encodeURIComponent(ttlSec)) : '';
-  const url = KV_URL + '/set/' + encodeURIComponent(key) + qs;
-  const body = typeof value === 'string' ? value : String(value);
-  const resp = await fetch(url, {
+  const bodyObj = { value: (typeof value === 'string' ? value : String(value)) };
+  if (ttlSec) bodyObj.expiration_ttl = ttlSec;
+
+  const resp = await fetch(KV_URL + '/set/' + encodeURIComponent(key), {
     method: 'POST',
     headers: {
       Authorization: 'Bearer ' + KV_TOKEN,
-      'Content-Type': 'text/plain',
+      'Content-Type': 'application/json',
     },
-    body,
+    body: JSON.stringify(bodyObj),
     cache: 'no-store',
   });
   const text = await resp.text();
@@ -285,7 +298,7 @@ async function getBearerForRequest(req) {
   return { sid, token: valid.access_token };
 }
 
-// CommonJS exports (works with `import * as session from './ga4-session'`)
+// CommonJS exports (works with `import * as session from '../_core/ga4-session'`)
 module.exports = {
   readSidFromCookie,
   getTokenRecordBySid,
