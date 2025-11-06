@@ -1,127 +1,163 @@
 // web/pages/dev/run-ga4-test.js
-import React, { useState } from 'react';
+// A tiny manual tester for the GA4 OAuth + query flow.
+// Key detail: "Connect" uses window.location to navigate (not fetch) so OAuth works.
+
+import { useEffect, useState } from 'react';
 
 export default function RunGa4Test() {
   const [status, setStatus] = useState(null);
-  const [propsList, setPropsList] = useState([]);
-  const [property, setProperty] = useState('');
-  const [report, setReport] = useState(null);
-  const [serverError, setServerError] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [propsRes, setPropsRes] = useState(null);
+  const [queryRes, setQueryRes] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [isBusy, setIsBusy] = useState(false);
+  const [propertyId, setPropertyId] = useState('');
 
-  async function go(path, opts) {
-    const res = await fetch(path, {
-      credentials: 'include',
-      ...(opts || {}),
+  function log(line) {
+    setLogs((prev) => [String(line), ...prev].slice(0, 200));
+  }
+
+  async function getJSON(url, opts = {}) {
+    const res = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json' }, cache: 'no-store' });
+    let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+    return { ok: res.ok, status: res.status, body };
+  }
+
+  // 1) Connect: MUST use navigation, not fetch
+  function connectGoogle() {
+    // Navigate the browser so Google can handle the OAuth flow
+    window.location.assign('/api/auth/google/start');
+  }
+
+  // 2) Disconnect
+  async function disconnectGoogle() {
+    setIsBusy(true);
+    const { ok, status, body } = await getJSON('/api/auth/google/disconnect', { method: 'POST' });
+    log(`disconnect → ${status}`);
+    if (!ok) log(JSON.stringify(body, null, 2));
+    await refreshStatus();
+    setIsBusy(false);
+  }
+
+  // 3) Status
+  async function refreshStatus() {
+    const { ok, status, body } = await getJSON('/api/auth/google/status');
+    log(`status → ${status}`);
+    setStatus(body);
+  }
+
+  // 4) List GA4 properties (Admin accountSummaries)
+  async function listProperties() {
+    setIsBusy(true);
+    setPropsRes(null);
+    const { ok, status, body } = await getJSON('/api/ga4/properties');
+    log(`properties → ${status}`);
+    setPropsRes(body);
+    setIsBusy(false);
+  }
+
+  // 5) Run a small GA4 report
+  async function runDefaultReport() {
+    setIsBusy(true);
+    setQueryRes(null);
+    const payload = {};
+    if (propertyId.trim()) payload.property = propertyId.trim();
+    const { ok, status, body } = await getJSON('/api/ga4/query', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
-    const text = await res.text();
-    let json; try { json = JSON.parse(text); } catch { json = null; }
-    if (!res.ok) {
-      // Preserve the server payload to help debugging
-      const err = (json && (json.error || json.details || json.message)) || text || res.statusText;
-      throw Object.assign(new Error(typeof err === 'string' ? err : 'Request failed'), {
-        status: res.status,
-        payload: json || text || null,
-      });
-    }
-    return json || { raw: text };
+    log(`query → ${status}`);
+    setQueryRes(body);
+    setIsBusy(false);
   }
 
-  function startOAuth() {
-    window.location.href = '/api/auth/google/start';
-  }
-
-  async function checkStatus() {
-    setBusy(true); setServerError(null);
-    try { setStatus(await go('/api/auth/google/status')); }
-    catch (e) { setServerError({ message: e.message, status: e.status, payload: e.payload }); }
-    finally { setBusy(false); }
-  }
-
-  async function listProps() {
-    setBusy(true); setServerError(null);
-    try {
-      const r = await go('/api/ga4/properties');
-      const list = r.properties || [];
-      setPropsList(list);
-      if (!property && list.length > 0) setProperty(list[0].property);
-    } catch (e) {
-      setServerError({ message: e.message, status: e.status, payload: e.payload });
-    } finally { setBusy(false); }
-  }
-
-  async function runReport() {
-    setBusy(true); setServerError(null); setReport(null);
-    try {
-      const body = property ? { property } : {};
-      const r = await go('/api/ga4/query', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-      });
-      setReport(r);
-    } catch (e) {
-      setServerError({ message: e.message, status: e.status, payload: e.payload });
-    } finally { setBusy(false); }
-  }
-
-  async function disconnect() {
-    setBusy(true); setServerError(null);
-    try {
-      await go('/api/auth/google/disconnect', { method: 'POST' });
-      setStatus(null); setPropsList([]); setReport(null); setProperty('');
-    } catch (e) {
-      setServerError({ message: e.message, status: e.status, payload: e.payload });
-    } finally { setBusy(false); }
-  }
+  useEffect(() => { refreshStatus(); }, []);
 
   return (
-    <div style={{maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial'}}>
+    <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial', padding: 24, maxWidth: 1100, margin: '0 auto' }}>
       <h1>GA4 Manual Tester</h1>
-      <div style={{display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12}}>
-        <button onClick={startOAuth}>1) Connect Google</button>
-        <button onClick={checkStatus}>2) Check Status</button>
-        <button onClick={listProps}>3) List Properties</button>
-        <button onClick={runReport}>4) Run Default Report</button>
-        <button onClick={disconnect}>Disconnect</button>
-      </div>
 
-      <section style={{border:'1px solid #ddd', padding:12, borderRadius:8, marginBottom:16}}>
-        <strong>Status:</strong>
-        <pre>{JSON.stringify(status, null, 2)}</pre>
-      </section>
-
-      <section style={{border:'1px solid #ddd', padding:12, borderRadius:8, marginBottom:16}}>
-        <strong>Properties:</strong>
-        <div style={{margin:'8px 0'}}>
-          <input style={{width:'100%', padding:8}} placeholder='properties/123456789'
-                 value={property} onChange={e=>setProperty(e.target.value)} />
-          <div style={{fontSize:12, color:'#555'}}>Click a property below to auto-fill ↑</div>
+      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+        <h2 style={{ marginTop: 0 }}>1) Connect / Disconnect</h2>
+        <p style={{ marginBottom: 8 }}>
+          <strong>Important:</strong> The Connect button performs a <em>real browser navigation</em> to{' '}
+          <code>/api/auth/google/start</code>. Using <code>fetch</code> here will not work with OAuth redirects.
+        </p>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button onClick={connectGoogle} disabled={isBusy} style={btn()}>Connect Google</button>
+          <button onClick={disconnectGoogle} disabled={isBusy} style={btn('ghost')}>Disconnect</button>
+          <button onClick={refreshStatus} disabled={isBusy} style={btn('secondary')}>Check Status</button>
         </div>
-        <ul style={{listStyle:'none', padding:0}}>
-          {propsList.map((p) => (
-            <li key={p.property} style={{padding:'6px 8px', border:'1px solid #eee', borderRadius:6, margin:'6px 0', cursor:'pointer'}}
-                onClick={()=>setProperty(p.property)}>
-              <div><strong>{p.propertyDisplayName}</strong></div>
-              <div style={{fontSize:12, color:'#666'}}>{p.property} · {p.accountDisplayName}</div>
-            </li>
-          ))}
-        </ul>
+        <div style={{ marginTop: 12 }}>
+          <h4 style={{ margin: '12px 0 6px' }}>Status:</h4>
+          <pre style={pre()}>{safe(status)}</pre>
+        </div>
       </section>
 
-      {busy && <div>Working…</div>}
+      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+        <h2 style={{ marginTop: 0 }}>2) Admin: List Properties</h2>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button onClick={listProperties} disabled={isBusy} style={btn()}>List Properties</button>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <pre style={pre()}>{safe(propsRes)}</pre>
+        </div>
+      </section>
 
-      {serverError && (
-        <section style={{border:'1px solid #f3c', padding:12, borderRadius:8, marginBottom:16, background:'#fff7ff'}}>
-          <strong>Server Error</strong>
-          <pre>{JSON.stringify(serverError, null, 2)}</pre>
-        </section>
-      )}
+      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+        <h2 style={{ marginTop: 0 }}>3) Data: Run Report</h2>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <label>
+            Property (optional):{' '}
+            <input
+              value={propertyId}
+              onChange={(e) => setPropertyId(e.target.value)}
+              placeholder="properties/123456789"
+              style={{ padding: 8, minWidth: 260 }}
+            />
+          </label>
+          <button onClick={runDefaultReport} disabled={isBusy} style={btn()}>Run GA4 Report</button>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <pre style={pre()}>{safe(queryRes)}</pre>
+        </div>
+      </section>
 
-      <section style={{border:'1px solid #ddd', padding:12, borderRadius:8}}>
-        <strong>Report JSON:</strong>
-        <pre>{report ? JSON.stringify(report, null, 2) : 'Run a report to see output.'}</pre>
+      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+        <h2 style={{ marginTop: 0 }}>Logs</h2>
+        <pre style={pre()}>{logs.join('\n')}</pre>
       </section>
     </div>
   );
+}
+
+function btn(variant) {
+  const base = {
+    padding: '10px 14px',
+    borderRadius: 8,
+    border: '1px solid #333',
+    background: '#111',
+    color: '#fff',
+    cursor: 'pointer',
+  };
+  if (variant === 'secondary') return { ...base, background: '#333' };
+  if (variant === 'ghost') return { ...base, background: 'transparent', color: '#111' };
+  return base;
+}
+
+function pre() {
+  return {
+    whiteSpace: 'pre-wrap',
+    background: '#111',
+    color: '#f5f5f5',
+    padding: 12,
+    borderRadius: 8,
+    margin: 0,
+    maxHeight: 420,
+    overflow: 'auto',
+    fontSize: 13,
+  };
+}
+
+function safe(x) {
+  try { return JSON.stringify(x, null, 2); } catch { return String(x); }
 }
