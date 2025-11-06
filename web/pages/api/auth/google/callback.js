@@ -1,6 +1,13 @@
-import { readSidFromCookie, setCookie, SESSION_COOKIE_NAME } from '../../_core/cookies';
-import { popPkceVerifier, verifyAndDeleteState, setTokenRecordBySid } from '../../_core/ga4-session';
+import { setCookie, SESSION_COOKIE_NAME } from '../../_core/cookies';
+import {
+  readSidFromCookie,
+  popPkceVerifier,
+  verifyAndDeleteState,
+  setTokenRecordBySid
+} from '../../_core/ga4-session';
+
 export const config = { runtime: 'nodejs' };
+
 function nowSec(){ return Math.floor(Date.now()/1000); }
 
 export default async function handler(req, res) {
@@ -32,6 +39,7 @@ export default async function handler(req, res) {
       body: params.toString(),
       cache: 'no-store',
     });
+
     const json = await resp.json().catch(()=>null);
     if (!resp.ok) {
       console.error('Token exchange failed', json);
@@ -47,6 +55,7 @@ export default async function handler(req, res) {
     if (!record.access_token || !record.refresh_token) {
       return res.status(400).send('Missing tokens from Google');
     }
+
     await setTokenRecordBySid(sid, record);
 
     // refresh cookie max-age
