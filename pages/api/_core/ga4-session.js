@@ -1,6 +1,3 @@
-// pages/api/_core/ga4-session.js
-// SID cookie -> Upstash token record -> auto-refresh -> bearer for Google APIs
-
 import { getCookie, SESSION_COOKIE_NAME, decryptSID } from './cookies';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL;
@@ -21,8 +18,7 @@ async function redisCommand(cmd) {
 
 async function kvGet(key) {
   const res = await fetch(`${KV_URL}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${KV_TOKEN}` },
-    cache: 'no-store',
+    headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store',
   });
   if (!res.ok) throw new Error(`Upstash KV get error: ${res.status}`);
   return (await res.json()).result;
@@ -42,8 +38,7 @@ async function kvSet(key, value, ttlSec) {
 async function kvDel(key) {
   const res = await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${KV_TOKEN}` },
-    cache: 'no-store',
+    headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store',
   });
   if (!res.ok) throw new Error(`Upstash KV del error: ${res.status}`);
   return res.json();
@@ -76,8 +71,6 @@ async function storeDel(key) {
 }
 
 const GA_KEY = (sid) => `aa:ga4:${sid}`;
-const PKCE_KEY = (sid) => `aa:pkce:${sid}`;
-const STATE_KEY = (sid, nonce) => `aa:state:${sid}:${nonce}`;
 
 export function readSidFromCookie(req) {
   const enc = getCookie(req, SESSION_COOKIE_NAME);
@@ -98,25 +91,7 @@ export async function deleteTokenRecordBySid(sid) {
   return storeDel(GA_KEY(sid));
 }
 
-export async function savePkceVerifier(sid, code_verifier) {
-  return storeSet(PKCE_KEY(sid), code_verifier, 600);
-}
-export async function popPkceVerifier(sid) {
-  const v = await storeGet(PKCE_KEY(sid));
-  if (v) await storeDel(PKCE_KEY(sid));
-  return typeof v === 'string' ? v : null;
-}
-export async function saveState(sid, nonce) {
-  return storeSet(STATE_KEY(sid, nonce), '1', 600);
-}
-export async function verifyAndDeleteState(sid, nonce) {
-  const v = await storeGet(STATE_KEY(sid, nonce));
-  if (!v) return false;
-  await storeDel(STATE_KEY(sid, nonce));
-  return true;
-}
-
-function nowSec() { return Math.floor(Date.now() / 1000); }
+function nowSec() { return Math.floor(Date.now()/1000); }
 
 export async function ensureValidAccessToken(rec) {
   if (!rec) return null;

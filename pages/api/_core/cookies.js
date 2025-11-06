@@ -1,22 +1,13 @@
-// pages/api/_core/cookies.js
-// AES-256-GCM encrypted SID cookie helpers (host-only cookie by default)
-
 import crypto from 'crypto';
 
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'aa_auth';
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // host-only by default
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
 const AES_ALGO = 'aes-256-gcm';
 
 function getKey() {
   const secret = process.env.APP_ENC_KEY;
   if (!secret) throw new Error('APP_ENC_KEY not set');
-  return crypto.hkdfSync(
-    'sha256',
-    Buffer.from(secret, 'utf8'),
-    Buffer.from('aa_salt'),
-    Buffer.from('aa_cookie_key'),
-    32
-  );
+  return crypto.hkdfSync('sha256', Buffer.from(secret, 'utf8'), Buffer.from('aa_salt'), Buffer.from('aa_cookie_key'), 32);
 }
 
 export function encryptSID(plainSid) {
@@ -31,7 +22,7 @@ export function encryptSID(plainSid) {
 export function decryptSID(token) {
   const key = getKey();
   const buf = Buffer.from(token, 'base64url');
-  if (buf.length < 12 + 16 + 1) throw new Error('Invalid token');
+  if (buf.length < 29) throw new Error('Invalid token');
   const iv = buf.subarray(0, 12);
   const tag = buf.subarray(12, 28);
   const ciphertext = buf.subarray(28);
@@ -52,12 +43,7 @@ export function getCookie(req, name = COOKIE_NAME) {
 }
 
 export function serializeCookie(name, value, {
-  httpOnly = true,
-  secure = true,
-  path = '/',
-  sameSite = 'Lax',
-  domain = COOKIE_DOMAIN,
-  maxAge
+  httpOnly = true, secure = true, path = '/', sameSite = 'Lax', domain = COOKIE_DOMAIN, maxAge
 } = {}) {
   const segs = [`${name}=${encodeURIComponent(value)}`];
   if (domain) segs.push(`Domain=${domain}`);

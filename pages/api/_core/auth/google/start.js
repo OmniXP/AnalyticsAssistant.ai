@@ -1,22 +1,20 @@
-// pages/api/auth/google/start.js
 import crypto from 'crypto';
-import { setCookie, encryptSID, SESSION_COOKIE_NAME } from '../../cookies';
-import { savePkceVerifier, saveState } from '../../ga4-session';
-
+import { setCookie, encryptSID, SESSION_COOKIE_NAME } from '../../_core/cookies';
+import { savePkceVerifier, saveState } from '../../_core/ga4-session';
 export const config = { runtime: 'nodejs' };
 
-function b64url(buf) { return buf.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
-function sha256b64url(str) { return b64url(crypto.createHash('sha256').update(str).digest()); }
+function b64url(buf){return buf.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function sha256b64url(str){return b64url(crypto.createHash('sha256').update(str).digest());}
 
-export default async function handler(req, res) {
-  try {
+export default async function handler(req,res){
+  try{
     const client_id = process.env.GOOGLE_CLIENT_ID;
     const redirect_uri = process.env.GA_OAUTH_REDIRECT;
-    if (!client_id || !redirect_uri) return res.status(500).json({ error: 'Missing Google OAuth env' });
+    if(!client_id || !redirect_uri) return res.status(500).json({error:'Missing Google OAuth env'});
 
     const sid = b64url(crypto.randomBytes(24));
     const enc = encryptSID(sid);
-    setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60 * 60 * 24 * 30 });
+    setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60*60*24*30 });
 
     const code_verifier = b64url(crypto.randomBytes(32));
     const code_challenge = sha256b64url(code_verifier);
@@ -38,8 +36,8 @@ export default async function handler(req, res) {
 
     res.writeHead(302, { Location: auth.toString() });
     res.end();
-  } catch (e) {
+  }catch(e){
     console.error(e);
-    res.status(500).json({ error: 'OAuth start failed' });
+    res.status(500).json({error:'OAuth start failed'});
   }
 }

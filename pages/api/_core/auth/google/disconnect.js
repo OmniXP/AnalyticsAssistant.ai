@@ -1,7 +1,5 @@
-// pages/api/auth/google/disconnect.js
 import { readSidFromCookie, deleteCookie } from '../../_core/cookies';
 import { deleteTokenRecordBySid } from '../../_core/ga4-session';
-
 export const config = { runtime: 'nodejs' };
 
 export default async function handler(req, res) {
