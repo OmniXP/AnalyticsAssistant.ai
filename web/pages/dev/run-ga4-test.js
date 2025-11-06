@@ -22,13 +22,11 @@ export default function RunGa4Test() {
     return { ok: res.ok, status: res.status, body };
   }
 
-  // 1) Connect: MUST use navigation, not fetch
+  // Connect: MUST navigate the browser (fetch won't follow 302)
   function connectGoogle() {
-    // Navigate the browser so Google can handle the OAuth flow
     window.location.assign('/api/auth/google/start');
   }
 
-  // 2) Disconnect
   async function disconnectGoogle() {
     setIsBusy(true);
     const { ok, status, body } = await getJSON('/api/auth/google/disconnect', { method: 'POST' });
@@ -38,30 +36,27 @@ export default function RunGa4Test() {
     setIsBusy(false);
   }
 
-  // 3) Status
   async function refreshStatus() {
     const { ok, status, body } = await getJSON('/api/auth/google/status');
     log(`status → ${status}`);
     setStatus(body);
   }
 
-  // 4) List GA4 properties (Admin accountSummaries)
   async function listProperties() {
     setIsBusy(true);
     setPropsRes(null);
-    const { ok, status, body } = await getJSON('/api/ga4/properties');
+    const { status, body } = await getJSON('/api/ga4/properties');
     log(`properties → ${status}`);
     setPropsRes(body);
     setIsBusy(false);
   }
 
-  // 5) Run a small GA4 report
   async function runDefaultReport() {
     setIsBusy(true);
     setQueryRes(null);
     const payload = {};
     if (propertyId.trim()) payload.property = propertyId.trim();
-    const { ok, status, body } = await getJSON('/api/ga4/query', {
+    const { status, body } = await getJSON('/api/ga4/query', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -76,12 +71,9 @@ export default function RunGa4Test() {
     <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial', padding: 24, maxWidth: 1100, margin: '0 auto' }}>
       <h1>GA4 Manual Tester</h1>
 
-      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+      <section style={card()}>
         <h2 style={{ marginTop: 0 }}>1) Connect / Disconnect</h2>
-        <p style={{ marginBottom: 8 }}>
-          <strong>Important:</strong> The Connect button performs a <em>real browser navigation</em> to{' '}
-          <code>/api/auth/google/start</code>. Using <code>fetch</code> here will not work with OAuth redirects.
-        </p>
+        <p><strong>Important:</strong> Connect performs a browser navigation to <code>/api/auth/google/start</code>.</p>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <button onClick={connectGoogle} disabled={isBusy} style={btn()}>Connect Google</button>
           <button onClick={disconnectGoogle} disabled={isBusy} style={btn('ghost')}>Disconnect</button>
@@ -93,7 +85,7 @@ export default function RunGa4Test() {
         </div>
       </section>
 
-      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+      <section style={card()}>
         <h2 style={{ marginTop: 0 }}>2) Admin: List Properties</h2>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <button onClick={listProperties} disabled={isBusy} style={btn()}>List Properties</button>
@@ -103,7 +95,7 @@ export default function RunGa4Test() {
         </div>
       </section>
 
-      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+      <section style={card()}>
         <h2 style={{ marginTop: 0 }}>3) Data: Run Report</h2>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <label>
@@ -122,12 +114,16 @@ export default function RunGa4Test() {
         </div>
       </section>
 
-      <section style={{ margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 }}>
+      <section style={card()}>
         <h2 style={{ marginTop: 0 }}>Logs</h2>
         <pre style={pre()}>{logs.join('\n')}</pre>
       </section>
     </div>
   );
+}
+
+function card() {
+  return { margin: '16px 0', padding: 16, border: '1px solid #333', borderRadius: 8 };
 }
 
 function btn(variant) {
