@@ -76,7 +76,7 @@ export default async function handler(req, res) {
     const enc = req.cookies?.[SESSION_COOKIE_NAME];
     if (enc) setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60 * 60 * 24 * 30 });
 
-    res.writeHead(302, { Location: '/dev/run-ga4-test' });
+    res.writeHead(302, { Location: '/dev/ga4-tester' });
     res.end();
   } catch (e) {
     res.status(500).send(htmlError('OAuth callback exception', { message: e?.message || String(e) }));
