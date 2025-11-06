@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { setCookie, encryptSID, SESSION_COOKIE_NAME } from '../../_core/cookies';
-import { savePkceVerifier, saveState } from '../../_core/ga4-session';
+// 👇 use a namespace import to avoid any ESM/CJS interop weirdness
+import * as session from '../../_core/ga4-session';
+
 export const config = { runtime: 'nodejs' };
 
 function b64url(buf){ return buf.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
@@ -37,6 +39,7 @@ export default async function handler(req, res) {
       });
     }
 
+    // Create SID cookie
     const sid = b64url(crypto.randomBytes(24));
     let enc;
     try {
@@ -50,15 +53,30 @@ export default async function handler(req, res) {
     }
     setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60*60*24*30 });
 
+    // PKCE + state (via session helpers)
     const code_verifier = b64url(crypto.randomBytes(32));
     const code_challenge = sha256b64url(code_verifier);
-    try { await savePkceVerifier(sid, code_verifier); }
-    catch (e) { return res.status(500).json({ error: 'OAuth start failed', reason: 'savePkceVerifier failed', message: e?.message || String(e) }); }
 
+    if (typeof session.savePkceVerifier !== 'function') {
+      return res.status(500).json({
+        error: 'OAuth start failed',
+        reason: 'savePkceVerifier missing',
+        hint: 'Ensure web/pages/api/_core/ga4-session.js exports savePkceVerifier',
+      });
+    }
+    await session.savePkceVerifier(sid, code_verifier);
+
+    if (typeof session.saveState !== 'function') {
+      return res.status(500).json({
+        error: 'OAuth start failed',
+        reason: 'saveState missing',
+        hint: 'Ensure web/pages/api/_core/ga4-session.js exports saveState',
+      });
+    }
     const nonce = b64url(crypto.randomBytes(16));
-    try { await saveState(sid, nonce); }
-    catch (e) { return res.status(500).json({ error: 'OAuth start failed', reason: 'saveState failed', message: e?.message || String(e) }); }
+    await session.saveState(sid, nonce);
 
+    // Build Google auth URL
     const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     auth.searchParams.set('client_id', client_id);
     auth.searchParams.set('redirect_uri', redirect_uri);
