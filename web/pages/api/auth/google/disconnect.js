@@ -1,6 +1,6 @@
-// web/pages/api/auth/google/disconnect.js
-import { readSidFromCookie, deleteCookie } from '../../../../lib/cookies';
-import { deleteTokenRecordBySid } from '../../../../server/ga4-session';
+import { readSidFromCookie, deleteCookie } from '../../_core/cookies';
+import { deleteTokenRecordBySid } from '../../_core/ga4-session';
+export const config = { runtime: 'nodejs' };
 
 export default async function handler(req, res) {
   try {
@@ -10,9 +10,9 @@ export default async function handler(req, res) {
     const sid = readSidFromCookie(req);
     if (sid) await deleteTokenRecordBySid(sid);
     deleteCookie(res);
-    return res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true });
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ ok: false, error: 'disconnect failed' });
+    res.status(500).json({ ok: false, error: 'disconnect failed' });
   }
 }

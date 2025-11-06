@@ -1,22 +1,23 @@
-// web/pages/api/dev/check-upstash.js
-const { readSessionIdFromRequest, kvGet } = require("../../../server/ga4-session");
+import { readSidFromCookie, getTokenRecordBySid } from '../_core/ga4-session';
+export const config = { runtime: 'nodejs' };
 
 export default async function handler(req, res) {
   try {
-    const sid = readSessionIdFromRequest(req);
-    if (!sid) {
-      return res.status(200).json({ sidFound: false, upstashRecordFound: false });
-    }
+    const sid = readSidFromCookie(req);
+    if (!sid) return res.status(200).json({ sidFound: false, upstashRecordFound: false });
 
-    const rec = await kvGet(sid);
+    const rec = await getTokenRecordBySid(sid);
+    if (!rec) return res.status(200).json({ sidFound: true, upstashRecordFound: false });
+
     res.status(200).json({
       sidFound: true,
-      upstashRecordFound: !!(rec && Object.keys(rec).length),
-      hasAccessTokenField: !!rec?.access_token,
-      hasRefreshTokenField: !!rec?.refresh_token,
-      expiry: rec?.expiry || null,
+      upstashRecordFound: true,
+      hasAccessTokenField: !!rec.access_token,
+      hasRefreshTokenField: !!rec.refresh_token,
+      expiry: rec.expiry
     });
   } catch (e) {
-    res.status(200).json({ error: String(e?.message || e) });
+    console.error(e);
+    res.status(500).json({ error: 'check-upstash failed' });
   }
 }

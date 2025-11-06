@@ -1,8 +1,4 @@
-// pages/api/dev/selfcheck.js
-// One-stop diagnostics: token scopes, property list, property GET, and minimal runReport.
-// GET ?property=properties/######## (optional)
-
-import { getBearerForRequest } from '../_ga4-session';
+import { getBearerForRequest } from '../_core/ga4-session';
 export const config = { runtime: 'nodejs' };
 
 async function fetchJSON(res) {
@@ -10,12 +6,10 @@ async function fetchJSON(res) {
   try { return { json: JSON.parse(text), text, ok: res.ok, status: res.status }; }
   catch { return { json: null, text, ok: res.ok, status: res.status }; }
 }
-
 async function tokenInfo(token) {
   const r = await fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(token)}`);
   return fetchJSON(r);
 }
-
 async function listProperties(token) {
   const r = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
     headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
@@ -33,14 +27,12 @@ async function listProperties(token) {
   }
   return { properties: props, raw: out.json };
 }
-
 async function adminGetProperty(token, property) {
   const r = await fetch(`https://analyticsadmin.googleapis.com/v1beta/${property}`, {
     headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
   });
   return fetchJSON(r);
 }
-
 async function runSample(token, property) {
   const payload = {
     dateRanges: [{ startDate: '7daysAgo', endDate: 'today' }],
@@ -104,6 +96,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json(results);
   } catch (e) {
+    console.error(e);
     return res.status(500).json({ error: 'selfcheck failed', message: e?.message || String(e) });
   }
 }

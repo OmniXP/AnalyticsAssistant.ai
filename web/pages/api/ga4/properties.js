@@ -1,7 +1,4 @@
-// pages/api/ga4/properties.js
-// Lists GA4 properties via accountSummaries.
-
-import { getBearerForRequest } from '../_ga4-session';
+import { getBearerForRequest } from '../_core/ga4-session';
 export const config = { runtime: 'nodejs' };
 
 export default async function handler(req, res) {
@@ -24,13 +21,14 @@ export default async function handler(req, res) {
         out.push({
           account: acc.name,
           accountDisplayName: acc.displayName,
-          property: p.property,                 // e.g. "properties/123456789"
+          property: p.property, // "properties/123456789"
           propertyDisplayName: p.displayName,
         });
       }
     }
-    return res.status(200).json({ properties: out, raw: json });
+    res.status(200).json({ properties: out, raw: json });
   } catch (e) {
-    return res.status(500).json({ error: 'Failed to list properties', message: e?.message || String(e) });
+    console.error(e);
+    res.status(500).json({ error: 'Failed to list properties', message: e?.message || String(e) });
   }
 }

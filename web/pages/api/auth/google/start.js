@@ -1,45 +1,47 @@
-// web/pages/api/auth/google/start.js
-// Starts Google OAuth (PKCE)
+import crypto from 'crypto';
+import { setCookie, encryptSID, SESSION_COOKIE_NAME } from '../../_core/cookies';
+import { savePkceVerifier, saveState } from '../../_core/ga4-session';
+export const config = { runtime: 'nodejs' };
 
-const crypto = require("crypto");
-const { URLSearchParams } = require("url");
-const { serializeCookie } = require("../../../../lib/cookies");
-
-const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
-const SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
-
-const REDIRECT_URI = process.env.GA_OAUTH_REDIRECT;
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-
-const pkceStore = new Map(); // state -> { verifier, createdAt }
-function b64url(buf) { return buf.toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
-function sha256(input) { return crypto.createHash("sha256").update(input).digest(); }
+function b64url(buf){ return buf.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function sha256b64url(str){ return b64url(crypto.createHash('sha256').update(str).digest()); }
 
 export default async function handler(req, res) {
-  if (req.method !== "GET") return res.status(405).end("Method Not Allowed");
-  const state = b64url(crypto.randomBytes(24));
-  const verifier = b64url(crypto.randomBytes(32));
-  const challenge = b64url(sha256(verifier));
-  pkceStore.set(state, { verifier, createdAt: Date.now() });
+  try {
+    const client_id = process.env.GOOGLE_CLIENT_ID;
+    const redirect_uri = process.env.GA_OAUTH_REDIRECT;
+    if (!client_id || !redirect_uri) return res.status(500).json({ error: 'Missing Google OAuth env' });
 
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    response_type: "code",
-    scope: SCOPE,
-    state,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
-  });
+    // Create SID and cookie
+    const sid = b64url(crypto.randomBytes(24));
+    const enc = encryptSID(sid);
+    setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60*60*24*30 });
 
-  // short-lived cookie so callback can recover if lambda instance changed
-  const stateCookie = { state, verifier, ts: Date.now() };
-  res.setHeader("Set-Cookie", serializeCookie("aa_pkce", JSON.stringify(stateCookie), {
-    httpOnly: true, secure: true, sameSite: "Lax", maxAge: 5 * 60 * 1000, path: "/",
-  }));
+    // PKCE
+    const code_verifier = b64url(crypto.randomBytes(32));
+    const code_challenge = sha256b64url(code_verifier);
+    await savePkceVerifier(sid, code_verifier);
 
-  res.redirect(`${GOOGLE_AUTH}?${params.toString()}`);
+    // CSRF state
+    const nonce = b64url(crypto.randomBytes(16));
+    await saveState(sid, nonce);
+
+    // Build auth URL
+    const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    auth.searchParams.set('client_id', client_id);
+    auth.searchParams.set('redirect_uri', redirect_uri);
+    auth.searchParams.set('response_type', 'code');
+    auth.searchParams.set('scope', 'https://www.googleapis.com/auth/analytics.readonly');
+    auth.searchParams.set('access_type', 'offline');
+    auth.searchParams.set('prompt', 'consent');
+    auth.searchParams.set('code_challenge_method', 'S256');
+    auth.searchParams.set('code_challenge', code_challenge);
+    auth.searchParams.set('state', nonce);
+
+    res.writeHead(302, { Location: auth.toString() });
+    res.end();
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'OAuth start failed' });
+  }
 }

@@ -1,8 +1,5 @@
-// pages/api/ga4/query.js
 // POST { property?: "properties/123456789", report?: {...} }
-// If property omitted, falls back to first GA4 property from Admin API.
-
-import { getBearerForRequest } from '../_ga4-session';
+import { getBearerForRequest } from '../_core/ga4-session';
 export const config = { runtime: 'nodejs' };
 
 async function fetchJSON(res) {
@@ -35,7 +32,7 @@ export default async function handler(req, res) {
     if (!property) {
       const fp = await getFirstProperty(token);
       if (fp.error) return res.status(fp.error.status).json({ error: 'Admin API failed', ...fp.error });
-      property = fp.property; // e.g. "properties/123456789"
+      property = fp.property;
     }
 
     const payload = report || {
@@ -44,16 +41,11 @@ export default async function handler(req, res) {
       metrics: [{ name: 'sessions' }],
     };
 
-    // IMPORTANT: do NOT encode the property string
-    const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
-
+    const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`; // DO NOT encode property
     const r = await fetch(url, {
       method: 'POST',
       cache: 'no-store',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
@@ -68,9 +60,9 @@ export default async function handler(req, res) {
       });
     }
 
-    return res.status(200).json({ propertyUsed: property, ...(json || { raw: text }) });
+    res.status(200).json({ propertyUsed: property, ...(json || { raw: text }) });
   } catch (e) {
     console.error('Query handler exception', e);
-    return res.status(500).json({ error: 'Query failed', message: e?.message || String(e) });
+    res.status(500).json({ error: 'Query failed', message: e?.message || String(e) });
   }
 }

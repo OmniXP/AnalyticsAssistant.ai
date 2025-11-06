@@ -1,3 +1,4 @@
+// GA4 session storage + token refresh + PKCE state management (Upstash REST)
 import { getCookie, SESSION_COOKIE_NAME, decryptSID } from './cookies';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL;
@@ -70,7 +71,9 @@ async function storeDel(key) {
   throw new Error('No Upstash configured');
 }
 
-const GA_KEY = (sid) => `aa:ga4:${sid}`;
+const GA_KEY     = (sid) => `aa:ga4:${sid}`;
+const PKCE_KEY   = (sid) => `aa:pkce:${sid}`;
+const STATE_KEY  = (sid, nonce) => `aa:state:${sid}:${nonce}`;
 
 export function readSidFromCookie(req) {
   const enc = getCookie(req, SESSION_COOKIE_NAME);
@@ -78,20 +81,40 @@ export function readSidFromCookie(req) {
   try { return decryptSID(enc); } catch { return null; }
 }
 
+// Token record management
 export async function getTokenRecordBySid(sid) {
   const raw = await storeGet(GA_KEY(sid));
   if (!raw) return null;
   try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return null; }
 }
 export async function setTokenRecordBySid(sid, rec) {
-  const ttl = 60 * 60 * 24 * 30;
+  const ttl = 60 * 60 * 24 * 30; // 30 days
   return storeSet(GA_KEY(sid), rec, ttl);
 }
 export async function deleteTokenRecordBySid(sid) {
   return storeDel(GA_KEY(sid));
 }
 
-function nowSec() { return Math.floor(Date.now()/1000); }
+// PKCE + state helpers
+export async function savePkceVerifier(sid, code_verifier) {
+  return storeSet(PKCE_KEY(sid), code_verifier, 600); // 10 mins
+}
+export async function popPkceVerifier(sid) {
+  const v = await storeGet(PKCE_KEY(sid));
+  if (v) await storeDel(PKCE_KEY(sid));
+  return typeof v === 'string' ? v : null;
+}
+export async function saveState(sid, nonce) {
+  return storeSet(STATE_KEY(sid, nonce), '1', 600); // 10 mins
+}
+export async function verifyAndDeleteState(sid, nonce) {
+  const v = await storeGet(STATE_KEY(sid, nonce));
+  if (!v) return false;
+  await storeDel(STATE_KEY(sid, nonce));
+  return true;
+}
+
+function nowSec() { return Math.floor(Date.now() / 1000); }
 
 export async function ensureValidAccessToken(rec) {
   if (!rec) return null;
