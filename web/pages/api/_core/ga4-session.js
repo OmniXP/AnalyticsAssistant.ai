@@ -1,79 +1,183 @@
-// GA4 session storage + token refresh + PKCE state management (Upstash REST)
+// GA4 session storage + token refresh + PKCE/state management with resilient Upstash support.
+// Prefers Upstash KV (KV_REST_API_URL/TOKEN). Falls back to Redis REST (UPSTASH_REDIS_REST_URL/TOKEN).
+// If one backend fails with a 4xx/5xx, automatically tries the other if available.
+
 import { getCookie, SESSION_COOKIE_NAME, decryptSID } from './cookies';
 
-const R_URL = process.env.UPSTASH_REDIS_REST_URL;
-const R_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+// --- ENV detection ---
+const R_URL = process.env.UPSTASH_REDIS_REST_URL || '';
+const R_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const KV_URL = process.env.KV_REST_API_URL || '';
+const KV_TOKEN = process.env.KV_REST_API_TOKEN || '';
 
+const hasRedis = !!(R_URL && R_TOKEN);
+const hasKV = !!(KV_URL && KV_TOKEN);
+
+// Prefer KV if both are present.
+function getPrimaryBackend() {
+  if (hasKV) return 'kv';
+  if (hasRedis) return 'redis';
+  return 'none';
+}
+function getSecondaryBackend() {
+  if (hasKV && hasRedis) return 'redis'; // if KV fails, try Redis
+  return 'none';
+}
+
+// --- Low-level clients ---
 async function redisCommand(cmd) {
-  const res = await fetch(R_URL, {
+  if (!hasRedis) throw new Error('Upstash Redis not configured');
+  const resp = await fetch(R_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ command: cmd }),
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Upstash Redis error: ${res.status}`);
-  return res.json();
+  const text = await resp.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if (!resp.ok) {
+    const msg = json || text || `HTTP ${resp.status}`;
+    throw new Error(`Upstash Redis error: ${resp.status} :: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+  }
+  return json; // { result: ... } shape
 }
 
-async function kvGet(key) {
-  const res = await fetch(`${KV_URL}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`Upstash KV get error: ${res.status}`);
-  return (await res.json()).result;
-}
-
-async function kvSet(key, value, ttlSec) {
-  const res = await fetch(`${KV_URL}/set/${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value, expiration_ttl: ttlSec }),
+async function kvGetRaw(key) {
+  if (!hasKV) throw new Error('Upstash KV not configured');
+  const resp = await fetch(`${KV_URL}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${KV_TOKEN}` },
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Upstash KV set error: ${res.status}`);
-  return res.json();
+  const text = await resp.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if (!resp.ok) {
+    const msg = json || text || `HTTP ${resp.status}`;
+    throw new Error(`Upstash KV get error: ${resp.status} :: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+  }
+  // KV returns { result: "value" | null }
+  return json?.result ?? null;
 }
 
-async function kvDel(key) {
-  const res = await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
+async function kvSetRaw(key, value, ttlSec) {
+  if (!hasKV) throw new Error('Upstash KV not configured');
+  const body = { value };
+  if (ttlSec) body.expiration_ttl = ttlSec;
+  const resp = await fetch(`${KV_URL}/set/${encodeURIComponent(key)}`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store',
+    headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Upstash KV del error: ${res.status}`);
-  return res.json();
+  const text = await resp.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if (!resp.ok) {
+    const msg = json || text || `HTTP ${resp.status}`;
+    throw new Error(`Upstash KV set error: ${resp.status} :: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+  }
+  return json;
 }
 
-const hasRedis = !!(R_URL && R_TOKEN);
-const hasKV = !!(KV_URL && KV_TOKEN);
+async function kvDelRaw(key) {
+  if (!hasKV) throw new Error('Upstash KV not configured');
+  const resp = await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${KV_TOKEN}` },
+    cache: 'no-store',
+  });
+  const text = await resp.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if (!resp.ok) {
+    const msg = json || text || `HTTP ${resp.status}`;
+    throw new Error(`Upstash KV del error: ${resp.status} :: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+  }
+  return json;
+}
 
+// --- Unified store with fallback ---
 async function storeSet(key, value, ttlSec) {
-  if (hasRedis) {
-    const args = ['SET', key, typeof value === 'string' ? value : JSON.stringify(value)];
+  const asString = typeof value === 'string' ? value : JSON.stringify(value);
+  const primary = getPrimaryBackend();
+  const secondary = getSecondaryBackend();
+
+  async function doKV() { return kvSetRaw(key, asString, ttlSec); }
+  async function doRedis() {
+    const args = ['SET', key, asString];
     if (ttlSec) args.push('EX', String(ttlSec));
     return redisCommand(args);
   }
-  if (hasKV) return kvSet(key, value, ttlSec);
-  throw new Error('No Upstash configured');
-}
-async function storeGet(key) {
-  if (hasRedis) {
-    const { result } = await redisCommand(['GET', key]);
-    return result;
+
+  try {
+    if (primary === 'kv') return await doKV();
+    if (primary === 'redis') return await doRedis();
+    throw new Error('No Upstash backend configured (KV or Redis)');
+  } catch (e) {
+    if (secondary !== 'none') {
+      try {
+        if (secondary === 'kv') return await doKV();
+        if (secondary === 'redis') return await doRedis();
+      } catch (e2) {
+        throw new Error(`Both Upstash backends failed. Primary: ${e?.message}. Secondary: ${e2?.message}`);
+      }
+    }
+    throw e;
   }
-  if (hasKV) return kvGet(key);
-  throw new Error('No Upstash configured');
-}
-async function storeDel(key) {
-  if (hasRedis) return redisCommand(['DEL', key]);
-  if (hasKV) return kvDel(key);
-  throw new Error('No Upstash configured');
 }
 
-const GA_KEY     = (sid) => `aa:ga4:${sid}`;
-const PKCE_KEY   = (sid) => `aa:pkce:${sid}`;
-const STATE_KEY  = (sid, nonce) => `aa:state:${sid}:${nonce}`;
+async function storeGet(key) {
+  const primary = getPrimaryBackend();
+  const secondary = getSecondaryBackend();
+
+  async function doKV() { return kvGetRaw(key); }
+  async function doRedis() {
+    const out = await redisCommand(['GET', key]); // { result: string|null }
+    return out?.result ?? null;
+  }
+
+  try {
+    if (primary === 'kv') return await doKV();
+    if (primary === 'redis') return await doRedis();
+    throw new Error('No Upstash backend configured (KV or Redis)');
+  } catch (e) {
+    if (secondary !== 'none') {
+      try {
+        if (secondary === 'kv') return await doKV();
+        if (secondary === 'redis') return await doRedis();
+      } catch (e2) {
+        throw new Error(`Both Upstash backends failed. Primary: ${e?.message}. Secondary: ${e2?.message}`);
+      }
+    }
+    throw e;
+  }
+}
+
+async function storeDel(key) {
+  const primary = getPrimaryBackend();
+  const secondary = getSecondaryBackend();
+
+  async function doKV() { return kvDelRaw(key); }
+  async function doRedis() { return redisCommand(['DEL', key]); }
+
+  try {
+    if (primary === 'kv') return await doKV();
+    if (primary === 'redis') return await doRedis();
+    throw new Error('No Upstash backend configured (KV or Redis)');
+  } catch (e) {
+    if (secondary !== 'none') {
+      try {
+        if (secondary === 'kv') return await doKV();
+        if (secondary === 'redis') return await doRedis();
+      } catch (e2) {
+        throw new Error(`Both Upstash backends failed. Primary: ${e?.message}. Secondary: ${e2?.message}`);
+      }
+    }
+    throw e;
+  }
+}
+
+// --- Keys & cookie helpers ---
+const GA_KEY    = (sid) => `aa:ga4:${sid}`;
+const PKCE_KEY  = (sid) => `aa:pkce:${sid}`;
+const STATE_KEY = (sid, nonce) => `aa:state:${sid}:${nonce}`;
 
 export function readSidFromCookie(req) {
   const enc = getCookie(req, SESSION_COOKIE_NAME);
@@ -114,6 +218,7 @@ export async function verifyAndDeleteState(sid, nonce) {
   return true;
 }
 
+// --- Token refresh ---
 function nowSec() { return Math.floor(Date.now() / 1000); }
 
 export async function ensureValidAccessToken(rec) {
