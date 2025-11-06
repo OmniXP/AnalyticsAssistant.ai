@@ -1,19 +1,22 @@
-// web/lib/cookies.js
-// Minimal, secure cookie helpers + AES-256-GCM encryption for the SID.
+// pages/api/_core/cookies.js
+// AES-256-GCM encrypted SID cookie helpers (host-only cookie by default)
 
 import crypto from 'crypto';
 
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'aa_auth';
-// Use host-only cookies by default to avoid domain mismatch across environments.
-// If you *really* need a wider scope, set COOKIE_DOMAIN in env (e.g. ".analyticsassistant.ai").
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // host-only by default
 const AES_ALGO = 'aes-256-gcm';
 
-// Derive a stable 32-byte key from APP_ENC_KEY using HKDF(SHA-256)
 function getKey() {
   const secret = process.env.APP_ENC_KEY;
   if (!secret) throw new Error('APP_ENC_KEY not set');
-  return crypto.hkdfSync('sha256', Buffer.from(secret, 'utf8'), Buffer.from('aa_salt'), Buffer.from('aa_cookie_key'), 32);
+  return crypto.hkdfSync(
+    'sha256',
+    Buffer.from(secret, 'utf8'),
+    Buffer.from('aa_salt'),
+    Buffer.from('aa_cookie_key'),
+    32
+  );
 }
 
 export function encryptSID(plainSid) {
@@ -69,13 +72,9 @@ export function serializeCookie(name, value, {
 export function setCookie(res, name, value, opts) {
   const header = serializeCookie(name, value, opts);
   const prev = res.getHeader('Set-Cookie');
-  if (!prev) {
-    res.setHeader('Set-Cookie', header);
-  } else if (Array.isArray(prev)) {
-    res.setHeader('Set-Cookie', [...prev, header]);
-  } else {
-    res.setHeader('Set-Cookie', [prev, header]);
-  }
+  if (!prev) res.setHeader('Set-Cookie', header);
+  else if (Array.isArray(prev)) res.setHeader('Set-Cookie', [...prev, header]);
+  else res.setHeader('Set-Cookie', [prev, header]);
 }
 
 export function deleteCookie(res, name = COOKIE_NAME) {
