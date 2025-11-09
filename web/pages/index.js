@@ -63,6 +63,11 @@ const CHANNEL_GROUP_OPTIONS = [
   "Paid Shopping",
 ];
 
+const connect = () => {
+  window.location.href =
+    `/api/auth/google/start?redirect=${encodeURIComponent(POST_AUTH_REDIRECT)}`;
+};
+
 /* ============================== Utilities ============================== */
 function encodeQuery(state) {
   const p = new URLSearchParams();

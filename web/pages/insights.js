@@ -22,7 +22,7 @@ export async function getServerSideProps(ctx) {
 export default function InsightsPage() {
   const isSuccess =
     typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("checkout") === "success";
+    new URLSearchParams(/api/auth/google/start.search).get("checkout") === "success";
 
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
