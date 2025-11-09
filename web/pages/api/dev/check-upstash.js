@@ -1,43 +1,66 @@
 // web/pages/api/dev/check-upstash.js
-import { readSidFromCookie } from '../../lib/server/ga4-session';
+// Verifies we can read the SID from the cookie and reach Upstash KV.
+
+import { getCookie } from "../../lib/server/cookies";
+import { readSidFromCookie } from "../../lib/server/ga4-session";
+
+export const config = { runtime: "nodejs" };
+
+function kvConfig() {
+  return {
+    url: process.env.UPSTASH_KV_REST_URL || process.env.KV_REST_API_URL || "",
+    token: process.env.UPSTASH_KV_REST_TOKEN || process.env.KV_REST_API_TOKEN || "",
+  };
+}
+
+async function kvGetRaw(key) {
+  const { url, token } = kvConfig();
+  if (!url || !token) {
+    return { ok: false, status: 500, error: "Upstash KV env vars missing", body: null };
+  }
+  const resp = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  const text = await resp.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch {}
+  return { ok: resp.ok, status: resp.status, error: resp.ok ? null : (json || text), body: json };
+}
 
 export default async function handler(req, res) {
   try {
-    const sid = await readSidFromCookie(req, res).catch(() => null);
+    const sidFromShim = readSidFromCookie(req);
+    const sidDirect = getCookie(req, "aa_sid") || getCookie(req, "aa_auth") || null;
 
-    const KV_URL = process.env.UPSTASH_KV_REST_URL || '';
-    const KV_TOKEN = process.env.UPSTASH_KV_REST_TOKEN || '';
+    const env = kvConfig();
+    const keysTried = [];
+    const kvResults = {};
 
-    async function kvFetch(path, init) {
-      const resp = await fetch(`${KV_URL}${path}`, {
-        ...(init || {}),
-        headers: { Authorization: `Bearer ${KV_TOKEN}`, ...(init?.headers || {}) },
-        cache: 'no-store',
-      });
-      const text = await resp.text();
-      let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
-      return { ok: resp.ok, status: resp.status, body: json ?? text };
+    if (sidFromShim) {
+      for (const k of [
+        `aa:access:${sidFromShim}`,
+        `aa:ga:${sidFromShim}`,
+        `ga:access:${sidFromShim}`,
+      ]) {
+        keysTried.push(k);
+        // eslint-disable-next-line no-await-in-loop
+        kvResults[k] = await kvGetRaw(k);
+        if (kvResults[k]?.body?.result) break;
+      }
     }
 
-    const key = `__aa_kv_probe_${Date.now()}`;
-    const set = await kvFetch(`/set/${encodeURIComponent(key)}?expiration_ttl=30`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: 'ok',
-    });
-    const get = await kvFetch(`/get/${encodeURIComponent(key)}`);
-    const del = await kvFetch(`/del/${encodeURIComponent(key)}`, { method: 'POST' });
-
-    return res.status(200).json({
-      sidFound: !!sid,
-      kv: {
-        configured: !!(KV_URL && KV_TOKEN),
-        set, get, del,
-      },
-      redis: { configured: false }, // if you add Upstash Redis later
-      note: 'Endpoint sets/gets/dels a 30s temp key on both backends to verify connectivity.',
+    res.status(200).json({
+      ok: true,
+      envPresent: { url: !!env.url, token: !!env.token },
+      cookie: { aa_sid: !!getCookie(req, "aa_sid"), aa_auth: !!getCookie(req, "aa_auth") },
+      sidFromShim: sidFromShim || null,
+      sidDirect: sidDirect || null,
+      keysTried,
+      kvResults,
     });
   } catch (e) {
-    return res.status(500).json({ error: 'check-upstash_failed', message: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }

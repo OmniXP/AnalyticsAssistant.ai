@@ -1,18 +1,22 @@
 // web/pages/api/dev/check-ga-cookie.js
-import { getCookie, SESSION_COOKIE_NAME, decryptSID } from '../../lib/server/cookies';
+// Dumps the aa_sid / aa_auth cookies for quick inspection.
+
+import { getCookie } from "../../lib/server/cookies";
+
+export const config = { runtime: "nodejs" };
 
 export default async function handler(req, res) {
   try {
-    const raw = getCookie(req, SESSION_COOKIE_NAME);
-    if (!raw) return res.status(200).json({ hasCookie: false });
-
-    const parsed = await decryptSID(raw).catch(() => null);
-    return res.status(200).json({
-      hasCookie: true,
-      decryptedOk: !!parsed,
-      payload: parsed ? { hasGaTokens: !!parsed.gaTokens } : null,
+    const aa_sid = getCookie(req, "aa_sid");
+    const aa_auth = getCookie(req, "aa_auth");
+    res.status(200).json({
+      ok: true,
+      cookies: {
+        aa_sid: aa_sid ? "(present)" : null,
+        aa_auth: aa_auth ? "(present - legacy)" : null,
+      },
     });
   } catch (e) {
-    return res.status(500).json({ error: 'check-ga-cookie_failed', message: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
