@@ -1,13 +1,33 @@
-import { getBearerForRequest } from '../../_core/ga4-session';
-export const config = { runtime: 'nodejs' };
+// web/pages/api/auth/google/status.js
+// Front-end uses this to show “Connected / Not connected”
+import { getIronSession } from "iron-session/edge";
 
-export default async function handler(req, res) {
+export const config = { runtime: "edge" };
+
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  },
+};
+
+export default async function handler(req) {
   try {
-    const { token } = await getBearerForRequest(req);
-    if (!token) return res.status(200).json({ connected: false });
-    res.status(200).json({ connected: true, access_token: token });
+    const resHeaders = new Headers({ "Cache-Control": "no-store" });
+    const session = await getIronSession(req, { headers: resHeaders }, sessionOptions);
+    const connected = !!session?.gaTokens?.access_token;
+    return new Response(JSON.stringify({ connected }), {
+      status: 200,
+      headers: { ...Object.fromEntries(resHeaders), "Content-Type": "application/json" },
+    });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ connected: false, error: 'status failed' });
+    return new Response(JSON.stringify({ connected: false, error: String(e?.message || e) }), {
+      status: 200,
+      headers: { "Cache-Control": "no-store", "Content-Type": "application/json" },
+    });
   }
 }
