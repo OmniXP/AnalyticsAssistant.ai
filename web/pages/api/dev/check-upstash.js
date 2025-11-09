@@ -1,66 +1,47 @@
 // web/pages/api/dev/check-upstash.js
-// Verifies we can read the SID from the cookie and reach Upstash KV.
+// Sanity checker for env, cookies, SID, and KV values for this session.
 
-import { getCookie } from "../../../lib/server/cookies";
-import { readSidFromCookie } from "../../../lib/server/ga4-session";
+import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../lib/server/ga4-session";
+import { getCookie } from "../../lib/server/cookies";
 
-export const config = { runtime: "nodejs" };
-
-function kvConfig() {
-  return {
-    url: process.env.UPSTASH_KV_REST_URL || process.env.KV_REST_API_URL || "",
-    token: process.env.UPSTASH_KV_REST_TOKEN || process.env.KV_REST_API_TOKEN || "",
-  };
-}
-
-async function kvGetRaw(key) {
-  const { url, token } = kvConfig();
-  if (!url || !token) {
-    return { ok: false, status: 500, error: "Upstash KV env vars missing", body: null };
-  }
-  const resp = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-    method: "GET",
+async function kvGet(url, token, key) {
+  const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
   });
-  const text = await resp.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch {}
-  return { ok: resp.ok, status: resp.status, error: resp.ok ? null : (json || text), body: json };
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, error: j?.error || null, body: j };
 }
 
 export default async function handler(req, res) {
-  try {
-    const sidFromShim = readSidFromCookie(req);
-    const sidDirect = getCookie(req, "aa_sid") || getCookie(req, "aa_auth") || null;
+  const url = process.env.UPSTASH_KV_REST_URL || "";
+  const token = process.env.UPSTASH_KV_REST_TOKEN || "";
 
-    const env = kvConfig();
-    const keysTried = [];
-    const kvResults = {};
+  const envPresent = { url: !!url, token: !!token };
 
-    if (sidFromShim) {
-      for (const k of [
-        `aa:access:${sidFromShim}`,
-        `aa:ga:${sidFromShim}`,
-        `ga:access:${sidFromShim}`,
-      ]) {
-        keysTried.push(k);
-        // eslint-disable-next-line no-await-in-loop
-        kvResults[k] = await kvGetRaw(k);
-        if (kvResults[k]?.body?.result) break;
-      }
+  const aa_sid = !!getCookie(req, SESSION_COOKIE_NAME);
+  const aa_auth = !!getCookie(req, "aa_auth"); // legacy, just for visibility
+
+  const sidDirect = readSidFromCookie(req);
+  const sidFromShim = sidDirect || getCookie(req, "aa_auth") || null;
+
+  const keysTried = sidFromShim
+    ? [`aa:access:${sidFromShim}`, `aa:ga:${sidFromShim}`, `ga:access:${sidFromShim}`]
+    : [];
+
+  const kvResults = {};
+  if (url && token && sidFromShim) {
+    for (const k of keysTried) {
+      kvResults[k] = await kvGet(url, token, k);
     }
-
-    res.status(200).json({
-      ok: true,
-      envPresent: { url: !!env.url, token: !!env.token },
-      cookie: { aa_sid: !!getCookie(req, "aa_sid"), aa_auth: !!getCookie(req, "aa_auth") },
-      sidFromShim: sidFromShim || null,
-      sidDirect: sidDirect || null,
-      keysTried,
-      kvResults,
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
+
+  res.status(200).json({
+    ok: true,
+    envPresent,
+    cookie: { aa_sid, aa_auth },
+    sidFromShim,
+    sidDirect,
+    keysTried,
+    kvResults,
+  });
 }
