@@ -1,7 +1,7 @@
 // web/pages/api/dev/selfcheck.js
 // Basic environment and session sanity check for GA4 + OAuth.
 
-import { getBearerForRequest } from "../../lib/server/ga4-session";
+import { getBearerForRequest } from "../../../lib/server/ga4-session";
 
 export const config = { runtime: "nodejs" };
 

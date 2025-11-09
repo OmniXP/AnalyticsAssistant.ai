@@ -1,7 +1,7 @@
 // web/pages/api/dev/check-ga-cookie.js
 // Dumps the aa_sid / aa_auth cookies for quick inspection.
 
-import { getCookie } from "../../lib/server/cookies";
+import { getCookie } from "../../../lib/server/cookies";
 
 export const config = { runtime: "nodejs" };
 

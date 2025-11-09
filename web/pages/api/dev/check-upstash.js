@@ -1,8 +1,8 @@
 // web/pages/api/dev/check-upstash.js
 // Verifies we can read the SID from the cookie and reach Upstash KV.
 
-import { getCookie } from "../../lib/server/cookies";
-import { readSidFromCookie } from "../../lib/server/ga4-session";
+import { getCookie } from "../../../lib/server/cookies";
+import { readSidFromCookie } from "../../../lib/server/ga4-session";
 
 export const config = { runtime: "nodejs" };
 
