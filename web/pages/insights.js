@@ -1,17 +1,31 @@
 // web/pages/insights.js
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "../lib/authOptions";
-import { PrismaClient } from "@prisma/client";
+/* eslint-disable @next/next/no-img-element */
 import { useEffect, useState } from "react";
+import { getServerSession } from "next-auth/next";
+import { PrismaClient } from "@prisma/client";
+import { authOptions } from "../lib/authOptions";
 
-const prisma = new PrismaClient();
+// --- Prisma (singleton to avoid hot-reload leaks locally)
+let prisma;
+if (process.env.NODE_ENV === "production") {
+  prisma = new PrismaClient();
+} else {
+  if (!global.__PRISMA__) global.__PRISMA__ = new PrismaClient();
+  prisma = global.__PRISMA__;
+}
 
 export async function getServerSideProps(ctx) {
   const session = await getServerSession(ctx.req, ctx.res, authOptions);
-  if (!session) return { redirect: { destination: "/start", permanent: false } };
+  if (!session) {
+    return { redirect: { destination: "/start", permanent: false } };
+  }
 
-  // Load user and gate by premium
-  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
+  // Gate by premium flag
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email },
+    select: { premium: true },
+  });
+
   if (!user?.premium) {
     return { redirect: { destination: "/start?upgrade=1", permanent: false } };
   }
@@ -20,24 +34,38 @@ export async function getServerSideProps(ctx) {
 }
 
 export default function InsightsPage() {
+  // Correct way to read query string on the client
   const isSuccess =
     typeof window !== "undefined" &&
-    new URLSearchParams(/api/auth/google/start.search).get("checkout") === "success";
+    new URLSearchParams(window.location.search).get("checkout") === "success";
 
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         const r = await fetch("/api/ga4/summary");
-        const j = await r.json();
-        setSummary(j);
+        const text = await r.text();
+        let j = null;
+        try {
+          j = text ? JSON.parse(text) : null;
+        } catch {}
+        if (!r.ok) {
+          throw new Error(j?.error || j?.message || text || `HTTP ${r.status}`);
+        }
+        if (mounted) setSummary(j);
       } catch (e) {
-        console.error(e);
+        if (mounted) setError(String(e?.message || e));
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   return (
@@ -56,14 +84,19 @@ export default function InsightsPage() {
         </div>
       )}
 
-      <h1 style={{ fontSize: 20, fontWeight: 600 }}>Insights</h1>
-      <p>Welcome. Your GA4 summary appears below.</p>
+      <h1 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 8px" }}>Insights</h1>
+      <p style={{ marginTop: 0 }}>Welcome. Your GA4 summary appears below.</p>
 
       {loading && <p>Loading summary…</p>}
-      {!loading && summary && (
+      {!loading && error && (
+        <p style={{ color: "#d32f2f", whiteSpace: "pre-wrap" }}>Error: {error}</p>
+      )}
+      {!loading && !error && summary && (
         <div style={{ marginTop: 12 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>Property: {summary.property}</h2>
-          <p>{summary.period}</p>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 6px" }}>
+            Property: {summary.property}
+          </h2>
+          <p style={{ marginTop: 0 }}>{summary.period}</p>
           <ul>
             <li>
               Sessions: {summary.metrics.sessions.value} (
@@ -94,12 +127,29 @@ export default function InsightsPage() {
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            const r = await fetch("/api/stripe/portal", { method: "POST" });
-            const j = await r.json();
-            if (j?.url) window.location.href = j.url;
+            try {
+              const r = await fetch("/api/stripe/portal", { method: "POST" });
+              const j = await r.json().catch(() => ({}));
+              if (r.ok && j?.url) {
+                window.location.href = j.url;
+              } else {
+                alert("Unable to open billing portal.");
+              }
+            } catch (err) {
+              alert("Unable to open billing portal.");
+            }
           }}
         >
-          <button type="submit" style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #ccc" }}>
+          <button
+            type="submit"
+            style={{
+              padding: "10px 16px",
+              borderRadius: 8,
+              border: "1px solid #ccc",
+              background: "#fff",
+              cursor: "pointer",
+            }}
+          >
             Manage billing
           </button>
         </form>
