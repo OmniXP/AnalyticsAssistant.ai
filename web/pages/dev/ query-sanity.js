@@ -1,34 +1,44 @@
-// web/pages/api/dev/query-sanity.js
+// web/pages/dev/query-sanity.js
 // Confirms the active /api/ga4/query handler accepts propertyId and normalises to `properties/{id}`.
-import * as session from "../_core/ga4-session";
-export const config = { runtime: "nodejs" };
 
-export default async function handler(req, res) {
-  res.setHeader("Cache-Control", "no-store");
-  try {
-    // 1) Check token is retrievable (don’t call Google)
-    const { token } = await session.getBearerForRequest(req);
-    const hasToken = !!token;
+export default function Page() {
+  async function probe() {
+    const inputPropertyId = document.getElementById('pid').value.trim();
+    if (!inputPropertyId) {
+      alert('Enter a property id like 123456789');
+      return;
+    }
 
-    // 2) Simulate the normaliser logic we expect live
-    const inputPropertyId = (req.body?.propertyId || "123456789").toString().trim();
-    const normalised = inputPropertyId.startsWith("properties/")
+    const normalised = inputPropertyId.startsWith('properties/')
       ? inputPropertyId
       : `properties/${inputPropertyId}`;
 
-    return res.status(200).json({
-      ok: true,
-      acceptsPropertyId: true,
-      exampleInput: inputPropertyId,
-      normalisedTo: normalised,
-      tokenPresent: hasToken,
-      note: "If tokenPresent is false here, you’ll get Not connected / query_failed on real calls.",
+    const payload = {
+      propertyId: inputPropertyId, // UI sends plain id, server should normalise
+      preset: 'channels',
+      lastDays: 7,
+      limit: 5,
+    };
+
+    const resp = await fetch('/api/ga4/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
-  } catch (e) {
-    return res.status(200).json({
-      ok: false,
-      error: String(e?.message || e),
-      hint: "If this fails, your dev server is not using the same session helper as production.",
-    });
+
+    const text = await resp.text();
+    let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
+    const out = document.getElementById('out');
+    out.textContent = JSON.stringify({ status: resp.status, body: json || text }, null, 2);
   }
+
+  return (
+    <div style={{ padding: 16 }}>
+      <h1>Query sanity</h1>
+      <p>Enter GA4 property id, click run. The API should accept plain id and normalise to properties/{{id}}.</p>
+      <input id="pid" placeholder="123456789" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+      <button onClick={probe} style={{ marginLeft: 8, padding: '8px 12px' }}>Run</button>
+      <pre id="out" style={{ marginTop: 12, background: '#f7f7f7', padding: 12, borderRadius: 6 }} />
+    </div>
+  );
 }

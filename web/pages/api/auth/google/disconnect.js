@@ -1,18 +1,26 @@
-import { deleteCookie } from '../../_core/cookies';
-import * as session from '../..//_core/ga4-session';
+// web/pages/api/auth/google/disconnect.js
+import { getSessionTokens, clearSessionTokens } from "../../../lib/server/ga4-session.js";
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: "nodejs" };
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== 'POST' && req.method !== 'GET') {
-      return res.status(405).json({ ok: false, error: 'Method not allowed' });
+    const tokens = getSessionTokens(req);
+    // Best-effort revoke
+    if (tokens?.access_token) {
+      try {
+        const params = new URLSearchParams();
+        params.set("token", tokens.access_token);
+        await fetch("https://oauth2.googleapis.com/revoke", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        });
+      } catch {}
     }
-    const sid = session.readSidFromCookie(req);
-    if (sid) await session.deleteTokenRecordBySid(sid);
-    deleteCookie(res);
+    clearSessionTokens(res);
     res.status(200).json({ ok: true });
   } catch (e) {
-    res.status(500).json({ ok: false, error: 'disconnect failed', message: e?.message || String(e) });
+    res.status(200).json({ ok: true });
   }
 }

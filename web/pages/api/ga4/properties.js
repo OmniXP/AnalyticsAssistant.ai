@@ -1,6 +1,5 @@
 // web/pages/api/ga4/properties.js
-import * as session from '../_core/ga4-session';
-
+import * as session from '../../lib/server/ga4-session';
 export const config = { runtime: 'nodejs' };
 
 export default async function handler(req, res) {
@@ -13,7 +12,6 @@ export default async function handler(req, res) {
       headers: { Authorization: 'Bearer ' + token },
       cache: 'no-store',
     });
-
     const text = await resp.text();
     let json = null; try { json = JSON.parse(text); } catch {}
 
@@ -21,14 +19,13 @@ export default async function handler(req, res) {
       return res.status(resp.status).json({ error: 'admin_error', body: json || text });
     }
 
-    // Flatten properties with their account for convenience
     const out = (json.accountSummaries || []).flatMap(acc =>
       (acc.propertySummaries || []).map(p => ({
         account: acc.account,
         accountDisplayName: acc.displayName,
         property: p.property,
         propertyDisplayName: p.displayName,
-      }))
+      })),
     );
 
     res.status(200).json({ ok: true, properties: out });

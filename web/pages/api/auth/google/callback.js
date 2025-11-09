@@ -1,45 +1,74 @@
 // web/pages/api/auth/google/callback.js
-import { getIronSession } from "iron-session";
-import { readAuthState, exchangeCodeForTokens } from "../_core/google-oauth";
+// Completes OAuth: exchanges code with PKCE, stores tokens against SID in Upstash KV.
 
-export const config = { runtime: "nodejs" };
+import {
+  readSidFromCookie,
+  loadPkceVerifier,
+  deletePkceVerifier,
+  saveTokensForSid,
+} from '../../server/ga4-session';
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
+export const config = { runtime: 'nodejs' };
 
-function isAllowedRedirect(path) {
-  if (!path || typeof path !== "string") return false;
-  if (!path.startsWith("/")) return false;      // forbid absolute external URLs
-  if (path.startsWith("/dev/")) return false;   // block legacy dev pages
-  return true;
+function fromState(s) {
+  try {
+    if (!s) return {};
+    const json = Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    return JSON.parse(json);
+  } catch {
+    return {};
+  }
 }
 
 export default async function handler(req, res) {
   try {
-    const { code, state } = req.query || {};
-    if (!code) return res.status(400).send("Missing code");
+    const { code, state: stateParam, error, error_description } = req.query || {};
+    if (error) return res.status(400).send(`OAuth error: ${error}: ${error_description || ''}`);
+    if (!code) return res.status(400).send('Missing code');
 
-    const saved = await readAuthState(String(state || ""));
-    const redirectEnv = process.env.POST_AUTH_REDIRECT || "/";
-    const desired = isAllowedRedirect(saved?.redirect) ? saved.redirect : redirectEnv;
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'https://app.analyticsassistant.ai/api/auth/google/callback';
+    if (!clientId || !clientSecret) return res.status(500).send('Google client not configured');
 
-    const tokens = await exchangeCodeForTokens(code);
+    const { redirect } = fromState(stateParam);
 
-    const sess = await getIronSession(req, res, sessionOptions);
-    sess.gaTokens = tokens;
-    await sess.save();
+    const sid = readSidFromCookie(req);
+    if (!sid) return res.status(400).send('Missing session cookie');
 
-    res.writeHead(302, { Location: desired });
+    const verifier = await loadPkceVerifier(sid);
+    if (!verifier) return res.status(400).send('PKCE verifier not found. Restart the connection.');
+
+    // Exchange code for tokens
+    const body = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      code: String(code),
+      code_verifier: verifier,
+      grant_type: 'authorization_code',
+    });
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+
+    const json = await tokenRes.json().catch(() => null);
+    if (!tokenRes.ok) {
+      return res.status(400).json({ error: 'Token exchange failed', googleResponse: json });
+    }
+
+    // Persist tokens to Upstash (by SID), drop PKCE
+    await saveTokensForSid(sid, json);
+    await deletePkceVerifier(sid);
+
+    // Send user back to the app
+    const dest = redirect || process.env.POST_AUTH_REDIRECT || '/';
+    res.writeHead(302, { Location: dest });
     res.end();
   } catch (e) {
-    res.status(500).json({ error: "OAuth callback failed", message: String(e?.message || e) });
+    res.status(500).send(`OAuth callback failed: ${String(e?.message || e)}`);
   }
 }

@@ -1,34 +1,49 @@
 // web/pages/api/dev/query-sanity.js
-// Confirms the live API sees the GA bearer token and normalises propertyId.
-// HITS: GET or POST both fine.
-import * as session from "../../_core/ga4-session";
+// Confirms the active /api/ga4/query handler accepts propertyId and normalises to `properties/{id}`.
+
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
 export const config = { runtime: "nodejs" };
 
 export default async function handler(req, res) {
-  res.setHeader("Cache-Control", "no-store");
   try {
-    const { token } = await session.getBearerForRequest(req);
-    const hasToken = !!token;
+    if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
 
-    let body = {};
-    try {
-      body = req.method === "POST" ? (typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}")) : {};
-    } catch {}
+    const body = req.body || {};
+    const inputPropertyId = String(body.propertyId || body.property || "").trim();
+    if (!inputPropertyId) return res.status(400).json({ error: "missing_property" });
 
-    const input = (body.propertyId || body.property || "123456789").toString().trim();
-    const normalised = input.startsWith("properties/") ? input : `properties/${input}`;
+    const normalised = inputPropertyId.startsWith("properties/")
+      ? inputPropertyId
+      : `properties/${inputPropertyId}`;
 
-    return res.status(200).json({
-      ok: true,
-      tokenPresent: hasToken,
-      inputProperty: input,
+    const { token } = await getBearerForRequest(req, res);
+    if (!token) return res.status(401).json({ error: "not_connected" });
+
+    // Minimal GA request for sanity check
+    const payload = {
+      dateRanges: [{ startDate: "2024-09-01", endDate: "2024-09-02" }],
+      dimensions: [{ name: "date" }],
+      metrics: [{ name: "sessions" }],
+      limit: 1,
+    };
+
+    const url = `https://analyticsdata.googleapis.com/v1beta/${encodeURIComponent(normalised)}:runReport`;
+    const ga = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await ga.text();
+    let json = null; try { json = JSON.parse(text); } catch {}
+
+    return res.status(ga.ok ? 200 : ga.status).json({
+      ok: ga.ok,
       normalisedProperty: normalised,
-      hint: hasToken
-        ? "Token present. If GA requests still fail, it’s metrics/dimensions or GA permissions."
-        : "No token in session. OAuth likely didn’t set gaTokens cookie for this domain.",
+      body: json || text,
     });
   } catch (e) {
-    return res.status(200).json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ error: "query_sanity_exception", message: e?.message || String(e) });
   }
 }

@@ -1,25 +1,18 @@
-import { getCookie, SESSION_COOKIE_NAME, decryptSID } from '../_core/cookies';
-export const config = { runtime: 'nodejs' };
+// web/pages/api/dev/check-ga-cookie.js
+import { getCookie, SESSION_COOKIE_NAME, decryptSID } from '../../lib/server/cookies';
 
 export default async function handler(req, res) {
   try {
-    const enc = getCookie(req, SESSION_COOKIE_NAME);
-    if (!enc) return res.status(200).json({ hasCookie: false });
-    const sid = decryptSID(enc);
-    res.status(200).json({
-      ok: true,
-      hasCookieHeader: !!req.headers?.cookie,
-      cookieLength: (req.headers?.cookie || '').length,
-      sidFound: true,
-      sid,
-      env: {
-        nextauth: { url: process.env.NEXTAUTH_URL, hasSecret: !!process.env.NEXTAUTH_SECRET },
-        ga: { sessionCookieName: process.env.SESSION_COOKIE_NAME, appEncKeyFingerprint: (process.env.APP_ENC_KEY||'').slice(0,8) },
-        upstash: { urlPresent: !!(process.env.UPSTASH_REDIS_REST_URL||process.env.KV_REST_API_URL), tokenPresent: !!(process.env.UPSTASH_REDIS_REST_TOKEN||process.env.KV_REST_API_TOKEN) },
-        google: { hasClientId: !!process.env.GOOGLE_CLIENT_ID, hasClientSecret: !!process.env.GOOGLE_CLIENT_SECRET, redirect: process.env.GA_OAUTH_REDIRECT }
-      }
+    const raw = getCookie(req, SESSION_COOKIE_NAME);
+    if (!raw) return res.status(200).json({ hasCookie: false });
+
+    const parsed = await decryptSID(raw).catch(() => null);
+    return res.status(200).json({
+      hasCookie: true,
+      decryptedOk: !!parsed,
+      payload: parsed ? { hasGaTokens: !!parsed.gaTokens } : null,
     });
   } catch (e) {
-    res.status(200).json({ ok: false, error: 'decrypt failed' });
+    return res.status(500).json({ error: 'check-ga-cookie_failed', message: String(e?.message || e) });
   }
 }

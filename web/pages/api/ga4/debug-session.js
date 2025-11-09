@@ -1,34 +1,15 @@
 // web/pages/api/ga4/debug-session.js
-// Verifies cookie → Upstash → token; pulls metadata counts so we know GA access is valid.
-
-import * as session from '../_core/ga4-session';
-export const config = { runtime: 'nodejs' };
+import * as session from '../../lib/server/ga4-session';
 
 export default async function handler(req, res) {
   try {
-    const { sid, token } = await session.getBearerForRequest(req);
-    const connected = Boolean(token);
-
-    // Optionally check metadata if property provided
-    let meta = null;
-    const { property, propertyId } = req.query || {};
-    const chosenProperty = property || (propertyId ? `properties/${propertyId}` : null);
-    if (connected && chosenProperty) {
-      const url = `https://analyticsdata.googleapis.com/v1beta/${encodeURIComponent(chosenProperty)}/metadata`;
-      const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' });
-      const text = await resp.text();
-      let json = null; try { json = JSON.parse(text); } catch {}
-      meta = { ok: resp.ok, status: resp.status, body: json || text };
-    }
-
-    res.status(200).json({
-      ok: true,
-      connected,
-      sidPresent: Boolean(sid),
-      note: 'If connected is false, check /api/auth/google/start → consent → back here.',
-      metadata: meta,
+    const { token, sid } = await session.getBearerForRequest(req);
+    return res.status(200).json({
+      hasToken: !!token,
+      sidPresent: !!sid,
+      tokenStartsWith: token ? String(token).slice(0, 8) : null,
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
+    return res.status(500).json({ error: 'debug-session_failed', message: String(e?.message || e) });
   }
 }
