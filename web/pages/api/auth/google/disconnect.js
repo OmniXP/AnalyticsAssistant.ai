@@ -1,26 +1,27 @@
 // web/pages/api/auth/google/disconnect.js
-import { getSessionTokens, clearSessionTokens } from "../../../lib/server/ga4-session.js";
+// Clears GA4 auth/session cookies to "disconnect" the user.
+
+import { clearCookie } from "../../../../lib/server/cookies";
 
 export const config = { runtime: "nodejs" };
 
+// Keep names in sync with your session implementation
+const SID_COOKIE = "aa_sid";
+const LEGACY_COOKIE = "aa_auth";
+
 export default async function handler(req, res) {
   try {
-    const tokens = getSessionTokens(req);
-    // Best-effort revoke
-    if (tokens?.access_token) {
-      try {
-        const params = new URLSearchParams();
-        params.set("token", tokens.access_token);
-        await fetch("https://oauth2.googleapis.com/revoke", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: params.toString(),
-        });
-      } catch {}
+    if (req.method !== "POST" && req.method !== "GET") {
+      return res.status(405).json({ error: "method_not_allowed" });
     }
-    clearSessionTokens(res);
-    res.status(200).json({ ok: true });
+
+    // Clear both the current SID cookie and the legacy aa_auth if present
+    clearCookie(res, SID_COOKIE);
+    clearCookie(res, LEGACY_COOKIE);
+
+    // Optionally, you can also return a redirect URL to your app home
+    return res.status(200).json({ ok: true, disconnected: true });
   } catch (e) {
-    res.status(200).json({ ok: true });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
