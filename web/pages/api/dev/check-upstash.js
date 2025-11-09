@@ -1,10 +1,13 @@
 // web/pages/api/dev/check-upstash.js
-// Sanity checker for env, cookies, SID, and KV values for this session.
+// Verifies Upstash env and whether any token blobs exist for current SID.
 
-import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../lib/server/ga4-session";
-import { getCookie } from "../../lib/server/cookies";
+import { getCookie } from "../../../lib/server/cookies";
+import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session";
 
-async function kvGet(url, token, key) {
+async function kvGet(key) {
+  const url = process.env.UPSTASH_KV_REST_URL;
+  const token = process.env.UPSTASH_KV_REST_TOKEN;
+  if (!url || !token) return { ok: false, error: "Upstash KV not configured" };
   const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -13,35 +16,35 @@ async function kvGet(url, token, key) {
 }
 
 export default async function handler(req, res) {
-  const url = process.env.UPSTASH_KV_REST_URL || "";
-  const token = process.env.UPSTASH_KV_REST_TOKEN || "";
+  const envPresent = {
+    url: !!process.env.UPSTASH_KV_REST_URL,
+    token: !!process.env.UPSTASH_KV_REST_TOKEN,
+  };
 
-  const envPresent = { url: !!url, token: !!token };
+  const sidFromCookie = readSidFromCookie(req);
+  const aa_sid_cookie = getCookie(req, SESSION_COOKIE_NAME);
+  const legacy = getCookie(req, "aa_auth");
 
-  const aa_sid = !!getCookie(req, SESSION_COOKIE_NAME);
-  const aa_auth = !!getCookie(req, "aa_auth"); // legacy, just for visibility
-
-  const sidDirect = readSidFromCookie(req);
-  const sidFromShim = sidDirect || getCookie(req, "aa_auth") || null;
-
-  const keysTried = sidFromShim
-    ? [`aa:access:${sidFromShim}`, `aa:ga:${sidFromShim}`, `ga:access:${sidFromShim}`]
+  const keys = sidFromCookie
+    ? [
+        `aa:access:${sidFromCookie}`,
+        `aa:ga:${sidFromCookie}`,
+        `ga:access:${sidFromCookie}`, // legacy probe
+      ]
     : [];
 
-  const kvResults = {};
-  if (url && token && sidFromShim) {
-    for (const k of keysTried) {
-      kvResults[k] = await kvGet(url, token, k);
-    }
+  const results = {};
+  for (const k of keys) {
+    // eslint-disable-next-line no-await-in-loop
+    results[k] = await kvGet(k);
   }
 
   res.status(200).json({
     ok: true,
     envPresent,
-    cookie: { aa_sid, aa_auth },
-    sidFromShim,
-    sidDirect,
-    keysTried,
-    kvResults,
+    cookie: { aa_sid: !!aa_sid_cookie, aa_auth: !!legacy },
+    sid: sidFromCookie || null,
+    keysTried: keys,
+    kvResults: results,
   });
 }

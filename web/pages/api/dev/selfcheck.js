@@ -1,41 +1,32 @@
 // web/pages/api/dev/selfcheck.js
-// Basic environment and session sanity check for GA4 + OAuth.
+// Lightweight environment & session self-check.
 
-import { getBearerForRequest } from "../../../lib/server/ga4-session";
-
-export const config = { runtime: "nodejs" };
+import { getCookie } from "../../../lib/server/cookies";
+import { getBearerForRequest, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session";
 
 export default async function handler(req, res) {
   try {
-    const googleEnv = {
-      clientId: !!process.env.GOOGLE_CLIENT_ID,
-      clientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
-      redirectUri: process.env.GOOGLE_REDIRECT_URI || null,
-      scopes: (process.env.GOOGLE_SCOPES || "").split(/\s+/).filter(Boolean),
+    const env = {
+      baseUrl: process.env.NEXT_PUBLIC_BASE_URL || null,
+      upstashUrl: !!process.env.UPSTASH_KV_REST_URL,
+      upstashToken: !!process.env.UPSTASH_KV_REST_TOKEN,
+      googleClientId: !!process.env.GOOGLE_CLIENT_ID,
+      googleClientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
+      postAuthRedirect: process.env.POST_AUTH_REDIRECT || "/",
     };
 
-    const upstashEnv = {
-      url: !!(process.env.UPSTASH_KV_REST_URL || process.env.KV_REST_API_URL),
-      token: !!(process.env.UPSTASH_KV_REST_TOKEN || process.env.KV_REST_API_TOKEN),
-    };
-
-    const postAuthRedirect = process.env.POST_AUTH_REDIRECT || "/";
-    const sidCookiePresent =
-      (req.headers?.cookie || "").includes("aa_sid=") ||
-      (req.headers?.cookie || "").includes("aa_auth=");
-
-    const bearer = await getBearerForRequest(req);
+    const sidCookie = getCookie(req, SESSION_COOKIE_NAME);
+    const legacyAuth = getCookie(req, "aa_auth");
+    const bearer = await getBearerForRequest(req).catch(() => null);
 
     res.status(200).json({
       ok: true,
-      time: new Date().toISOString(),
-      env: { google: googleEnv, upstash: upstashEnv, postAuthRedirect },
-      cookiePresent: sidCookiePresent,
-      bearer: {
-        hasToken: !!bearer?.token,
-        sid: bearer?.sid || null,
-        reason: bearer?.reason || null,
+      env,
+      cookies: {
+        [SESSION_COOKIE_NAME]: !!sidCookie,
+        aa_auth: !!legacyAuth,
       },
+      hasBearer: !!bearer,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });

@@ -1,41 +1,19 @@
 // web/pages/api/ga4/properties.js
-// Lists GA4 properties via Analytics Admin (flattened with account names).
+// Lists GA4 properties visible to the authorised user.
 
-import * as session from "../../../lib/server/ga4-session";
-export const config = { runtime: "nodejs" };
+import { getBearerForRequest } from "../../../lib/server/ga4-session";
 
 export default async function handler(req, res) {
   try {
-    const { token } = await session.getBearerForRequest(req);
-    if (!token) return res.status(401).json({ error: "Not connected" });
+    const bearer = await getBearerForRequest(req);
+    if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
 
-    const url = "https://analyticsadmin.googleapis.com/v1alpha/accountSummaries";
-    const resp = await fetch(url, {
-      headers: { Authorization: "Bearer " + token },
-      cache: "no-store",
+    const r = await fetch("https://analyticsadmin.googleapis.com/v1beta/properties?pageSize=50", {
+      headers: { Authorization: `Bearer ${bearer}` },
     });
-
-    const text = await resp.text();
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
-
-    if (!resp.ok) {
-      return res.status(resp.status).json({ error: "admin_error", body: json || text });
-    }
-
-    const out = (json.accountSummaries || []).flatMap((acc) =>
-      (acc.propertySummaries || []).map((p) => ({
-        account: acc.account,
-        accountDisplayName: acc.displayName,
-        property: p.property,               // e.g. "properties/123456789"
-        propertyDisplayName: p.displayName, // human name
-      }))
-    );
-
-    res.status(200).json({ ok: true, properties: out });
+    const j = await r.json().catch(() => ({}));
+    res.status(r.ok ? 200 : 500).json(j);
   } catch (e) {
-    res
-      .status(500)
-      .json({ error: "properties_exception", message: e?.message || String(e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }

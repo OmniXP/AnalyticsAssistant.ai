@@ -1,22 +1,24 @@
 // web/pages/api/dev/check-ga-cookie.js
-// Dumps the aa_sid / aa_auth cookies for quick inspection.
+// Quick read of cookies to confirm SID and legacy aa_auth visibility.
 
 import { getCookie } from "../../../lib/server/cookies";
+import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session";
 
-export const config = { runtime: "nodejs" };
+export default function handler(req, res) {
+  const aa_sid_cookie = getCookie(req, SESSION_COOKIE_NAME);
+  const aa_auth_cookie = getCookie(req, "aa_auth"); // legacy
+  const sid = readSidFromCookie(req);
 
-export default async function handler(req, res) {
-  try {
-    const aa_sid = getCookie(req, "aa_sid");
-    const aa_auth = getCookie(req, "aa_auth");
-    res.status(200).json({
-      ok: true,
-      cookies: {
-        aa_sid: aa_sid ? "(present)" : null,
-        aa_auth: aa_auth ? "(present - legacy)" : null,
-      },
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
+  res.status(200).json({
+    ok: true,
+    cookies: {
+      [SESSION_COOKIE_NAME]: !!aa_sid_cookie,
+      aa_auth: !!aa_auth_cookie,
+    },
+    sidDerived: sid || null,
+    raw: {
+      [SESSION_COOKIE_NAME]: aa_sid_cookie || null,
+      aa_auth: aa_auth_cookie || null,
+    },
+  });
 }

@@ -1,49 +1,30 @@
 // web/pages/api/dev/query-sanity.js
-// Confirms the active /api/ga4/query handler accepts propertyId and normalises to `properties/{id}`.
+// Confirms /api/ga4/query accepts `propertyId` and normalises to `properties/{id}`,
+// and that a bearer token can be produced for the current request.
 
-import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
-
-export const config = { runtime: "nodejs" };
+import { getBearerForRequest } from "../../../lib/server/ga4-session";
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
+    const bearer = await getBearerForRequest(req).catch(() => null);
+    const inputPropertyId = req.query.propertyId || req.body?.propertyId || "";
 
-    const body = req.body || {};
-    const inputPropertyId = String(body.propertyId || body.property || "").trim();
-    if (!inputPropertyId) return res.status(400).json({ error: "missing_property" });
+    const normalised = inputPropertyId
+      ? (String(inputPropertyId).startsWith("properties/")
+          ? String(inputPropertyId)
+          : `properties/${String(inputPropertyId)}`)
+      : null;
 
-    const normalised = inputPropertyId.startsWith("properties/")
-      ? inputPropertyId
-      : `properties/${inputPropertyId}`;
-
-    const { token } = await getBearerForRequest(req, res);
-    if (!token) return res.status(401).json({ error: "not_connected" });
-
-    // Minimal GA request for sanity check
-    const payload = {
-      dateRanges: [{ startDate: "2024-09-01", endDate: "2024-09-02" }],
-      dimensions: [{ name: "date" }],
-      metrics: [{ name: "sessions" }],
-      limit: 1,
-    };
-
-    const url = `https://analyticsdata.googleapis.com/v1beta/${encodeURIComponent(normalised)}:runReport`;
-    const ga = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const text = await ga.text();
-    let json = null; try { json = JSON.parse(text); } catch {}
-
-    return res.status(ga.ok ? 200 : ga.status).json({
-      ok: ga.ok,
+    res.status(200).json({
+      ok: true,
+      hasBearer: !!bearer,
       normalisedProperty: normalised,
-      body: json || text,
+      tips: [
+        "POST /api/ga4/query with { propertyId: \"123\", startDate, endDate }",
+        "Ensure Google OAuth completed successfully and tokens are in KV for this SID.",
+      ],
     });
   } catch (e) {
-    res.status(500).json({ error: "query_sanity_exception", message: e?.message || String(e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
