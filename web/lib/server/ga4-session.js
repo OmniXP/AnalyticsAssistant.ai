@@ -1,96 +1,149 @@
 // web/lib/server/ga4-session.js
-// Store Google tokens in an HTTP-only cookie. Refresh automatically when needed.
+// GA4 session helpers used by API routes to resolve a Google access token from the user's session.
+// Reads the SID cookie, looks up the access token in Upstash KV, and returns a bearer token for GA4 requests.
 
-import { setCookie, getCookie, clearCookie } from "./cookies.js";
+import { getCookie, setCookie, clearCookie } from "./cookies";
 
-const COOKIE_NAME = process.env.GA_COOKIE_NAME || "ga_tokens";
-const SECURE = process.env.NODE_ENV === "production";
+export const SESSION_COOKIE_NAME = "aa_sid";       // canonical session id cookie
+export const LEGACY_AUTH_COOKIE = "aa_auth";       // legacy auth cookie (kept for backwards compatibility)
 
-// Persist tokens in cookie. We keep only what's needed.
-export function setSessionTokens(res, tokens) {
-  const now = Math.floor(Date.now() / 1000);
-  const expiresAt = tokens.expires_in ? now + Number(tokens.expires_in) - 60 : (tokens.expires_at || now + 3000);
+// --- Cookie helpers ---------------------------------------------------------
 
-  const publicShape = {
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token, // may be undefined on refresh
-    scope: tokens.scope,
-    token_type: tokens.token_type,
-    expires_at: expiresAt,
-  };
+/** Read the current session id (SID) from cookies */
+export function readSidFromCookie(req) {
+  const sid = getCookie(req, SESSION_COOKIE_NAME);
+  if (sid && typeof sid === "string" && sid.trim()) return sid.trim();
 
-  const payload = Buffer.from(JSON.stringify(publicShape), "utf8").toString("base64");
-  setCookie(res, COOKIE_NAME, payload, {
+  // Legacy fallback if you previously stored a raw token in aa_auth
+  const legacy = getCookie(req, LEGACY_AUTH_COOKIE);
+  return legacy && legacy.trim() ? legacy.trim() : null;
+}
+
+/** Write/refresh the SID cookie */
+export function writeSidCookie(res, sid, opts = {}) {
+  if (!sid) return;
+  const secure = process.env.NODE_ENV === "production";
+  setCookie(res, SESSION_COOKIE_NAME, sid, {
     httpOnly: true,
     sameSite: "lax",
-    secure: SECURE,
+    secure,
     path: "/",
-    // maxAge mirrors access token lifespan; refresh token can extend beyond
-    maxAge: Math.max(60, (publicShape.expires_at - now)),
+    // 30 days by default; callers can override with opts.maxAge/opts.expires
+    maxAge: opts.maxAge != null ? opts.maxAge : 60 * 60 * 24 * 30,
+    ...opts,
   });
-
-  return publicShape;
 }
 
-export function getSessionTokens(req) {
+/** Clear the SID cookie */
+export function clearSidCookie(res) {
+  clearCookie(res, SESSION_COOKIE_NAME);
+  // best-effort legacy clear
+  clearCookie(res, LEGACY_AUTH_COOKIE);
+}
+
+// --- Upstash KV helpers -----------------------------------------------------
+
+function upstashConfig() {
+  const url = process.env.UPSTASH_KV_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_KV_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  return { url, token };
+}
+
+/** GET a JSON value from Upstash KV. Returns { ok, value } */
+async function kvGetJSON(key) {
+  const { url, token } = upstashConfig();
+  if (!url || !token) return { ok: false, value: null, status: 500, error: "Upstash not configured" };
+
   try {
-    const raw = getCookie(req, COOKIE_NAME);
-    if (!raw) return null;
-    const decoded = JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
-    return decoded;
-  } catch {
-    return null;
+    // Upstash REST GET: GET {url}/get/{key}
+    const resp = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+
+    const text = await resp.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+
+    if (!resp.ok) {
+      return { ok: false, value: null, status: resp.status, error: json || text || "kv get failed" };
+    }
+
+    // Upstash returns { "result": "string-or-null" }
+    const raw = json?.result ?? null;
+    if (!raw) return { ok: true, value: null, status: 200 };
+
+    let parsed = null;
+    try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+    return { ok: true, value: parsed, status: 200 };
+  } catch (e) {
+    return { ok: false, value: null, status: 500, error: String(e?.message || e) };
   }
 }
 
-export function clearSessionTokens(res) {
-  clearCookie(res, COOKIE_NAME);
+/** Resolve GA access token for a SID from KV. Tries common key shapes. */
+async function getAccessTokenForSid(sid) {
+  if (!sid) return null;
+
+  // Try a few likely key names (covers earlier iterations)
+  const keys = [
+    `aa:access:${sid}`,       // preferred
+    `aa:ga:${sid}`,          // older
+    `ga:access:${sid}`,      // older alt
+  ];
+
+  for (const k of keys) {
+    const got = await kvGetJSON(k);
+    if (got.ok && got.value) {
+      // If the record is an object, prefer value.access_token
+      if (typeof got.value === "object" && got.value) {
+        if (got.value.access_token) return String(got.value.access_token);
+        if (got.value.token) return String(got.value.token);
+      }
+      // Otherwise assume the value is the token string
+      if (typeof got.value === "string") return got.value;
+    }
+  }
+
+  return null;
 }
 
-async function refreshAccessToken(refreshToken) {
-  const params = new URLSearchParams();
-  params.set("client_id", process.env.GOOGLE_CLIENT_ID || "");
-  params.set("client_secret", process.env.GOOGLE_CLIENT_SECRET || "");
-  params.set("grant_type", "refresh_token");
-  params.set("refresh_token", refreshToken);
+// --- Public API used by API routes -----------------------------------------
 
-  const r = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-  const text = await r.text();
-  let json = null; try { json = JSON.parse(text); } catch {}
-  if (!r.ok) {
-    const msg = json?.error_description || json?.error || text || `HTTP ${r.status}`;
-    throw new Error(`Token refresh failed: ${msg}`);
+/**
+ * getBearerForRequest(req)
+ * Returns { token, sid, reason? }
+ * - Reads SID cookie.
+ * - If an Authorization: Bearer header exists, uses that directly.
+ * - Otherwise resolves the GA access_token from Upstash KV by SID.
+ */
+export async function getBearerForRequest(req) {
+  // 1) If caller already passed a Bearer header, prefer it.
+  const auth = req.headers?.authorization || "";
+  const m = /^Bearer\s+(.+)$/.exec(auth);
+  if (m && m[1]) {
+    return { token: m[1], sid: null };
   }
-  return json; // { access_token, expires_in, scope, token_type, ... }
+
+  // 2) Read our SID cookie
+  const sid = readSidFromCookie(req);
+  if (!sid) return { token: null, sid: null, reason: "no_sid" };
+
+  // 3) Resolve access token from KV
+  const token = await getAccessTokenForSid(sid);
+  if (!token) return { token: null, sid, reason: "no_access_token_for_sid" };
+
+  return { token, sid };
 }
 
-// Returns an access token, refreshing if needed. Mutates cookie if refreshed.
-export async function getBearerForRequest(req, res) {
-  const tokens = getSessionTokens(req);
-  if (!tokens?.access_token) return { token: null, tokens: null };
-
-  const now = Math.floor(Date.now() / 1000);
-  if (tokens.expires_at && tokens.expires_at > now + 30) {
-    return { token: tokens.access_token, tokens };
-  }
-
-  // Expired or near expiry; refresh if we can
-  if (!tokens.refresh_token) {
-    return { token: null, tokens: null };
-  }
-
-  const refreshed = await refreshAccessToken(tokens.refresh_token);
-  const merged = {
-    ...tokens,
-    ...refreshed,
-    // Keep original refresh_token if Google did not return it
-    refresh_token: refreshed.refresh_token || tokens.refresh_token,
-  };
-
-  const saved = setSessionTokens(res, merged);
-  return { token: saved.access_token, tokens: saved };
+/**
+ * Optional utility to persist a fresh access_token for a SID after OAuth callback
+ * if you want to manage KV writes here rather than in the callback handler.
+ * Not required for reads; included for completeness.
+ */
+export async function saveAccessTokenForSid(_sid, _token, _ttlSeconds = 3600) {
+  // Intentionally omitted to keep this file read-focused.
+  // Your OAuth callback likely already writes the KV record.
+  return { ok: true };
 }

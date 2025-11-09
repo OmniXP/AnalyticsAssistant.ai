@@ -56,3 +56,6 @@ export function clearCookie(res, name, options = {}) {
     ...options,
   });
 }
+
+// Optional named export if you need to build custom cookies elsewhere.
+export { serializeCookie };
