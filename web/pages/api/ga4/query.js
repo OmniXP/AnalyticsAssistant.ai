@@ -1,5 +1,7 @@
 // web/pages/api/ga4/query.js
+// Hardened: accepts propertyId OR property, consistent presets, detailed GA errors.
 import * as session from "../_core/ga4-session";
+
 export const config = { runtime: "nodejs" };
 
 const GA = "https://analyticsdata.googleapis.com/v1beta";
@@ -7,36 +9,16 @@ const GA = "https://analyticsdata.googleapis.com/v1beta";
 function toISO(d) { return d.toISOString().slice(0, 10); }
 function daysAgo(n) { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return toISO(d); }
 
-// Build an AND filter for optional Country + Channel Group
-function buildDimensionFilter(filters) {
-  const exprs = [];
-  const isAll = (v) => !v || String(v).trim().toLowerCase() === "all";
-
-  if (filters?.country && !isAll(filters.country)) {
-    exprs.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { value: String(filters.country), matchType: "EXACT" },
-      },
-    });
-  }
-  if (filters?.channelGroup && !isAll(filters.channelGroup)) {
-    exprs.push({
-      filter: {
-        fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { value: String(filters.channelGroup), matchType: "EXACT" },
-      },
-    });
-  }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
+function normaliseProperty(p) {
+  if (!p) return null;
+  const s = String(p).trim();
+  if (!s) return null;
+  return s.startsWith("properties/") ? s : `properties/${s}`;
 }
 
-// Presets used by the dashboard
-function buildPreset({ preset, startDate, endDate, limit, filters }) {
+function buildPreset({ preset, startDate, endDate, limit }) {
   const dateRanges = [{ startDate, endDate }];
-  const keepLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100000, limit)) : undefined;
-  const dimensionFilter = buildDimensionFilter(filters);
+  const lim = Number.isFinite(limit) ? Math.max(1, Math.min(100000, limit)) : undefined;
 
   switch (preset) {
     case "channels":
@@ -50,8 +32,7 @@ function buildPreset({ preset, startDate, endDate, limit, filters }) {
           { name: "purchaseRevenue" },
         ],
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-        limit: keepLimit || 50,
+        limit: lim || 50,
       };
 
     case "sourceMedium":
@@ -60,8 +41,7 @@ function buildPreset({ preset, startDate, endDate, limit, filters }) {
         dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
         metrics: [{ name: "sessions" }, { name: "totalUsers" }],
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-        limit: keepLimit || 50,
+        limit: lim || 50,
       };
 
     case "topPages":
@@ -70,52 +50,42 @@ function buildPreset({ preset, startDate, endDate, limit, filters }) {
         dimensions: [{ name: "pageTitle" }, { name: "pagePath" }],
         metrics: [{ name: "screenPageViews" }, { name: "totalUsers" }],
         orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-        limit: keepLimit || 50,
+        limit: lim || 50,
       };
 
+    case "ecomKpis":
     case "ecomSummary":
       return {
         dateRanges,
-        // No dimensions for totals
+        // No dimensions to avoid item-level metric incompatibilities
+        dimensions: [],
         metrics: [
           { name: "sessions" },
           { name: "totalUsers" },
-          { name: "conversions" },
           { name: "purchases" },
           { name: "purchaseRevenue" },
-          { name: "engagementRate" },
-          { name: "averageSessionDuration" },
-          { name: "bounceRate" },
+          { name: "averagePurchaseRevenue" },
+          { name: "purchaserConversionRate" },
         ],
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-        limit: keepLimit || 1,
+        limit: lim || 1,
       };
 
     case "timeseries":
       return {
         dateRanges,
         dimensions: [{ name: "date" }],
-        metrics: [
-          { name: "sessions" },
-          { name: "totalUsers" },
-          { name: "conversions" },
-          { name: "purchaseRevenue" },
-        ],
+        metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "conversions" }, { name: "purchaseRevenue" }],
         orderBys: [{ dimension: { dimensionName: "date" }, desc: false }],
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-        limit: keepLimit || 1000,
+        limit: lim || 1000,
       };
 
     default:
-      // Safe default: channel summary
       return {
         dateRanges,
         dimensions: [{ name: "sessionDefaultChannelGroup" }],
         metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "conversions" }],
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-        limit: keepLimit || 25,
+        limit: lim || 25,
       };
   }
 }
@@ -126,90 +96,80 @@ function normaliseDates({ startDate, endDate, lastDays }) {
   return { startDate: daysAgo(days), endDate: daysAgo(0) };
 }
 
-function normaliseProperty({ property, propertyId }) {
-  // Accept either; prefer property if provided
-  let p = property || propertyId;
-  if (!p) return null;
-  p = String(p).trim();
-  if (p.startsWith("properties/")) return p;
-  // If only numeric id was provided, wrap it
-  return `properties/${p}`;
-}
-
-async function runReport({ token, propertyPath, body }) {
-  const url = `${GA}/${encodeURIComponent(propertyPath)}:runReport`;
+async function runReport({ token, property, body }) {
+  const url = `${GA}/${encodeURIComponent(property)}:runReport`;
   const resp = await fetch(url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
   });
 
   const text = await resp.text();
   let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
+
   if (!resp.ok) {
-    return { ok: false, status: resp.status, body: json || text };
+    return {
+      ok: false,
+      status: resp.status,
+      gaError: json?.error || json || text || `HTTP ${resp.status}`,
+      gaBody: json,
+    };
   }
   return { ok: true, status: resp.status, body: json };
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "method_not_allowed" });
-  }
-
+  res.setHeader("Cache-Control", "no-store");
   try {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "method_not_allowed" });
+    }
+
     const { token } = await session.getBearerForRequest(req);
     if (!token) return res.status(401).json({ error: "Not connected" });
 
     const {
-      property,          // optional: 'properties/123'
-      propertyId,        // optional: '123' (preferred by UI)
+      propertyId,              // "123"
+      property,                // "properties/123"
       preset = "channels",
-      startDate,
-      endDate,
+      startDate, endDate,
       lastDays,
       limit,
-      filters,           // optional: { country, channelGroup }
-    } = req.body || {};
+      filters,                 // passthrough; your downstream panels handle it
+    } = (typeof req.body === "object" ? req.body : {}) || {};
 
-    const propertyPath = normaliseProperty({ property, propertyId });
-    if (!propertyPath) {
+    const chosenProperty = normaliseProperty(property || propertyId);
+    if (!chosenProperty) {
       return res.status(400).json({ error: "No GA4 property selected or provided" });
     }
 
     const dates = normaliseDates({ startDate, endDate, lastDays });
-    const body = buildPreset({
-      preset,
-      startDate: dates.startDate,
-      endDate: dates.endDate,
-      limit,
-      filters,
-    });
+    const body = buildPreset({ preset, startDate: dates.startDate, endDate: dates.endDate, limit });
 
-    const out = await runReport({ token, propertyPath, body });
+    const out = await runReport({ token, property: chosenProperty, body });
     if (!out.ok) {
-      // Surface GA error back up so the UI shows something actionable
-      const gaMsg =
-        out.body?.error?.message ||
-        (typeof out.body === "string" ? out.body : "") ||
-        `HTTP ${out.status}`;
-      return res
-        .status(out.status)
-        .json({ error: "query_failed", message: gaMsg, request: { propertyPath, preset } });
+      return res.status(out.status).json({
+        error: "query_failed",
+        preset,
+        property: chosenProperty,
+        requestBody: body,
+        details: out.gaError,     // <- expose GA’s real message
+      });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       ok: true,
       preset,
-      property: propertyPath,
+      property: chosenProperty,
       dateRange: { startDate: dates.startDate, endDate: dates.endDate },
       dimensionHeaders: out.body.dimensionHeaders || [],
       metricHeaders: out.body.metricHeaders || [],
       rows: out.body.rows || [],
       total: out.body.rowCount ?? (out.body.rows ? out.body.rows.length : 0),
+      filters: filters || null,
     });
   } catch (e) {
-    res.status(500).json({ error: "query_exception", message: e?.message || String(e) });
+    return res.status(500).json({ error: "query_exception", message: e?.message || String(e) });
   }
 }

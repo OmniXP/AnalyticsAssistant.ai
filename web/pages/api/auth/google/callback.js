@@ -1,100 +1,45 @@
 // web/pages/api/auth/google/callback.js
-import { setCookie, SESSION_COOKIE_NAME } from '../../_core/cookies';
-import * as session from '../../_core/ga4-session';
+import { getIronSession } from "iron-session";
+import { readAuthState, exchangeCodeForTokens } from "../_core/google-oauth";
 
-export const config = { runtime: 'nodejs' };
-function nowSec(){ return Math.floor(Date.now()/1000); }
+export const config = { runtime: "nodejs" };
 
-function htmlError(title, obj) {
-  const pretty = `<pre style="white-space:pre-wrap;background:#111;color:#f5f5f5;padding:12px;border-radius:8px">${JSON.stringify(obj, null, 2)}</pre>`;
-  return `<!doctype html><meta charset="utf-8"><title>${title}</title>
-  <div style="font-family:system-ui;max-width:900px;margin:40px auto">
-    <h1>${title}</h1>${pretty}
-  </div>`;
-}
+const sessionOptions = {
+  password: process.env.SESSION_PASSWORD,
+  cookieName: "insightgpt",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  },
+};
 
-function extractRedirectFromState(state) {
-  // state format: "<nonce>|<urlEncodedRedirectPath>"
-  if (!state || typeof state !== 'string') return null;
-  const idx = state.indexOf('|');
-  if (idx < 0) return null;
-  const encoded = state.slice(idx + 1);
-  try {
-    const path = decodeURIComponent(encoded);
-    if (path && path.startsWith('/') && !path.startsWith('//') && path.length <= 200) return path;
-  } catch {}
-  return null;
+function isAllowedRedirect(path) {
+  if (!path || typeof path !== "string") return false;
+  if (!path.startsWith("/")) return false;      // forbid absolute external URLs
+  if (path.startsWith("/dev/")) return false;   // block legacy dev pages
+  return true;
 }
 
 export default async function handler(req, res) {
   try {
-    const { code, state, error } = req.query;
-    if (error) { res.status(400).send(htmlError('OAuth error from Google', { error })); return; }
-    if (!code || !state) { res.status(400).send(htmlError('Missing code or state', { code: !!code, state: !!state })); return; }
+    const { code, state } = req.query || {};
+    if (!code) return res.status(400).send("Missing code");
 
-    const sid = session.readSidFromCookie(req);
-    if (!sid) { res.status(400).send(htmlError('Missing or invalid SID cookie', {})); return; }
+    const saved = await readAuthState(String(state || ""));
+    const redirectEnv = process.env.POST_AUTH_REDIRECT || "/";
+    const desired = isAllowedRedirect(saved?.redirect) ? saved.redirect : redirectEnv;
 
-    // Verify exact state and delete
-    const okState = await session.verifyAndDeleteState(sid, state);
-    if (!okState) { res.status(400).send(htmlError('Invalid state (CSRF/flow restart)', { state })); return; }
+    const tokens = await exchangeCodeForTokens(code);
 
-    // Pull redirect from state, fallback to env or '/'
-    const desiredRedirect = extractRedirectFromState(state) || process.env.POST_AUTH_REDIRECT || '/';
+    const sess = await getIronSession(req, res, sessionOptions);
+    sess.gaTokens = tokens;
+    await sess.save();
 
-    const code_verifier = await session.popPkceVerifier(sid);
-    if (!code_verifier) { res.status(400).send(htmlError('Missing PKCE verifier (expired or storage issue)', {})); return; }
-
-    const params = new URLSearchParams();
-    params.set('client_id', process.env.GOOGLE_CLIENT_ID || '');
-    params.set('client_secret', process.env.GOOGLE_CLIENT_SECRET || '');
-    params.set('code', String(code));
-    params.set('code_verifier', code_verifier);
-    params.set('grant_type', 'authorization_code');
-    params.set('redirect_uri', process.env.GA_OAUTH_REDIRECT || '');
-
-    const resp = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-      cache: 'no-store',
-    });
-
-    const text = await resp.text();
-    let json = null; try { json = JSON.parse(text); } catch {}
-    if (!resp.ok) {
-      res.status(400).send(htmlError('Token exchange failed', {
-        status: resp.status,
-        googleResponse: json || text,
-        env: {
-          hasClientId: !!process.env.GOOGLE_CLIENT_ID,
-          hasClientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
-          redirect: process.env.GA_OAUTH_REDIRECT || null,
-        }
-      }));
-      return;
-    }
-
-    const record = {
-      access_token: json.access_token,
-      refresh_token: json.refresh_token,
-      expiry: nowSec() + (json.expires_in || 3600),
-      created_at: nowSec(),
-    };
-    if (!record.access_token || !record.refresh_token) {
-      res.status(400).send(htmlError('Missing tokens from Google', { json }));
-      return;
-    }
-
-    await session.setTokenRecordBySid(sid, record);
-
-    // Extend cookie life if present
-    const enc = req.cookies?.[SESSION_COOKIE_NAME];
-    if (enc) setCookie(res, SESSION_COOKIE_NAME, enc, { maxAge: 60 * 60 * 24 * 30 });
-
-    res.writeHead(302, { Location: desiredRedirect });
+    res.writeHead(302, { Location: desired });
     res.end();
   } catch (e) {
-    res.status(500).send(htmlError('OAuth callback exception', { message: e?.message || String(e) }));
+    res.status(500).json({ error: "OAuth callback failed", message: String(e?.message || e) });
   }
 }
