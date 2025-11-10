@@ -1,49 +1,41 @@
 // web/pages/api/ga4/properties.js
-// Lists GA4 properties visible to the current OAuth user via the Admin API.
-
 import { getBearerForRequest } from "../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
-    const bearer = await getBearerForRequest(req, res);
-    if (!bearer?.access_token) {
-      return res.status(401).json({ ok: false, error: "No bearer" });
-    }
+    const bearer = await getBearerForRequest(req);
 
-    // 1) List Account Summaries (each contains nested property summaries)
-    const adminUrl =
-      "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200";
-
-    const adminResp = await fetch(adminUrl, {
-      headers: { Authorization: `Bearer ${bearer.access_token}` },
+    // Use Account Summaries to gather GA4 properties the caller can see
+    const url = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries";
+    const r = await fetch(url, {
+      headers: { Authorization: bearer },
+      cache: "no-store",
     });
 
-    if (!adminResp.ok) {
-      const text = await adminResp.text();
-      return res
-        .status(502)
-        .json({ ok: false, step: "accountSummaries", status: adminResp.status, body: text });
+    if (!r.ok) {
+      const txt = await r.text();
+      return res.status(500).json({ ok: false, error: "admin_list_failed", detail: txt });
     }
 
-    const adminJson = await adminResp.json();
+    const data = await r.json();
+    const summaries = data?.accountSummaries || [];
 
-    // 2) Flatten all property summaries
+    // Flatten property summaries into a simple array
     const properties = [];
-    for (const acc of adminJson.accountSummaries || []) {
-      for (const ps of acc.propertySummaries || []) {
-        // ps.property is like "properties/362732165"
+    for (const acc of summaries) {
+      for (const p of acc.propertySummaries || []) {
+        // property property must be "properties/123", id is numeric
         properties.push({
-          resourceName: ps.property,
-          propertyId: ps.property?.split("/")[1] || null,
-          displayName: ps.displayName || null,
-          account: acc.name || null, // "accounts/12345"
-          accountDisplayName: acc.displayName || null,
+          accountDisplayName: acc.displayName,
+          property: p.property,
+          propertyId: p.property?.split("/")[1] || null,
+          displayName: p.displayName,
         });
       }
     }
 
-    return res.status(200).json({ ok: true, properties });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+    return res.json({ ok: true, properties });
+  } catch (e) {
+    return res.status(200).json({ ok: false, error: e.message || String(e) });
   }
 }
