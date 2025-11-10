@@ -1,57 +1,61 @@
 // web/pages/api/auth/google/callback.js
 import { saveGoogleTokens } from "../../../../lib/server/ga4-session.js";
 
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
-
-async function exchangeCodeForTokens(code) {
-  const body = new URLSearchParams({
-    code,
-    client_id: process.env.GOOGLE_CLIENT_ID || "",
-    client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
-    redirect_uri: process.env.GOOGLE_REDIRECT_URI || "",
-    grant_type: "authorization_code",
-  });
-
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = json?.error_description || json?.error || `Token exchange failed (${res.status})`;
-    const e = new Error(msg);
-    e.debug = json;
-    throw e;
-  }
-  return json;
-}
-
 export default async function handler(req, res) {
   try {
-    const { code, state } = req.query;
-    if (!code || !state) {
-      res.status(400).send("Missing code or state");
-      return;
+    const { code, state } = req.query || {};
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const root = process.env.NEXT_PUBLIC_BASE_URL || `https://${req.headers.host}`;
+    const redirectUri = `${root}/api/auth/google/callback`;
+
+    if (!code) return res.status(400).json({ error: "OAuth callback failed", message: "Missing code" });
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ error: "OAuth callback failed", message: "Missing Google credentials" });
     }
 
-    let parsed;
+    let parsedState = {};
     try {
-      parsed = JSON.parse(state);
+      parsedState = JSON.parse(decodeURIComponent(state || ""));
     } catch {
-      res.status(400).send("Invalid state");
-      return;
+      // ignore
     }
-    const sid = parsed?.sid;
-    const redirect = parsed?.redirect || "/";
+    const sid = parsedState?.sid || null;
+    const postRedirect = typeof parsedState?.redirect === "string" ? parsedState.redirect : "/";
 
-    const tokens = await exchangeCodeForTokens(code);
+    // Exchange code for tokens
+    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenResp.ok) {
+      const text = await tokenResp.text();
+      console.error("Token exchange failed:", tokenResp.status, text);
+      return res.status(500).json({ error: "OAuth callback failed", message: "token_exchange_failed" });
+    }
+
+    const tokens = await tokenResp.json();
+
+    if (!sid) {
+      // We can still store against a random SID if state is missing, but better to error
+      return res.status(400).json({ error: "OAuth callback failed", message: "Missing SID in state" });
+    }
+
     await saveGoogleTokens(sid, tokens);
 
-    res.writeHead(302, { Location: redirect });
+    // Redirect the user back to the app
+    res.writeHead(302, { Location: postRedirect || "/" });
     res.end();
-  } catch (e) {
-    res.status(500).send(`Callback error: ${e.message}`);
+  } catch (err) {
+    console.error("OAuth callback error:", err);
+    res.status(500).json({ error: "OAuth callback failed", message: err.message || "unknown_error" });
   }
 }

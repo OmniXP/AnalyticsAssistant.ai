@@ -1,77 +1,125 @@
 // web/lib/server/ga4-session.js
-// Resolves a Google "Bearer ..." from either a direct cookie or tokens stored in Upstash KV.
+// Session + token helpers for API routes. Server-only.
 
-const KV_URL = process.env.UPSTASH_KV_REST_URL || process.env.UPSTASH_REST_URL || process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.UPSTASH_KV_REST_TOKEN || process.env.UPSTASH_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+import { getCookie, setCookie } from "./cookies.js";
 
-function readCookie(req, name) {
-  const raw = req.headers?.cookie || "";
-  const parts = raw.split(";").map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    const i = p.indexOf("=");
-    const k = i >= 0 ? p.slice(0, i) : p;
-    const v = i >= 0 ? p.slice(i + 1) : "";
-    if (k === name) return decodeURIComponent(v);
+export const SESSION_COOKIE_NAME = "aa_sid";
+
+// ---------- SID helpers ----------
+export function readSidFromCookie(req) {
+  return getCookie(req, SESSION_COOKIE_NAME);
+}
+
+export function ensureSid(req, res) {
+  let sid = readSidFromCookie(req);
+  if (!sid) {
+    sid = crypto.randomUUID();
+    // 30 days, httpOnly so it cannot be read in client JS.
+    setCookie(res, SESSION_COOKIE_NAME, sid, {
+      maxAge: 60 * 60 * 24 * 30,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    });
   }
-  return null;
+  return sid;
+}
+
+// ---------- Upstash KV (REST) ----------
+function getKvConfig() {
+  const url = process.env.UPSTASH_KV_REST_URL || process.env.UPSTASH_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_KV_REST_TOKEN || process.env.UPSTASH_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !token) throw new Error("Upstash KV not configured");
+  return { url: url.replace(/\/+$/, ""), token };
 }
 
 async function kvGet(key) {
-  if (!KV_URL || !KV_TOKEN) {
-    const err = new Error("Upstash KV not configured");
-    err.code = "NO_KV";
-    throw err;
-  }
-  const url = `${KV_URL}/get/${encodeURIComponent(key)}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${KV_TOKEN}` } });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const err = new Error(`KV get failed: ${r.status}`);
-    err.code = "KV_ERROR";
-    err.detail = j;
-    throw err;
-  }
+  const { url, token } = getKvConfig();
+  const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`KV get failed: ${r.status}`);
+  const j = await r.json();
   return j?.result ?? null;
 }
 
+async function kvSet(key, value, opts = {}) {
+  const { url, token } = getKvConfig();
+  const qs = [];
+  if (opts.ex) qs.push(`ex=${encodeURIComponent(String(opts.ex))}`); // seconds
+  const suffix = qs.length ? `?${qs.join("&")}` : "";
+  const r = await fetch(`${url}/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}${suffix}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`KV set failed: ${r.status}`);
+  return true;
+}
+
+async function kvDel(key) {
+  const { url, token } = getKvConfig();
+  const r = await fetch(`${url}/del/${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`KV del failed: ${r.status}`);
+  return true;
+}
+
+function tokensKey(sid) {
+  return `aa:ga:${sid}`;
+}
+
+// ---------- Google token helpers ----------
+export async function saveGoogleTokens(sid, tokenResponse) {
+  // tokenResponse shape from Google:
+  // { access_token, expires_in, refresh_token?, scope, token_type }
+  const now = Math.floor(Date.now() / 1000);
+  const expires_at = now + Number(tokenResponse.expires_in || 0);
+
+  const toStore = {
+    access_token: tokenResponse.access_token,
+    refresh_token: tokenResponse.refresh_token || null,
+    token_type: tokenResponse.token_type || "Bearer",
+    scope: tokenResponse.scope || "",
+    expires_at, // epoch seconds
+  };
+
+  await kvSet(tokensKey(sid), JSON.stringify(toStore), { ex: 60 * 60 * 24 * 30 }); // 30 days
+  return toStore;
+}
+
+export async function getGoogleTokens(sid) {
+  const raw = await kvGet(tokensKey(sid));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function clearGaTokens(sid) {
+  try {
+    await kvDel(tokensKey(sid));
+  } catch {
+    // ignore
+  }
+}
+
+export function isExpired(tokenSet, skewSeconds = 60) {
+  if (!tokenSet?.expires_at) return true;
+  const now = Math.floor(Date.now() / 1000);
+  return now >= (Number(tokenSet.expires_at) - skewSeconds);
+}
+
 export async function getBearerForRequest(req) {
-  // 1) If a direct bearer cookie exists, use it.
-  const aa_auth = readCookie(req, "aa_auth"); // expected like "Bearer ya29.a0...."
-  if (aa_auth && /^Bearer\s+/.test(aa_auth)) {
-    return { bearer: aa_auth, sid: null, source: "cookie:aa_auth" };
-  }
-
-  // 2) Otherwise, resolve via session id and KV.
-  const sid = readCookie(req, "aa_sid");
-  if (!sid) {
-    const err = new Error("No session id. Reconnect Google.");
-    err.code = "NO_SESSION";
-    throw err;
-  }
-
-  // Keys we try in KV, newest namespace first
-  const keys = [`aa:access:${sid}`, `aa:ga:${sid}`, `ga:access:${sid}`];
-  let tokens = null;
-  for (const k of keys) {
-    const got = await kvGet(k).catch(() => null);
-    if (got) {
-      tokens = got;
-      break;
-    }
-  }
-  if (!tokens) {
-    const err = new Error("No tokens for session. Reconnect Google.");
-    err.code = "NO_TOKENS";
-    throw err;
-  }
-
-  // tokens may be either a raw string or an object { access_token, expiry, token_type }
-  const access = typeof tokens === "string" ? tokens : tokens.access_token;
-  if (!access) {
-    const err = new Error("Malformed stored tokens. Reconnect Google.");
-    err.code = "NO_TOKENS";
-    throw err;
-  }
-
-  return { bearer: `Bearer ${access}`, sid, source: "kv" };
+  const sid = readSidFromCookie(req);
+  if (!sid) throw new Error("No SID");
+  const tokens = await getGoogleTokens(sid);
+  if (!tokens?.access_token) throw new Error("No access token");
+  if (isExpired(tokens)) throw new Error("Access token expired");
+  return `Bearer ${tokens.access_token}`;
 }
