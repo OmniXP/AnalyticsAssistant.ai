@@ -1,11 +1,10 @@
 // web/pages/api/ga4/properties.js
-import { getBearerForRequest } from "../../lib/server/ga4-session.js";
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
     const bearer = await getBearerForRequest(req);
 
-    // Use Account Summaries to gather GA4 properties the caller can see
     const url = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries";
     const r = await fetch(url, {
       headers: { Authorization: bearer },
@@ -20,15 +19,13 @@ export default async function handler(req, res) {
     const data = await r.json();
     const summaries = data?.accountSummaries || [];
 
-    // Flatten property summaries into a simple array
     const properties = [];
     for (const acc of summaries) {
       for (const p of acc.propertySummaries || []) {
-        // property property must be "properties/123", id is numeric
         properties.push({
           accountDisplayName: acc.displayName,
-          property: p.property,
-          propertyId: p.property?.split("/")[1] || null,
+          property: p.property,                          // e.g. "properties/123456789"
+          propertyId: p.property?.split("/")[1] || null, // e.g. "123456789"
           displayName: p.displayName,
         });
       }

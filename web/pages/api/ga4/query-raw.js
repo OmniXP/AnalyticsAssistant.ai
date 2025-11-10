@@ -1,5 +1,5 @@
 // web/pages/api/ga4/query-raw.js
-import { getBearerForRequest } from "../../lib/server/ga4-session.js";
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
 /*
 POST body example:
