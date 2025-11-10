@@ -1,22 +1,49 @@
 // web/pages/api/ga4/properties.js
-import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
+// Lists GA4 properties visible to the current OAuth user via the Admin API.
 
-/**
- * Lists GA4 properties for the authenticated user via the Analytics Admin API.
- * Keep minimal for now; front end can call this after auth.
- */
+import { getBearerForRequest } from "../../lib/server/ga4-session.js";
+
 export default async function handler(req, res) {
   try {
-    const bearer = await getBearerForRequest(req);
-    if (!bearer) {
-      return res.status(401).json({ ok: false, error: "no_bearer" });
+    const bearer = await getBearerForRequest(req, res);
+    if (!bearer?.access_token) {
+      return res.status(401).json({ ok: false, error: "No bearer" });
     }
 
-    // Example fetch to Admin API could go here; we return a stub for now.
-    res.setHeader("Content-Type", "application/json");
-    res.status(200).json({ ok: true, properties: [] });
+    // 1) List Account Summaries (each contains nested property summaries)
+    const adminUrl =
+      "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200";
+
+    const adminResp = await fetch(adminUrl, {
+      headers: { Authorization: `Bearer ${bearer.access_token}` },
+    });
+
+    if (!adminResp.ok) {
+      const text = await adminResp.text();
+      return res
+        .status(502)
+        .json({ ok: false, step: "accountSummaries", status: adminResp.status, body: text });
+    }
+
+    const adminJson = await adminResp.json();
+
+    // 2) Flatten all property summaries
+    const properties = [];
+    for (const acc of adminJson.accountSummaries || []) {
+      for (const ps of acc.propertySummaries || []) {
+        // ps.property is like "properties/362732165"
+        properties.push({
+          resourceName: ps.property,
+          propertyId: ps.property?.split("/")[1] || null,
+          displayName: ps.displayName || null,
+          account: acc.name || null, // "accounts/12345"
+          accountDisplayName: acc.displayName || null,
+        });
+      }
+    }
+
+    return res.status(200).json({ ok: true, properties });
   } catch (err) {
-    console.error("properties error:", err);
-    res.status(500).json({ ok: false, error: "properties_failed" });
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 }
