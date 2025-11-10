@@ -1,38 +1,24 @@
 // web/pages/api/ga4/inspect.js
-// Pings GA Data API with a minimal request to confirm auth + property format.
+// Full replacement.
+// Lightweight endpoint to confirm we can resolve a Google bearer from the session.
 
-import { getBearerForRequest } from "../../../lib/server/ga4-session";
+import { getBearerForRequest } from "../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
-    const bearer = await getBearerForRequest(req);
-    if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
-
-    const propertyId = req.body?.propertyId || req.query?.propertyId || "";
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
-
-    const pid = String(propertyId).startsWith("properties/")
-      ? String(propertyId).replace("properties/", "")
-      : String(propertyId);
-
-    // Minimal harmless runReport to validate access
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${pid}:runReport`;
-    const body = {
-      dimensions: [{ name: "date" }],
-      metrics: [{ name: "sessions" }],
-      dateRanges: [{ startDate: "2024-09-01", endDate: "2024-09-02" }],
-      limit: 1,
-    };
-
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-      body: JSON.stringify(body),
+    const { bearer, sid, source } = await getBearerForRequest(req);
+    res.status(200).json({
+      ok: true,
+      hasBearer: Boolean(bearer),
+      sid: sid || null,
+      source: source || "unknown",
     });
-    const j = await r.json().catch(() => ({}));
-
-    res.status(200).json({ ok: r.ok, status: r.status, body: j });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const code = e.code || "ERROR";
+    if (code === "NO_SESSION" || code === "NO_TOKENS" || code === "EXPIRED") {
+      res.status(401).json({ ok: false, error: code, message: e.message });
+      return;
+    }
+    res.status(500).json({ ok: false, error: "internal_error", message: e.message });
   }
 }

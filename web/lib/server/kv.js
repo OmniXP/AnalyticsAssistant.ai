@@ -1,69 +1,44 @@
 // web/lib/server/kv.js
-// Minimal Upstash KV client using REST URL/TOKEN from env
+// Minimal Upstash KV helpers (REST). Server-only.
 
-export function getKvEnvStatus() {
-  const url = process.env.UPSTASH_KV_REST_URL || "";
-  const token = process.env.UPSTASH_KV_REST_TOKEN || "";
-  return {
-    urlPresent: Boolean(url),
-    tokenPresent: Boolean(token),
-    url,
-    tokenMasked: token ? `${token.slice(0, 6)}…${token.slice(-4)}` : "",
-  };
+const BASE = process.env.UPSTASH_KV_REST_URL;
+const TOKEN = process.env.UPSTASH_KV_REST_TOKEN;
+
+function assertConfigured() {
+  if (!BASE || !TOKEN) {
+    const e = new Error("Upstash KV not configured");
+    e.code = "KV_NOT_CONFIGURED";
+    throw e;
+  }
 }
 
-export async function kvSet(key, value) {
-  const { urlPresent, tokenPresent } = getKvEnvStatus();
-  if (!urlPresent || !tokenPresent) {
-    const missing = [];
-    if (!urlPresent) missing.push("UPSTASH_KV_REST_URL");
-    if (!tokenPresent) missing.push("UPSTASH_KV_REST_TOKEN");
-    const err = new Error(`Upstash KV not configured: missing ${missing.join(", ")}`);
-    err.code = "KV_NOT_CONFIGURED";
-    throw err;
-  }
-  const url = process.env.UPSTASH_KV_REST_URL.replace(/\/+$/, "") + "/set";
-  const token = process.env.UPSTASH_KV_REST_TOKEN;
-
+async function kvFetch(path, init = {}) {
+  assertConfigured();
+  const url = `${BASE}${path}`;
   const res = await fetch(url, {
-    method: "POST",
+    ...init,
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${TOKEN}`,
       "Content-Type": "application/json",
+      ...(init.headers || {}),
     },
-    body: JSON.stringify({ key, value }),
+    cache: "no-store",
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Upstash SET failed: ${res.status} ${text}`);
-  }
-  return res.json().catch(() => ({}));
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, body };
 }
 
 export async function kvGet(key) {
-  const { urlPresent, tokenPresent } = getKvEnvStatus();
-  if (!urlPresent || !tokenPresent) {
-    const missing = [];
-    if (!urlPresent) missing.push("UPSTASH_KV_REST_URL");
-    if (!tokenPresent) missing.push("UPSTASH_KV_REST_TOKEN");
-    const err = new Error(`Upstash KV not configured: missing ${missing.join(", ")}`);
-    err.code = "KV_NOT_CONFIGURED";
-    throw err;
-  }
-  const url = process.env.UPSTASH_KV_REST_URL.replace(/\/+$/, "") + "/get";
-  const token = process.env.UPSTASH_KV_REST_TOKEN;
+  return kvFetch(`/get/${encodeURIComponent(key)}`);
+}
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ key }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Upstash GET failed: ${res.status} ${text}`);
-  }
-  return res.json().catch(() => ({}));
+export async function kvSet(key, value, ttlSeconds) {
+  const path = ttlSeconds != null
+    ? `/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}?ex=${ttlSeconds}`
+    : `/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
+  return kvFetch(path, { method: "POST" });
+}
+
+export async function kvDel(key) {
+  return kvFetch(`/del/${encodeURIComponent(key)}`, { method: "POST" });
 }

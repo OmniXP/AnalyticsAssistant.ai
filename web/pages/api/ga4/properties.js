@@ -1,19 +1,54 @@
 // web/pages/api/ga4/properties.js
-// Lists GA4 properties visible to the authorised user.
+// Full replacement.
+// Lists GA4 properties by calling the Analytics Admin API account summaries endpoint.
 
-import { getBearerForRequest } from "../../../lib/server/ga4-session";
+import { getBearerForRequest } from "../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
-    const bearer = await getBearerForRequest(req);
-    if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
+    const { bearer } = await getBearerForRequest(req);
 
-    const r = await fetch("https://analyticsadmin.googleapis.com/v1beta/properties?pageSize=50", {
-      headers: { Authorization: `Bearer ${bearer}` },
+    // Fetch account summaries to enumerate properties across accounts.
+    const url = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries";
+    const r = await fetch(url, {
+      headers: { Authorization: bearer },
     });
+
     const j = await r.json().catch(() => ({}));
-    res.status(r.ok ? 200 : 500).json(j);
+    if (!r.ok) {
+      res.status(r.status).json({ error: "admin_list_failed", detail: j });
+      return;
+    }
+
+    const summaries = Array.isArray(j.accountSummaries) ? j.accountSummaries : [];
+    const props = [];
+    for (const acc of summaries) {
+      const account = acc.name || "";
+      const accountDisplayName = acc.displayName || "";
+      const propertySummaries = Array.isArray(acc.propertySummaries) ? acc.propertySummaries : [];
+      for (const p of propertySummaries) {
+        const propName = p.property || ""; // e.g. "properties/123456789"
+        const id = propName.replace(/^properties\//, "");
+        props.push({
+          id,
+          property: propName,
+          displayName: p.displayName || "",
+          account,
+          accountDisplayName,
+        });
+      }
+    }
+
+    res.status(200).json({ ok: true, properties: props });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    if (e.code === "NO_SESSION" || e.code === "NO_TOKENS" || e.code === "EXPIRED") {
+      res.status(401).json({
+        error: "no_bearer",
+        message:
+          'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then try again.',
+      });
+      return;
+    }
+    res.status(500).json({ error: "internal_error", message: e.message });
   }
 }
