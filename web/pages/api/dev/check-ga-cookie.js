@@ -1,24 +1,28 @@
 // web/pages/api/dev/check-ga-cookie.js
-// Quick read of cookies to confirm SID and legacy aa_auth visibility.
+import {
+  readSidFromCookie,
+  SESSION_COOKIE_NAME,
+} from "../../../lib/server/ga4-session.js";
 
-import { getCookie } from "../../../lib/server/cookies";
-import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session";
+/**
+ * Dev helper: echoes whether the GA session cookie is present and what SID we read.
+ */
+export default async function handler(req, res) {
+  try {
+    const sid = readSidFromCookie(req);
+    const cookiesHeader = req.headers?.cookie || "";
+    const hasSessionCookie = cookiesHeader.includes(`${SESSION_COOKIE_NAME}=`);
 
-export default function handler(req, res) {
-  const aa_sid_cookie = getCookie(req, SESSION_COOKIE_NAME);
-  const aa_auth_cookie = getCookie(req, "aa_auth"); // legacy
-  const sid = readSidFromCookie(req);
-
-  res.status(200).json({
-    ok: true,
-    cookies: {
-      [SESSION_COOKIE_NAME]: !!aa_sid_cookie,
-      aa_auth: !!aa_auth_cookie,
-    },
-    sidDerived: sid || null,
-    raw: {
-      [SESSION_COOKIE_NAME]: aa_sid_cookie || null,
-      aa_auth: aa_auth_cookie || null,
-    },
-  });
+    res.setHeader("Content-Type", "application/json");
+    res.status(200).json({
+      ok: true,
+      sessionCookieName: SESSION_COOKIE_NAME,
+      hasSessionCookie,
+      sid: sid || null,
+      rawCookieHeader: cookiesHeader || null,
+    });
+  } catch (err) {
+    console.error("check-ga-cookie error:", err);
+    res.status(500).json({ ok: false, error: "check_failed" });
+  }
 }

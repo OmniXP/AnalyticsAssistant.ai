@@ -2,7 +2,7 @@
 // Confirms /api/ga4/query accepts `propertyId` and normalises to `properties/{id}`,
 // and that a bearer token can be produced for the current request.
 
-import { getBearerForRequest } from "../../../lib/server/ga4-session";
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {

@@ -1,3 +1,2 @@
-// Shim to satisfy legacy imports from files that still reference "server/ga4-session"
-// Forwards to the canonical implementation under /web/pages/api/_core
-module.exports = require('./lib/server/ga4-session');
+// web/server/ga4-session.js
+module.exports = require("../lib/server/ga4-session");

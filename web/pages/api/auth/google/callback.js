@@ -1,5 +1,5 @@
 // web/pages/api/auth/google/callback.js
-import { saveGoogleTokens } from "../../../lib/server/ga4-session.js";
+import { saveGoogleTokens } from "../../../../lib/server/ga4-session.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 

@@ -1,84 +1,77 @@
 // web/lib/server/ga4-session.js
-// Handles: session cookie (aa_sid) and GA token storage in Upstash KV.
+// Resolves a Google "Bearer ..." from either a direct cookie or tokens stored in Upstash KV.
 
-import { kvGet, kvSet, kvDel } from "./kv.js";
-import { getCookie, setCookie } from "./cookies.js";
+const KV_URL = process.env.UPSTASH_KV_REST_URL || process.env.UPSTASH_REST_URL || process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.UPSTASH_KV_REST_TOKEN || process.env.UPSTASH_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 
-export const SESSION_COOKIE_NAME = "aa_sid";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
-const KV_PREFIX = "aa:ga:";               // token storage per session id
-const ACCESS_TTL = 60 * 60;               // 1 hour (Google access tokens)
-
-export function ensureSid(req, res) {
-  let sid = getCookie(req, SESSION_COOKIE_NAME);
-  if (!sid) {
-    sid = crypto.randomUUID();
-    setCookie(res, SESSION_COOKIE_NAME, sid, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: COOKIE_MAX_AGE,
-    });
+function readCookie(req, name) {
+  const raw = req.headers?.cookie || "";
+  const parts = raw.split(";").map((s) => s.trim()).filter(Boolean);
+  for (const p of parts) {
+    const i = p.indexOf("=");
+    const k = i >= 0 ? p.slice(0, i) : p;
+    const v = i >= 0 ? p.slice(i + 1) : "";
+    if (k === name) return decodeURIComponent(v);
   }
-  return sid;
+  return null;
 }
 
-export function readSidFromCookie(req) {
-  return getCookie(req, SESSION_COOKIE_NAME) || null;
-}
-
-export async function saveGoogleTokens(sid, tokens) {
-  // tokens: { access_token, refresh_token?, expires_in, scope, token_type, id_token? }
-  if (!sid) throw new Error("No session id");
-  const payload = JSON.stringify({
-    ...tokens,
-    stored_at: Date.now(),
-    expires_at: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : null,
-  });
-  await kvSet(KV_PREFIX + sid, payload, ACCESS_TTL); // refresh on write; simple path
-}
-
-export async function getGoogleTokens(sid) {
-  if (!sid) return null;
-  const { body } = await kvGet(KV_PREFIX + sid);
-  const raw = body?.result ?? null;
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
+async function kvGet(key) {
+  if (!KV_URL || !KV_TOKEN) {
+    const err = new Error("Upstash KV not configured");
+    err.code = "NO_KV";
+    throw err;
   }
+  const url = `${KV_URL}/get/${encodeURIComponent(key)}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${KV_TOKEN}` } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error(`KV get failed: ${r.status}`);
+    err.code = "KV_ERROR";
+    err.detail = j;
+    throw err;
+  }
+  return j?.result ?? null;
 }
 
-export async function clearGoogleTokens(sid) {
-  if (!sid) return;
-  await kvDel(KV_PREFIX + sid);
-}
-
-export function isExpired(tokens) {
-  if (!tokens?.expires_at) return true;
-  return Date.now() > tokens.expires_at - 10_000; // 10s skew
-}
-
-// Returns { bearer } or throws Error with .code
 export async function getBearerForRequest(req) {
-  const sid = readSidFromCookie(req);
+  // 1) If a direct bearer cookie exists, use it.
+  const aa_auth = readCookie(req, "aa_auth"); // expected like "Bearer ya29.a0...."
+  if (aa_auth && /^Bearer\s+/.test(aa_auth)) {
+    return { bearer: aa_auth, sid: null, source: "cookie:aa_auth" };
+  }
+
+  // 2) Otherwise, resolve via session id and KV.
+  const sid = readCookie(req, "aa_sid");
   if (!sid) {
-    const e = new Error("No session cookie");
-    e.code = "NO_SESSION";
-    throw e;
+    const err = new Error("No session id. Reconnect Google.");
+    err.code = "NO_SESSION";
+    throw err;
   }
-  const tokens = await getGoogleTokens(sid);
+
+  // Keys we try in KV, newest namespace first
+  const keys = [`aa:access:${sid}`, `aa:ga:${sid}`, `ga:access:${sid}`];
+  let tokens = null;
+  for (const k of keys) {
+    const got = await kvGet(k).catch(() => null);
+    if (got) {
+      tokens = got;
+      break;
+    }
+  }
   if (!tokens) {
-    const e = new Error("No Google tokens");
-    e.code = "NO_TOKENS";
-    throw e;
+    const err = new Error("No tokens for session. Reconnect Google.");
+    err.code = "NO_TOKENS";
+    throw err;
   }
-  if (isExpired(tokens)) {
-    const e = new Error("Google tokens expired");
-    e.code = "EXPIRED";
-    throw e;
+
+  // tokens may be either a raw string or an object { access_token, expiry, token_type }
+  const access = typeof tokens === "string" ? tokens : tokens.access_token;
+  if (!access) {
+    const err = new Error("Malformed stored tokens. Reconnect Google.");
+    err.code = "NO_TOKENS";
+    throw err;
   }
-  return { bearer: `${tokens.token_type || "Bearer"} ${tokens.access_token}`, sid, tokens };
+
+  return { bearer: `Bearer ${access}`, sid, source: "kv" };
 }

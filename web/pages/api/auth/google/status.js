@@ -1,5 +1,5 @@
 // web/pages/api/auth/google/status.js
-import { readSidFromCookie, getGoogleTokens, isExpired } from "../../../lib/server/ga4-session.js";
+import { readSidFromCookie, getGoogleTokens, isExpired } from "../../../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   const sid = readSidFromCookie(req);

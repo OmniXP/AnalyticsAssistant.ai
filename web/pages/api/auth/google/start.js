@@ -1,5 +1,5 @@
 // web/pages/api/auth/google/start.js
-import { ensureSid } from "../../../lib/server/ga4-session.js";
+import { ensureSid } from "../../../../lib/server/ga4-session.js";
 
 const GOOGLE_AUTHORISE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const DEFAULT_REDIRECT = "/";

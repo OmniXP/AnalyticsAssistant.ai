@@ -1,34 +1,44 @@
 // web/pages/api/dev/selfcheck.js
-// Lightweight environment & session self-check.
+import {
+  getBearerForRequest,
+  SESSION_COOKIE_NAME,
+} from "../../../lib/server/ga4-session.js";
 
-import { getCookie } from "../../../lib/server/cookies";
-import { getBearerForRequest, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session";
-
+/**
+ * Dev self-check: confirms we can derive a bearer from the request
+ * (i.e., GA tokens exist and are not expired). Also echoes cookie presence.
+ */
 export default async function handler(req, res) {
   try {
-    const env = {
-      baseUrl: process.env.NEXT_PUBLIC_BASE_URL || null,
-      upstashUrl: !!process.env.UPSTASH_KV_REST_URL,
-      upstashToken: !!process.env.UPSTASH_KV_REST_TOKEN,
-      googleClientId: !!process.env.GOOGLE_CLIENT_ID,
-      googleClientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
-      postAuthRedirect: process.env.POST_AUTH_REDIRECT || "/",
-    };
+    const cookiesHeader = req.headers?.cookie || "";
+    const hasSessionCookie = cookiesHeader.includes(`${SESSION_COOKIE_NAME}=`);
 
-    const sidCookie = getCookie(req, SESSION_COOKIE_NAME);
-    const legacyAuth = getCookie(req, "aa_auth");
-    const bearer = await getBearerForRequest(req).catch(() => null);
+    let bearer = null;
+    let bearerOk = false;
+    let bearerError = null;
 
+    try {
+      bearer = await getBearerForRequest(req);
+      bearerOk = Boolean(bearer);
+    } catch (e) {
+      bearerError = e?.message || String(e);
+    }
+
+    res.setHeader("Content-Type", "application/json");
     res.status(200).json({
       ok: true,
-      env,
-      cookies: {
-        [SESSION_COOKIE_NAME]: !!sidCookie,
-        aa_auth: !!legacyAuth,
+      cookie: {
+        name: SESSION_COOKIE_NAME,
+        present: hasSessionCookie,
       },
-      hasBearer: !!bearer,
+      bearer: {
+        ok: bearerOk,
+        present: Boolean(bearer),
+        error: bearerError,
+      },
     });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  } catch (err) {
+    console.error("selfcheck error:", err);
+    res.status(500).json({ ok: false, error: "selfcheck_failed" });
   }
 }
