@@ -1,5 +1,4 @@
 // web/pages/api/ga4/debug-session.js
-// Full replacement.
 // Returns quick visibility into session cookie presence and bearer resolvability.
 
 import { getBearerForRequest } from "../../lib/server/ga4-session.js";

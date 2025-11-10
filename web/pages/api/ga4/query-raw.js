@@ -1,8 +1,5 @@
 // web/pages/api/ga4/query-raw.js
-// Full replacement.
 // Thin passthrough to GA4 runReport with minimal shaping.
-// Accepts either { propertyId: "123" } or { property: "properties/123" }.
-// Any additional keys in the body are sent straight to GA.
 
 import { getBearerForRequest } from "../../lib/server/ga4-session.js";
 
@@ -32,12 +29,10 @@ export default async function handler(req, res) {
 
     const { bearer } = await getBearerForRequest(req);
 
-    // Copy body and strip our helper fields
     const incoming = req.body || {};
     const propertyId = extractPropertyId(incoming);
     const { property, propertyId: _pid, ...payload } = incoming;
 
-    // Ensure a sane default daterange if the caller did not supply one
     if (!Array.isArray(payload.dateRanges) || payload.dateRanges.length === 0) {
       payload.dateRanges = [{ startDate: "30daysAgo", endDate: "today" }];
     }

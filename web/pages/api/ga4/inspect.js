@@ -1,5 +1,4 @@
 // web/pages/api/ga4/inspect.js
-// Full replacement.
 // Lightweight endpoint to confirm we can resolve a Google bearer from the session.
 
 import { getBearerForRequest } from "../../lib/server/ga4-session.js";
