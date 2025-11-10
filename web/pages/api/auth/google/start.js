@@ -3,38 +3,31 @@ import { ensureSid } from "../../../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const root = process.env.NEXT_PUBLIC_BASE_URL || `https://${req.headers.host}`;
-    const redirectUri = `${root}/api/auth/google/callback`;
-
-    if (!clientId) {
-      return res.status(500).json({ error: "OAuth start failed", message: "Missing GOOGLE_CLIENT_ID" });
-    }
-
+    const { redirect = "/" } = req.query || {};
     const sid = ensureSid(req, res);
 
-    const redirect = typeof req.query.redirect === "string" ? req.query.redirect : "/";
-    const state = encodeURIComponent(JSON.stringify({ sid, redirect }));
+    const state = Buffer.from(
+      JSON.stringify({ sid, redirect })
+    ).toString("base64url");
 
-    const scope = [
-      "https://www.googleapis.com/auth/analytics.readonly",
-      // add other scopes if you truly need them
-    ].join(" ");
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: process.env.GOOGLE_CLIENT_ID || "",
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI || "",
+      scope: [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/analytics.readonly",
+      ].join(" "),
+      access_type: "offline",
+      include_granted_scopes: "true",
+      prompt: "consent",
+      state,
+    });
 
-    const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    authUrl.searchParams.set("client_id", clientId);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", scope);
-    authUrl.searchParams.set("access_type", "offline");
-    authUrl.searchParams.set("include_granted_scopes", "true");
-    authUrl.searchParams.set("state", state);
-    authUrl.searchParams.set("prompt", "consent"); // ensure refresh_token on first grant
-
-    res.writeHead(302, { Location: authUrl.toString() });
-    res.end();
-  } catch (err) {
-    console.error("OAuth start error:", err);
-    res.status(500).json({ error: "OAuth start failed", message: err.message || "unknown_error" });
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    res.status(200).json({ ok: true, url });
+  } catch (e) {
+    res.status(200).json({ ok: false, error: "OAuth start failed", message: e.message || String(e) });
   }
 }

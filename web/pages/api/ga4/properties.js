@@ -4,35 +4,42 @@ import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 export default async function handler(req, res) {
   try {
     const bearer = await getBearerForRequest(req);
+    if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
 
-    const url = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries";
-    const r = await fetch(url, {
-      headers: { Authorization: bearer },
-      cache: "no-store",
+    const meResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: `Bearer ${bearer}` },
     });
+    if (!meResp.ok) {
+      return res.status(200).json({ ok: false, error: `userinfo failed: ${meResp.status}` });
+    }
+    const me = await meResp.json();
+    const email = me?.email;
 
-    if (!r.ok) {
-      const txt = await r.text();
-      return res.status(500).json({ ok: false, error: "admin_list_failed", detail: txt });
+    const listResp = await fetch(
+      "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200",
+      { headers: { Authorization: `Bearer ${bearer}` } }
+    );
+
+    if (!listResp.ok) {
+      return res.status(200).json({ ok: false, error: `admin list failed: ${listResp.status}` });
     }
 
-    const data = await r.json();
-    const summaries = data?.accountSummaries || [];
-
+    const data = await listResp.json();
     const properties = [];
-    for (const acc of summaries) {
+    for (const acc of data.accountSummaries || []) {
       for (const p of acc.propertySummaries || []) {
+        if (!p?.property) continue;
+        const id = p.property.replace(/^properties\//, "");
         properties.push({
-          accountDisplayName: acc.displayName,
-          property: p.property,                          // e.g. "properties/123456789"
-          propertyId: p.property?.split("/")[1] || null, // e.g. "123456789"
+          id,
           displayName: p.displayName,
+          parentAccount: acc.account,
         });
       }
     }
 
-    return res.json({ ok: true, properties });
+    res.status(200).json({ ok: true, email: email || null, properties });
   } catch (e) {
-    return res.status(200).json({ ok: false, error: e.message || String(e) });
+    res.status(200).json({ ok: false, error: e.message || String(e) });
   }
 }

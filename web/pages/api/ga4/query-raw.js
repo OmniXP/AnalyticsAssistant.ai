@@ -1,79 +1,40 @@
 // web/pages/api/ga4/query-raw.js
 import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-/*
-POST body example:
-{
-  "propertyId": "362732165",
-  "dateRanges": [{"startDate":"2025-10-01","endDate":"2025-10-31"}],
-  "metrics": [{"name":"sessions"}],
-  "dimensions": [{"name":"date"}],
-  "limit": 10
-}
-*/
-
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ ok: false, error: "method_not_allowed" });
-  }
-
   try {
     const bearer = await getBearerForRequest(req);
+    if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
 
-    const {
-      propertyId,
-      property,         // optional "properties/123"
-      dateRanges,
-      metrics,
-      dimensions,
-      dimensionFilter,
-      metricFilter,
-      orderBys,
-      limit,
-      offset,
-      keepEmptyRows,
-    } = req.body || {};
-
-    if (!propertyId && !property) {
-      return res.status(400).json({ ok: false, error: "missing_property" });
+    if (req.method !== "POST") {
+      return res.status(405).json({ ok: false, error: "POST only" });
     }
 
-    const pid = property ? property.replace(/^properties\//, "") : String(propertyId);
-    const prop = `properties/${pid}`;
+    const { propertyId, property, ...body } = req.body || {};
+    const id = propertyId || (property || "").replace(/^properties\//, "");
+    if (!id) return res.status(400).json({ ok: false, error: "Missing propertyId" });
 
-    const url = `https://analyticsdata.googleapis.com/v1beta/${prop}:runReport`;
-
-    const payload = {
-      dateRanges,
-      metrics,
-      dimensions,
-      dimensionFilter,
-      metricFilter,
-      orderBys,
-      limit: typeof limit === "number" ? limit : undefined,
-      offset: typeof offset === "number" ? offset : undefined,
-      keepEmptyRows: !!keepEmptyRows,
-    };
-
-    const r = await fetch(url, {
+    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${id}:runReport`;
+    const gaResp = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: bearer,
+        Authorization: `Bearer ${bearer}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body || {}),
     });
 
-    const text = await r.text();
-    let json;
-    try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    const text = await gaResp.text();
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch { /* keep raw */ }
 
-    if (!r.ok) {
-      return res.status(500).json({ ok: false, forwarded: true, status: r.status, error: json });
-    }
-
-    return res.json({ ok: true, forwarded: true, status: r.status, report: json });
+    res.status(200).json({
+      ok: gaResp.ok,
+      status: gaResp.status,
+      forwarded: true,
+      response: parsed || text,
+    });
   } catch (e) {
-    return res.status(200).json({ ok: false, forwarded: false, error: e.message || String(e) });
+    res.status(200).json({ ok: false, error: e.message || String(e) });
   }
 }
