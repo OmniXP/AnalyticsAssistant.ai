@@ -5,11 +5,11 @@ import Image from "next/image";
 
 /**
  * ============================================================================
- * InsightGPT / AnalyticsAssistant — Dashboard
- * This version keeps your full UI but fixes:
- *  - GA status detection (now uses hasTokens/expired)
- *  - Property bootstrap (auto-populates from /api/ga4/properties after auth)
- *  - GA querying (uses /api/ga4/query-raw like the smoketest; falls back to legacy)
+ * AnalyticsAssistant Dashboard — GA4-first UX with robust GA session status + CTAs
+ * - Keeps your working OAuth + run report flow intact.
+ * - Fixes the other panels by switching to header‑aware parsing so metric/dimension
+ *   order does not matter and Google changes do not break the UI.
+ * - Zero dependency changes; client-only.
  * ============================================================================
  */
 
@@ -19,8 +19,6 @@ const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
 const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
 const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
 const PREMIUM_FLAG_KEY = "insightgpt_premium_flag_v1"; // "Alpha" or "Pro"
-const LS_GA_CONNECTED = "insightgpt_ga_session_connected";
-const LS_LAST_PROPERTY = "insightgpt_last_property_id";
 
 const COLORS = {
   googleBlue: "#4285F4",
@@ -93,10 +91,9 @@ function decodeQuery() {
 }
 async function fetchJson(url, payload, opts = {}) {
   const res = await fetch(url, {
-    method: opts.method || (payload ? "POST" : "GET"),
+    method: opts.method || "POST",
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-    body: opts.method === "GET" || !payload ? undefined : JSON.stringify(payload || {}),
-    cache: opts.cache || "no-store",
+    body: opts.method === "GET" ? undefined : JSON.stringify(payload || {}),
   });
   const text = await res.text();
   let data = null;
@@ -150,31 +147,6 @@ function safeStringify(value) {
     }
   }
 }
-
-/** Map your UI filters to GA4 dimensionFilter used by /api/ga4/query-raw */
-function buildDimensionFilter({ country = "All", channelGroup = "All" }) {
-  const expressions = [];
-  if (country && country !== "All") {
-    expressions.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { matchType: "EXACT", value: country, caseSensitive: false },
-      },
-    });
-  }
-  if (channelGroup && channelGroup !== "All") {
-    expressions.push({
-      filter: {
-        fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { matchType: "EXACT", value: channelGroup, caseSensitive: false },
-      },
-    });
-  }
-  if (!expressions.length) return undefined;
-  return { andGroup: { expressions } };
-}
-
-/** Channels table parser (kept from your code) */
 function parseGa4Channels(response) {
   if (!response?.rows?.length) return { rows: [], totals: { sessions: 0, users: 0 } };
   const rows = response.rows.map((r) => ({
@@ -195,8 +167,6 @@ function formatPctDelta(curr, prev) {
   const pct = Math.round(((curr - prev) / prev) * 100);
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
-
-/** CSV + chart helpers (unchanged) */
 function downloadCsvChannels(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
@@ -239,6 +209,27 @@ function downloadCsvGeneric(filenamePrefix, rows, columns) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// === Header‑aware GA4 helpers (use across panels) ===
+function getHeaderIndexes(data) {
+  const dims = (data?.dimensionHeaders || []).map((h) => h.name);
+  const mets = (data?.metricHeaders || []).map((h) => h.name);
+  const dimIdx = (name) => dims.findIndex((n) => n === name);
+  const metIdx = (name) => mets.findIndex((n) => n === name);
+  return { dimIdx, metIdx, dims, mets };
+}
+// Safely read a metric by header name; falls back to 0 when missing
+function metValByName(row, headers, name, fallbacks = []) {
+  const all = [name, ...fallbacks];
+  for (const n of all) {
+    const i = headers.metIdx(n);
+    if (i >= 0) {
+      const v = Number(row?.metricValues?.[i]?.value ?? 0);
+      if (!Number.isNaN(v)) return v;
+    }
+  }
+  return 0;
 }
 function buildChannelPieUrl(rows) {
   if (!rows?.length) return "";
@@ -528,12 +519,10 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Connection status & properties
+  // Connection status (session + property id)
   const [gaSessionConnected, setGaSessionConnected] = useState(false);
   const [gaStatusLoading, setGaStatusLoading] = useState(true);
   const [hasProperty, setHasProperty] = useState(false);
-
-  const [propsState, setPropsState] = useState({ loading: true, email: null, properties: [], error: null });
 
   // Saved views notice
   const [saveNotice, setSaveNotice] = useState("");
@@ -559,9 +548,7 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      const lastProp = localStorage.getItem(LS_LAST_PROPERTY) || "";
       if (saved?.propertyId) setPropertyId(saved.propertyId);
-      else if (lastProp) setPropertyId(lastProp);
       if (saved?.startDate) setStartDate(saved.startDate);
       if (saved?.endDate) setEndDate(saved.endDate);
       if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
@@ -583,7 +570,6 @@ export default function Home() {
           channelSel,
         })
       );
-      if (propertyId) localStorage.setItem(LS_LAST_PROPERTY, String(propertyId));
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
 
@@ -591,7 +577,7 @@ export default function Home() {
     setHasProperty(!!(propertyId && String(propertyId).trim()));
   }, [propertyId]);
 
-  /* ------------------------ New: Robust GA session status ------------------------ */
+  /* ------------------------ Robust GA session status ------------------------ */
   useEffect(() => {
     let mounted = true;
     let pollId = null;
@@ -602,7 +588,7 @@ export default function Home() {
       setGaSessionConnected(!!val);
       setGaStatusLoading(false);
       try {
-        localStorage.setItem(LS_GA_CONNECTED, val ? "1" : "0");
+        localStorage.setItem("insightgpt_ga_session_connected", val ? "1" : "0");
       } catch {}
     };
 
@@ -610,13 +596,14 @@ export default function Home() {
       try {
         setGaStatusLoading(true);
         const data = await fetchJson("/api/auth/google/status", null, { method: "GET" });
-        const isConnected = !!(data?.hasTokens && data?.expired === false);
-        markConnected(isConnected);
+        // Current backend returns { hasTokens, expired }
+        const connected = !!data?.hasTokens && !data?.expired;
+        markConnected(connected);
       } catch {
-        // Fallback to last-known state
         try {
-          const last = localStorage.getItem(LS_GA_CONNECTED);
-          markConnected(last === "1");
+          const last = localStorage.getItem("insightgpt_ga_session_connected");
+          if (last === "1") markConnected(true);
+          else markConnected(false);
         } catch {
           markConnected(false);
         }
@@ -625,7 +612,7 @@ export default function Home() {
 
     checkAuth();
 
-    // Poll briefly after page load to catch OAuth callback
+    // Poll for first minute (6x / 10s) to catch OAuth callback updates
     pollId = setInterval(async () => {
       attempts += 1;
       if (attempts > 6) {
@@ -652,74 +639,15 @@ export default function Home() {
     };
   }, []);
 
-  /* ------------------------ New: Load GA4 properties after auth ------------------------ */
-  useEffect(() => {
-    const loadProps = async () => {
-      if (!gaSessionConnected) {
-        setPropsState({ loading: false, email: null, properties: [], error: null });
-        return;
-      }
-      try {
-        setPropsState((s) => ({ ...s, loading: true, error: null }));
-        const j = await fetchJson("/api/ga4/properties", null, { method: "GET" });
-        if (!j.ok) throw new Error(j.error || "Failed to list properties");
-        const props = j.properties || [];
-        // If no property is set, pick last used or first available
-        if (!propertyId && props.length > 0) {
-          const last = (typeof window !== "undefined" && localStorage.getItem(LS_LAST_PROPERTY)) || "";
-          const chosen = last && props.some((p) => String(p.id) === String(last)) ? last : String(props[0].id);
-          setPropertyId(chosen);
-          try { localStorage.setItem(LS_LAST_PROPERTY, String(chosen)); } catch {}
-        }
-        setPropsState({ loading: false, email: j.email || null, properties: props, error: null });
-      } catch (e) {
-        setPropsState({ loading: false, email: null, properties: [], error: e.message || String(e) });
-      }
-    };
-    loadProps();
-    // only when session flips to connected or propertyId changes from empty to set
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gaSessionConnected]);
-
-  /* ------------------------ Actions ------------------------ */
   const connect = () => {
-    window.location.href = "/api/auth/google/start?redirect=/";
+    window.location.href = "/api/auth/google/start";
   };
   const applyFilters = () => {
     setAppliedFilters({ country: countrySel, channelGroup: channelSel });
   };
 
-  /** Primary GA call for Channels hero — tries query-raw first, falls back to legacy */
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
-    const dateRanges = [{ startDate, endDate }];
-    const dimensionFilter = buildDimensionFilter(filters || {});
-    const body = {
-      propertyId: String(propertyId),
-      dateRanges,
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-      dimensions: [{ name: "sessionDefaultChannelGroup" }],
-      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-      dimensionFilter,
-      limit: 100,
-    };
-
-    // Attempt query-raw (smoketest-proven)
-    try {
-      const r = await fetchJson("/api/ga4/query-raw", body);
-      if (r?.ok && r?.response?.rows) return r.response;
-      // Some older handlers wrap directly
-      if (r?.rows) return r;
-      throw new Error(r?.error || "query-raw returned no rows");
-    } catch (e) {
-      // Fallback to your legacy "/api/ga4/query" if present
-      try {
-        const legacy = await fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
-        return legacy;
-      } catch (e2) {
-        // Surface the original error for clarity
-        throw e;
-      }
-    }
+    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
   }
 
   const runReport = async () => {
@@ -737,7 +665,7 @@ export default function Home() {
       // If the call works, we are definitely connected
       setGaSessionConnected(true);
       try {
-        localStorage.setItem(LS_GA_CONNECTED, "1");
+        localStorage.setItem("insightgpt_ga_session_connected", "1");
       } catch {}
 
       setResult(curr);
@@ -770,10 +698,10 @@ export default function Home() {
         setPrevResult(prev);
       }
     } catch (e) {
-      if (e.status === 401 || e.status === 403 || /expired|unauthor/i.test(String(e.message || ""))) {
+      if (e.status === 401 || e.status === 403) {
         setGaSessionConnected(false);
         try {
-          localStorage.setItem(LS_GA_CONNECTED, "0");
+          localStorage.setItem("insightgpt_ga_session_connected", "0");
         } catch {}
         setError(
           'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.'
@@ -816,7 +744,6 @@ export default function Home() {
     : gaSessionConnected
     ? { s: "good", label: "Google session: Connected" }
     : { s: "bad", label: "Google session: Not connected" };
-
   const propertyStatus = hasProperty
     ? { s: "good", label: "Property ID: Present" }
     : { s: "bad", label: "Property ID: Missing" };
@@ -824,9 +751,8 @@ export default function Home() {
   /* ============================== Premium ============================== */
   const premium = isPremium();
 
-  const runDisabled = loading || !hasProperty; // session flag no longer blocks run
+  const runDisabled = loading || !hasProperty; // report only blocked by property presence
 
-  /* ============================== UI ============================== */
   return (
     <main
       style={{
@@ -861,12 +787,12 @@ export default function Home() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Image
               src="/logo.svg"
-              alt="InsightGPT"
+              alt="AnalyticsAssistant"
               width={26}
               height={26}
               priority
             />
-            <h1 style={{ margin: 0, fontSize: 18 }}>InsightGPT (MVP)</h1>
+            <h1 style={{ margin: 0, fontSize: 18 }}>AnalyticsAssistant (MVP)</h1>
           </div>
 
           <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -925,7 +851,6 @@ export default function Home() {
           </>
         }
       >
-        {/* Property selector (auto-loaded) + manual entry stay side-by-side */}
         <div
           style={{
             display: "grid",
@@ -935,36 +860,8 @@ export default function Home() {
           }}
         >
           <div>
-            <label htmlFor="property-select" style={{ fontSize: 12, color: COLORS.subtext }}>
-              GA4 Property (from Google)
-            </label>
-            <select
-              id="property-select"
-              value={String(propertyId || "")}
-              onChange={(e) => setPropertyId(e.target.value)}
-              style={{
-                marginTop: 6,
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
-            >
-              <option value="">{propsState.loading ? "Loading…" : "(none selected)"}</option>
-              {(propsState.properties || []).map((p) => (
-                <option key={p.id} value={String(p.id)}>
-                  {p.displayName} (id: {p.id})
-                </option>
-              ))}
-            </select>
-            {propsState.error ? (
-              <div style={{ color: COLORS.googleRed, marginTop: 6, fontSize: 12 }}>Props error: {propsState.error}</div>
-            ) : null}
-          </div>
-
-          <div>
             <label htmlFor="property-id" style={{ fontSize: 12, color: COLORS.subtext }}>
-              Or enter GA4 Property ID manually
+              GA4 Property ID
             </label>
             <input
               id="property-id"
@@ -1373,6 +1270,15 @@ export default function Home() {
         />
       </PremiumGate>
 
+      <PremiumGate label="Landing Pages × Attribution" premium={premium}>
+        <LandingPages
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      </PremiumGate>
+
       {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
         <Products
           propertyId={propertyId}
@@ -1533,12 +1439,6 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
 }
 
 /* ============================== Sections ============================== */
-/**
- * The following sections keep your original logic but benefit automatically
- * from the fixed status + property bootstrapping. They still call their
- * dedicated API routes; the global hero switched to query-raw for reliability.
- */
-
 function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -1561,13 +1461,19 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
         filters,
         limit: 25,
       });
-      const parsed = (data.rows || []).map((r) => ({
-        source: r.dimensionValues?.[0]?.value || "(unknown)",
-        medium: r.dimensionValues?.[1]?.value || "(unknown)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
+
+      const H = getHeaderIndexes(data);
+      // Accept common header names
+      const iSource = ["source", "sessionSource"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const iMedium = ["medium", "sessionMedium"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const out = (data.rows || []).map((r) => ({
+        source: iSource >= 0 ? (r.dimensionValues?.[iSource]?.value || "(unknown)") : "(unknown)",
+        medium: iMedium >= 0 ? (r.dimensionValues?.[iMedium]?.value || "(unknown)") : "(unknown)",
+        sessions: metValByName(r, H, "sessions"),
+        users: metValByName(r, H, "totalUsers", ["users"]),
       }));
-      setRows(parsed);
+
+      setRows(out);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -1681,12 +1587,16 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
         filters,
         limit: 50,
       });
-      const parsed = (data.rows || []).map((r) => ({
-        campaign: r.dimensionValues?.[0]?.value || "(not set)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
+
+      const H = getHeaderIndexes(data);
+      const iCampaign = ["campaign", "sessionCampaign"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const out = (data.rows || []).map((r, i) => ({
+        campaign: iCampaign >= 0 ? (r.dimensionValues?.[iCampaign]?.value || "(not set)") : `(row ${i + 1})`,
+        sessions: metValByName(r, H, "sessions"),
+        users: metValByName(r, H, "totalUsers", ["users"]),
       }));
-      setRows(parsed);
+
+      setRows(out);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -1806,47 +1716,77 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         limit: 25,
       });
 
-      const t = data?.totals?.rows?.[0]?.metricValues || [];
-      const totalsParsed = {
-        sessions: Number(t?.[0]?.value || 0),
-        users: Number(t?.[1]?.value || 0),
-        transactions: Number(t?.[2]?.value || 0),
-        revenue: Number(t?.[3]?.value || 0),
-      };
-      setTotals(totalsParsed);
+      // Totals
+      if (data?.totals) {
+        const HT = getHeaderIndexes(data.totals);
+        const row0 = data.totals.rows?.[0];
+        const totalsParsed = row0
+          ? {
+              sessions: metValByName(row0, HT, "sessions"),
+              users: metValByName(row0, HT, "totalUsers", ["users"]),
+              transactions: metValByName(row0, HT, "transactions"),
+              revenue: metValByName(row0, HT, "purchaseRevenue", ["revenue", "totalRevenue"]),
+            }
+          : null;
+        setTotals(totalsParsed);
+      }
 
-      const parseRows = (rows) =>
-        (rows || []).map((r, i) => ({
-          d1: r.dimensionValues?.[0]?.value || "",
-          d2: r.dimensionValues?.[1]?.value || "",
-          sessions: Number(r.metricValues?.[0]?.value || 0),
-          users: Number(r.metricValues?.[1]?.value || 0),
-          transactions: Number(r.metricValues?.[2]?.value || 0),
-          revenue: Number(r.metricValues?.[3]?.value || 0),
+      // Utility to parse 2‑dimensional breakdowns with four metrics
+      const parse2D = (block, d1Candidates, d2Candidates) => {
+        if (!block) return [];
+        const H = getHeaderIndexes(block);
+        const iD1 = d1Candidates.map(H.dimIdx).find((i) => i >= 0) ?? -1;
+        const iD2 = d2Candidates.map(H.dimIdx).find((i) => i >= 0) ?? -1;
+        return (block.rows || []).map((r, i) => ({
+          d1: iD1 >= 0 ? (r.dimensionValues?.[iD1]?.value || "") : "",
+          d2: iD2 >= 0 ? (r.dimensionValues?.[iD2]?.value || "") : "",
+          sessions: metValByName(r, H, "sessions"),
+          users: metValByName(r, H, "totalUsers", ["users"]),
+          transactions: metValByName(r, H, "transactions"),
+          revenue: metValByName(r, H, "purchaseRevenue", ["revenue", "totalRevenue"]),
           key: `r-${i}`,
         }));
+      };
 
-      setSrcMed(parseRows(data?.sourceMedium?.rows));
-      setContent(
-        (data?.adContent?.rows || []).map((r, i) => ({
-          content: r.dimensionValues?.[0]?.value || "(not set)",
-          sessions: Number(r.metricValues?.[0]?.value || 0),
-          users: Number(r.metricValues?.[1]?.value || 0),
-          transactions: Number(r.metricValues?.[2]?.value || 0),
-          revenue: Number(r.metricValues?.[3]?.value || 0),
-          key: `c-${i}`,
-        }))
+      setSrcMed(
+        parse2D(
+          data?.sourceMedium,
+          ["source", "sessionSource"],
+          ["medium", "sessionMedium"]
+        )
       );
-      setTerm(
-        (data?.term?.rows || []).map((r, i) => ({
-          term: r.dimensionValues?.[0]?.value || "(not set)",
-          sessions: Number(r.metricValues?.[0]?.value || 0),
-          users: Number(r.metricValues?.[1]?.value || 0),
-          transactions: Number(r.metricValues?.[2]?.value || 0),
-          revenue: Number(r.metricValues?.[3]?.value || 0),
-          key: `t-${i}`,
-        }))
-      );
+
+      // Ad Content is 1‑dimension
+      if (data?.adContent) {
+        const Hc = getHeaderIndexes(data.adContent);
+        const iContent = ["adContent", "sessionAdContent", "creativeName"].map(Hc.dimIdx).find((i) => i >= 0) ?? -1;
+        setContent(
+          (data.adContent.rows || []).map((r, i) => ({
+            content: iContent >= 0 ? (r.dimensionValues?.[iContent]?.value || "(not set)") : `(row ${i + 1})`,
+            sessions: metValByName(r, Hc, "sessions"),
+            users: metValByName(r, Hc, "totalUsers", ["users"]),
+            transactions: metValByName(r, Hc, "transactions"),
+            revenue: metValByName(r, Hc, "purchaseRevenue", ["revenue", "totalRevenue"]),
+            key: `c-${i}`,
+          }))
+        );
+      }
+
+      // Term is 1‑dimension
+      if (data?.term) {
+        const Ht = getHeaderIndexes(data.term);
+        const iTerm = ["term", "keyword"].map(Ht.dimIdx).find((i) => i >= 0) ?? -1;
+        setTerm(
+          (data.term.rows || []).map((r, i) => ({
+            term: iTerm >= 0 ? (r.dimensionValues?.[iTerm]?.value || "(not set)") : `(row ${i + 1})`,
+            sessions: metValByName(r, Ht, "sessions"),
+            users: metValByName(r, Ht, "totalUsers", ["users"]),
+            transactions: metValByName(r, Ht, "transactions"),
+            revenue: metValByName(r, Ht, "purchaseRevenue", ["revenue", "totalRevenue"]),
+            key: `t-${i}`,
+          }))
+        );
+      }
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -2004,12 +1944,15 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
         filters,
         limit: 100,
       });
+
+      const H = getHeaderIndexes(data);
+      const iCampaign = ["campaign", "sessionCampaign"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
       const parsed = (data.rows || []).map((r, i) => {
-        const name = r.dimensionValues?.[0]?.value ?? "(not set)";
-        const sessions = Number(r.metricValues?.[0]?.value || 0);
-        const users = Number(r.metricValues?.[1]?.value || 0);
-        const transactions = Number(r.metricValues?.[2]?.value || 0);
-        const revenue = Number(r.metricValues?.[3]?.value || 0);
+        const name = iCampaign >= 0 ? (r.dimensionValues?.[iCampaign]?.value ?? "(not set)") : `(row ${i + 1})`;
+        const sessions = metValByName(r, H, "sessions");
+        const users = metValByName(r, H, "totalUsers", ["users"]);
+        const transactions = metValByName(r, H, "transactions");
+        const revenue = metValByName(r, H, "purchaseRevenue", ["revenue", "totalRevenue"]);
         const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
         const aov = transactions > 0 ? revenue / transactions : 0;
         return { key: `c-${i}`, name, sessions, users, transactions, revenue, cvr, aov };
@@ -2170,13 +2113,18 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
     setRows([]);
     try {
       const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
-      const parsed = (data.rows || []).map((r) => ({
-        title: r.dimensionValues?.[0]?.value || "(untitled)",
-        path: r.dimensionValues?.[1]?.value || "",
-        views: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
+
+      const H = getHeaderIndexes(data);
+      const iTitle = ["pageTitle"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const iPath = ["pagePath", "pagePathPlusQueryString", "landingPage", "landingPagePlusQueryString"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const out = (data.rows || []).map((r, i) => ({
+        title: iTitle >= 0 ? (r.dimensionValues?.[iTitle]?.value || "(untitled)") : `(row ${i + 1})`,
+        path: iPath >= 0 ? (r.dimensionValues?.[iPath]?.value || "") : "",
+        views: metValByName(r, H, "screenPageViews", ["views", "pageViews", "sessions"]),
+        users: metValByName(r, H, "totalUsers", ["users"]),
       }));
-      setRows(parsed);
+
+      setRows(out);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -2279,15 +2227,28 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         filters,
         limit: 500,
       });
+
+      const H = getHeaderIndexes(data);
+      const iLanding = [
+        "landingPage",
+        "landingPagePlusQueryString",
+        "pagePath",
+        "pagePathPlusQueryString",
+      ]
+        .map(H.dimIdx)
+        .find((i) => i >= 0) ?? -1;
+      const iSource = ["source", "sessionSource"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const iMedium = ["medium", "sessionMedium"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+
       const parsed = (data?.rows || []).map((r, i) => ({
-        landing: r.dimensionValues?.[0]?.value || "(unknown)",
-        source: r.dimensionValues?.[1]?.value || "(unknown)",
-        medium: r.dimensionValues?.[2]?.value || "(unknown)",
-        sessions: Number(r.metricValues?.[0]?.value || 0),
-        users: Number(r.metricValues?.[1]?.value || 0),
-        transactions: Number(r.metricValues?.[2]?.value || 0),
-        revenue: Number(r.metricValues?.[3]?.value || 0),
-        _k: `${i}-${r.dimensionValues?.[0]?.value || ""}-${r.dimensionValues?.[1]?.value || ""}-${r.dimensionValues?.[2]?.value || ""}`,
+        landing: iLanding >= 0 ? (r.dimensionValues?.[iLanding]?.value || "(unknown)") : `(row ${i + 1})`,
+        source: iSource >= 0 ? (r.dimensionValues?.[iSource]?.value || "(unknown)") : "(unknown)",
+        medium: iMedium >= 0 ? (r.dimensionValues?.[iMedium]?.value || "(unknown)") : "(unknown)",
+        sessions: metValByName(r, H, "sessions"),
+        users: metValByName(r, H, "totalUsers", ["users"]),
+        transactions: metValByName(r, H, "transactions"),
+        revenue: metValByName(r, H, "purchaseRevenue", ["revenue", "totalRevenue"]),
+        _k: `${i}-${Math.random().toString(36).slice(2, 8)}`,
       }));
       setRows(parsed);
       setTopOnly(false);
@@ -2904,20 +2865,12 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
 
   function parseProductsResponse(data) {
     if (!data || !Array.isArray(data.rows)) return [];
+    const H = getHeaderIndexes(data);
 
-    const dimNames = (data.dimensionHeaders || []).map((h) => h.name);
-    const metNames = (data.metricHeaders || []).map((h) => h.name);
+    const iItemName = ["itemName", "item_name"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+    const iItemId = ["itemId", "item_id"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
 
-    const iItemName = dimNames.findIndex((n) => n === "itemName");
-    const iItemId = dimNames.findIndex((n) => n === "itemId");
-
-    const iViews = metNames.findIndex((n) => n === "itemViews");
-    const iCarts = metNames.findIndex((n) => n === "addToCarts");
-    const iPurchQty = metNames.findIndex((n) => n === "itemPurchaseQuantity");
-    const iPurchAlt1 = metNames.findIndex((n) => n === "itemsPurchased");
-    const iRevenue = metNames.findIndex((n) => n === "itemRevenue");
-
-    return data.rows.map((r, idx) => {
+    return (data.rows || []).map((r, idx) => {
       const name =
         iItemName >= 0
           ? r.dimensionValues?.[iItemName]?.value || "(unknown)"
@@ -2925,15 +2878,10 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
           ? r.dimensionValues?.[iItemId]?.value || "(unknown)"
           : `(row ${idx + 1})`;
 
-      const views = iViews >= 0 ? Number(r.metricValues?.[iViews]?.value || 0) : 0;
-      const carts = iCarts >= 0 ? Number(r.metricValues?.[iCarts]?.value || 0) : 0;
-      const purchases =
-        iPurchQty >= 0
-          ? Number(r.metricValues?.[iPurchQty]?.value || 0)
-          : iPurchAlt1 >= 0
-          ? Number(r.metricValues?.[iPurchAlt1]?.value || 0)
-          : 0;
-      const revenue = iRevenue >= 0 ? Number(r.metricValues?.[iRevenue]?.value || 0) : 0;
+      const views = metValByName(r, H, "itemViews", ["itemsViewed", "screenPageViews", "views"]);
+      const carts = metValByName(r, H, "addToCarts", ["cartAdds"]);
+      const purchases = metValByName(r, H, "itemPurchaseQuantity", ["itemsPurchased"]);
+      const revenue = metValByName(r, H, "itemRevenue", ["purchaseRevenue", "revenue"]);
 
       return {
         key: `p-${idx}`,
@@ -2966,11 +2914,12 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
 
     try {
       const { data, which } = await tryEndpoints();
+      const H = getHeaderIndexes(data);
       setDebug({
         which,
         headers: {
-          dimensions: (data?.dimensionHeaders || []).map((h) => h.name),
-          metrics: (data?.metricHeaders || []).map((h) => h.name),
+          dimensions: H.dims,
+          metrics: H.mets,
         },
       });
 

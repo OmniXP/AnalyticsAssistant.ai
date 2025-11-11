@@ -1,118 +1,59 @@
-// /web/pages/api/ga4/checkout-funnel.js
-import { getIronSession } from "iron-session";
+// web/pages/api/ga4/checkout-funnel.js
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
-
-function buildFilterExpression({ country, channel }) {
-  const andExprs = [];
-
-  if (country) {
-    andExprs.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { matchType: "EXACT", value: String(country) },
-      },
-    });
+function buildDimFilter(filters = {}) {
+  const exprs = [];
+  if (filters.country && filters.country !== "All") {
+    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
-  if (channel) {
-    andExprs.push({
-      filter: {
-        fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { matchType: "EXACT", value: String(channel) },
-      },
-    });
+  if (filters.channelGroup && filters.channelGroup !== "All") {
+    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-
-  // Restrict to the funnel events we care about
-  const funnelEvents = [
-    "add_to_cart",
-    "begin_checkout",
-    "add_shipping_info",
-    "add_payment_info",
-    "purchase",
-  ];
-  const orEvents = funnelEvents.map((ev) => ({
-    filter: {
-      fieldName: "eventName",
-      stringFilter: { matchType: "EXACT", value: ev },
-    },
-  }));
-
-  const base = { orGroup: { expressions: orEvents } };
-
-  if (andExprs.length === 0) return base;
-  return { andGroup: { expressions: [base, ...andExprs] } };
+  if (!exprs.length) return undefined;
+  return { andGroup: { expressions: exprs } };
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
   try {
-    const session = await getIronSession(req, res, sessionOptions);
-    const ga = session.gaTokens;
-    if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
+    const { bearer, error } = await getBearerForRequest(req);
+    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
 
-    const { propertyId, startDate, endDate, country, channel } = req.body || {};
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
-    }
+    const { propertyId, startDate, endDate, filters } = req.body || {};
+    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
 
-    const filterExpression = buildFilterExpression({
-      country: normalise(country),
-      channel: normalise(channel),
-    });
+    const events = ["add_to_cart", "begin_checkout", "add_shipping_info", "add_payment_info", "purchase"];
 
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
     const body = {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: "eventName" }],
       metrics: [{ name: "eventCount" }],
-      ...(filterExpression ? { dimensionFilter: filterExpression } : {}),
+      dimensionFilter: {
+        andGroup: {
+          expressions: [
+            { filter: { fieldName: "eventName", inListFilter: { values: events } } },
+            ...(buildDimFilter(filters)?.andGroup?.expressions || []),
+          ],
+        },
+      },
     };
 
-    const apiRes = await fetch(url, {
+    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
       body: JSON.stringify(body),
     });
+    const json = await r.json();
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
 
-    const data = await apiRes.json().catch(() => null);
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json({ error: "GA4 API error (checkout-funnel)", details: data });
+    const steps = Object.fromEntries(events.map((e) => [e, 0]));
+    for (const row of json.rows || []) {
+      const name = row.dimensionValues?.[0]?.value || "";
+      const val = Number(row.metricValues?.[0]?.value || 0);
+      if (steps[name] != null) steps[name] += val;
     }
-
-    // Reduce into a simple dictionary
-    const steps = { add_to_cart: 0, begin_checkout: 0, add_shipping_info: 0, add_payment_info: 0, purchase: 0 };
-    (data?.rows || []).forEach((r) => {
-      const name = r?.dimensionValues?.[0]?.value || "";
-      const count = Number(r?.metricValues?.[0]?.value || 0);
-      if (Object.prototype.hasOwnProperty.call(steps, name)) steps[name] = count;
-    });
-
-    return res.status(200).json({
-      steps,
-      dateRange: { start: startDate, end: endDate },
-    });
+    return res.status(200).json({ ok: true, steps });
   } catch (e) {
-    return res.status(500).json({ error: "Server error (checkout-funnel)", details: String(e?.message || e) });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
-}
-
-function normalise(v) {
-  if (v == null) return null;
-  const s = String(v).trim().toLowerCase();
-  if (s === "" || s === "all") return null;
-  return v;
 }

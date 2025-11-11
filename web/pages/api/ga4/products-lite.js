@@ -1,67 +1,46 @@
-// /pages/api/ga4/products-lite.js
-import { getIronSession } from "iron-session";
+// web/pages/api/ga4/products-lite.js
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
+function buildDimFilter(filters = {}) {
+  const exprs = [];
+  if (filters.country && filters.country !== "All") {
+    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
+  }
+  if (filters.channelGroup && filters.channelGroup !== "All") {
+    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
+  }
+  if (!exprs.length) return undefined;
+  return { andGroup: { expressions: exprs } };
+}
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
   try {
-    const session = await getIronSession(req, res, sessionOptions);
-    const ga = session.gaTokens;
-    if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
+    const { bearer, error } = await getBearerForRequest(req);
+    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
 
-    const { propertyId, startDate, endDate, limit } = req.body || {};
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
-    }
+    const { propertyId, startDate, endDate, filters, limit = 100 } = req.body || {};
+    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
 
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+    // Leaner field set that tends to exist across GA4 setups
     const body = {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: "itemName" }, { name: "itemId" }],
-      metrics: [{ name: "itemViews" }, { name: "addToCarts" }],
-      orderBys: [{ desc: true, metric: { metricName: "itemViews" } }],
-      limit: Math.min(Number(limit || 100), 1000),
+      metrics: [{ name: "itemViews" }, { name: "addToCarts" }, { name: "itemPurchaseQuantity" }, { name: "itemRevenue" }],
+      orderBys: [{ metric: { metricName: "itemViews" }, desc: true }],
+      limit: String(limit),
+      dimensionFilter: buildDimFilter(filters),
     };
 
-    const r = await fetch(url, {
+    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
       body: JSON.stringify(body),
     });
-    const data = await r.json().catch(() => null);
-
-    if (!r.ok) {
-      return res.status(r.status).json({
-        error: "GA4 API error (products-lite)",
-        details: data,
-      });
-    }
-
-    const rows = (data.rows || []).map((row) => ({
-      name: row.dimensionValues?.[0]?.value || "(unknown)",
-      id: row.dimensionValues?.[1]?.value || "",
-      itemViews: Number(row.metricValues?.[0]?.value || 0),
-      addToCarts: Number(row.metricValues?.[1]?.value || 0),
-      itemsPurchased: null, // not in lite
-      itemRevenue: null,    // not in lite
-    }));
-
-    return res.status(200).json({ rows, debug: { body, data } });
+    const json = await r.json();
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
+    return res.status(200).json(json);
   } catch (e) {
-    return res.status(500).json({ error: "Server error (products-lite)", message: String(e) });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }

@@ -1,114 +1,56 @@
-// /workspaces/insightsgpt/web/pages/api/ga4/timeseries.js
-import { getIronSession } from "iron-session";
+// web/pages/api/ga4/timeseries.js
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
-
-function buildDimensionFilter(filters) {
-  // filters = { country: "All" | "<name>", channelGroup: "All" | "<group>" }
-  const andFilters = [];
-
-  if (filters?.country && filters.country !== "All") {
-    andFilters.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { matchType: "EXACT", value: String(filters.country), caseSensitive: false },
-      },
-    });
+function buildDimFilter(filters = {}) {
+  const exprs = [];
+  if (filters.country && filters.country !== "All") {
+    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
-  if (filters?.channelGroup && filters.channelGroup !== "All") {
-    andFilters.push({
-      filter: {
-        fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { matchType: "EXACT", value: String(filters.channelGroup), caseSensitive: false },
-      },
-    });
+  if (filters.channelGroup && filters.channelGroup !== "All") {
+    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-
-  if (andFilters.length === 0) return undefined;
-  if (andFilters.length === 1) return andFilters[0];
-  return { andGroup: { expressions: andFilters } };
+  if (!exprs.length) return undefined;
+  return { andGroup: { expressions: exprs } };
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
   try {
-    const session = await getIronSession(req, res, sessionOptions);
-    const ga = session.gaTokens;
-    if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
+    const { bearer, error } = await getBearerForRequest(req);
+    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
 
-    const {
-      propertyId,
-      startDate,
-      endDate,
-      filters = { country: "All", channelGroup: "All" },
-      granularity = "daily", // "daily" | "weekly"
-    } = req.body || {};
+    const { propertyId, startDate, endDate, filters, granularity = "daily" } = req.body || {};
+    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
 
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
-    }
+    const periodDim = granularity === "weekly" ? "yearWeek" : "date";
 
-    const dimensionName = granularity === "weekly" ? "yearWeek" : "date";
-
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
     const body = {
       dateRanges: [{ startDate, endDate }],
-      metrics: [
-        { name: "sessions" },
-        { name: "totalUsers" },
-        // Ecommerce metrics will simply be 0 if there's no ecommerce, but GA4 allows them in the schema:
-        { name: "transactions" },
-        { name: "totalRevenue" },
-      ],
-      dimensions: [{ name: dimensionName }],
-      dimensionFilter: buildDimensionFilter(filters),
-      orderBys: [{ dimension: { dimensionName }, desc: false }],
-      limit: 100000,
+      dimensions: [{ name: periodDim }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
+      orderBys: [{ dimension: { dimensionName: periodDim }, desc: false }],
+      limit: "10000",
+      dimensionFilter: buildDimFilter(filters),
     };
 
-    const apiRes = await fetch(url, {
+    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
       body: JSON.stringify(body),
     });
+    const json = await r.json();
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
 
-    const data = await apiRes.json();
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json({
-        error: "GA4 API error (timeseries)",
-        details: data,
-      });
-    }
+    const series = (json.rows || []).map((row) => ({
+      period: row.dimensionValues?.[0]?.value || "",
+      sessions: Number(row.metricValues?.[0]?.value || 0),
+      users: Number(row.metricValues?.[1]?.value || 0),
+      transactions: Number(row.metricValues?.[2]?.value || 0),
+      revenue: Number(row.metricValues?.[3]?.value || 0),
+    }));
 
-    // Normalize into a simple series array the UI can use directly
-    const series = (data.rows || []).map((r) => {
-      const key = r.dimensionValues?.[0]?.value || "";
-      const sessions = Number(r.metricValues?.[0]?.value || 0);
-      const users = Number(r.metricValues?.[1]?.value || 0);
-      const transactions = Number(r.metricValues?.[2]?.value || 0);
-      const revenue = Number(r.metricValues?.[3]?.value || 0);
-      return { period: key, sessions, users, transactions, revenue };
-    });
-
-    res.status(200).json({
-      granularity,
-      dimension: dimensionName,
-      series,
-      raw: data,
-    });
+    return res.status(200).json({ ok: true, series });
   } catch (e) {
-    res.status(500).json({ error: "Server error (timeseries)", message: String(e?.message || e) });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }

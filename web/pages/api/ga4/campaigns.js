@@ -1,86 +1,45 @@
-// /workspaces/insightsgpt/web/pages/api/ga4/campaigns.js
-import { getIronSession } from "iron-session";
+// web/pages/api/ga4/campaigns.js
+import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-const sessionOptions = {
-  password: process.env.SESSION_PASSWORD,
-  cookieName: "insightgpt",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-  },
-};
-
-function buildDimensionFilter(filters) {
-  if (!filters) return undefined;
-  const andGroup = { andGroup: { expressions: [] } };
-
+function buildDimFilter(filters = {}) {
+  const exprs = [];
   if (filters.country && filters.country !== "All") {
-    andGroup.andGroup.expressions.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { value: String(filters.country), matchType: "EXACT" },
-      },
-    });
+    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
   if (filters.channelGroup && filters.channelGroup !== "All") {
-    andGroup.andGroup.expressions.push({
-      filter: {
-        fieldName: "sessionDefaultChannelGroup",
-        stringFilter: { value: String(filters.channelGroup), matchType: "EXACT" },
-      },
-    });
+    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-  if (andGroup.andGroup.expressions.length === 0) return undefined;
-  return andGroup;
+  if (!exprs.length) return undefined;
+  return { andGroup: { expressions: exprs } };
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
-
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
   try {
-    const session = await getIronSession(req, res, sessionOptions);
-    const ga = session.gaTokens;
-    if (!ga?.access_token) return res.status(401).json({ error: "Not connected" });
+    const { bearer, error } = await getBearerForRequest(req);
+    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
 
-    const { propertyId, startDate, endDate, filters, limit = 50 } = req.body || {};
-    if (!propertyId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing propertyId/startDate/endDate" });
-    }
-
-    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+    const { propertyId, startDate, endDate, filters, limit = 100 } = req.body || {};
+    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
 
     const body = {
       dateRanges: [{ startDate, endDate }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-      // ⬅️ fixed: use sessionCampaignName
-      dimensions: [{ name: "sessionCampaignName" }],
-      limit: Math.max(1, Math.min(100000, Number(limit) || 50)),
+      dimensions: [{ name: "campaign" }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
+      orderBys: [{ metric: { metricName: "purchaseRevenue" }, desc: true }],
+      limit: String(limit),
+      dimensionFilter: buildDimFilter(filters),
     };
 
-    const dimFilter = buildDimensionFilter(filters);
-    if (dimFilter) body.dimensionFilter = dimFilter;
-
-    const apiRes = await fetch(url, {
+    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${ga.access_token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
       body: JSON.stringify(body),
     });
-
-    const text = await apiRes.text();
-    let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
-
-    if (!apiRes.ok) {
-      const msg = data?.error?.message || text || "GA4 API error (campaigns)";
-      return res.status(apiRes.status).json({ error: msg, details: data || null });
-    }
-
-    return res.status(200).json(data || {});
-  } catch (err) {
-    return res.status(500).json({ error: "Server error (campaigns)", details: String(err?.message || err) });
+    const json = await r.json();
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
+    return res.status(200).json(json);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
