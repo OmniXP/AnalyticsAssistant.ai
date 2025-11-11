@@ -1,223 +1,210 @@
 // web/lib/server/ga4-session.js
-// Single source of truth for: session cookie, Google tokens, bearer refresh.
-// Uses Upstash KV via UPSTASH_KV_REST_URL / UPSTASH_KV_REST_TOKEN.
+// Single source of truth for: session cookie, Upstash KV token storage, token refresh.
+// Works on Vercel (fetch available). No external deps.
 
-const SESSION_COOKIE_NAME = "aa_sid";
-const KV_URL = process.env.UPSTASH_KV_REST_URL || "";
-const KV_TOKEN = process.env.UPSTASH_KV_REST_TOKEN || "";
+import crypto from "crypto";
 
-// ---------- small cookie helpers (server-only) ----------
-function parseCookie(header) {
-  const out = {};
-  if (!header) return out;
-  const parts = header.split(";").map((s) => s.trim()).filter(Boolean);
+export const SESSION_COOKIE_NAME = "aa_sid";
+export const AUTH_COOKIE_NAME = "aa_auth";
+
+// ---- Environment ----
+function requiredEnv(name) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env ${name}`);
+  return v;
+}
+function getKvEnv() {
+  const url = requiredEnv("UPSTASH_KV_REST_URL");
+  const token = requiredEnv("UPSTASH_KV_REST_TOKEN");
+  return { url, token };
+}
+function getGoogleEnv() {
+  const clientId = requiredEnv("GOOGLE_CLIENT_ID");
+  const clientSecret = requiredEnv("GOOGLE_CLIENT_SECRET");
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || ""; // optional but helpful
+  return { clientId, clientSecret, appUrl };
+}
+
+// ---- Cookies ----
+function readCookie(req, name) {
+  const raw = req.headers?.cookie || "";
+  const parts = raw.split(";").map((s) => s.trim());
   for (const p of parts) {
+    if (!p) continue;
     const i = p.indexOf("=");
     const k = i >= 0 ? p.slice(0, i) : p;
     const v = i >= 0 ? p.slice(i + 1) : "";
-    if (!(k in out)) out[k] = decodeURIComponent(v);
+    if (k === name) return decodeURIComponent(v);
   }
-  return out;
+  return null;
 }
-
-function serializeCookie(name, value, options = {}) {
-  const opts = {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    ...options,
-  };
-  const segs = [`${name}=${encodeURIComponent(value)}`, `Path=${opts.path}`];
-  if (opts.maxAge != null) segs.push(`Max-Age=${Math.floor(opts.maxAge)}`);
-  if (opts.expires instanceof Date) segs.push(`Expires=${opts.expires.toUTCString()}`);
-  if (opts.domain) segs.push(`Domain=${opts.domain}`);
-  if (opts.secure) segs.push("Secure");
-  if (opts.httpOnly) segs.push("HttpOnly");
-  if (opts.sameSite) segs.push(`SameSite=${opts.sameSite}`);
-  return segs.join("; ");
-}
-
-function setCookie(res, name, value, options = {}) {
-  const headerValue = serializeCookie(name, value, options);
+function setCookie(res, name, value, { maxAgeDays = 365 } = {}) {
+  const maxAge = maxAgeDays * 24 * 60 * 60;
+  const cookie = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "SameSite=Lax",
+    "Secure",
+    `Max-Age=${maxAge}`,
+  ].join("; ");
   const prev = res.getHeader("Set-Cookie");
-  if (!prev) res.setHeader("Set-Cookie", headerValue);
-  else if (Array.isArray(prev)) res.setHeader("Set-Cookie", [...prev, headerValue]);
-  else res.setHeader("Set-Cookie", [prev, headerValue]);
+  if (!prev) res.setHeader("Set-Cookie", cookie);
+  else if (Array.isArray(prev)) res.setHeader("Set-Cookie", [...prev, cookie]);
+  else res.setHeader("Set-Cookie", [prev, cookie]);
+}
+function clearCookie(res, name) {
+  const cookie = [
+    `${name}=; Path=/; Max-Age=0; SameSite=Lax; Secure`
+  ].join("");
+  const prev = res.getHeader("Set-Cookie");
+  if (!prev) res.setHeader("Set-Cookie", cookie);
+  else if (Array.isArray(prev)) res.setHeader("Set-Cookie", [...prev, cookie]);
+  else res.setHeader("Set-Cookie", [prev, cookie]);
 }
 
+// ---- Session id ----
 export function readSidFromCookie(req) {
-  const cookies = parseCookie(req.headers?.cookie || "");
-  return cookies[SESSION_COOKIE_NAME] || null;
+  return readCookie(req, SESSION_COOKIE_NAME);
 }
-
 export function ensureSid(req, res) {
-  const sid = readSidFromCookie(req);
-  if (sid) return sid;
-  const fresh = globalThis.crypto?.randomUUID
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  setCookie(res, SESSION_COOKIE_NAME, fresh, { maxAge: 60 * 60 * 24 * 365 });
-  return fresh;
+  let sid = readSidFromCookie(req);
+  if (!sid) {
+    sid = crypto.randomUUID();
+    setCookie(res, SESSION_COOKIE_NAME, sid);
+  }
+  return sid;
 }
 
-export { SESSION_COOKIE_NAME };
-
-// ---------- Upstash KV tiny client ----------
-async function kvFetch(path, init) {
-  if (!KV_URL || !KV_TOKEN) {
-    const e = new Error("Upstash KV not configured");
-    e.code = "KV_MISSING";
-    throw e;
-  }
-  const r = await fetch(`${KV_URL}${path}`, {
-    ...init,
+// ---- Upstash KV helpers ----
+async function kvFetch(path, { method = "GET", body } = {}) {
+  const { url, token } = getKvEnv();
+  const r = await fetch(`${url}${path}`, {
+    method,
     headers: {
-      Authorization: `Bearer ${KV_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      ...(init?.headers || {}),
     },
+    body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
-  const text = await r.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch { /* leave as text */ }
-  return { ok: r.ok, status: r.status, body: json ?? text };
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = json?.error || `KV ${method} ${path} failed (${r.status})`;
+    throw new Error(msg);
+  }
+  return json;
 }
-
 async function kvGet(key) {
-  const { ok, body } = await kvFetch(`/get/${encodeURIComponent(key)}`, { method: "GET" });
-  if (!ok) return null;
-  // Upstash KV returns: { result: "<string|null>" }
-  return body?.result ?? null;
+  const out = await kvFetch(`/get/${encodeURIComponent(key)}`);
+  return out?.result ?? null;
 }
-
-async function kvSet(key, value, ttlSeconds) {
-  const url = ttlSeconds != null
-    ? `/setex/${encodeURIComponent(key)}/${ttlSeconds}/${encodeURIComponent(value)}`
-    : `/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
-  const { ok } = await kvFetch(url, { method: "POST" });
-  return ok;
+async function kvSet(key, value) {
+  // value stored as JSON string
+  return kvFetch(`/set/${encodeURIComponent(key)}`, { method: "POST", body: { value: JSON.stringify(value) } });
 }
-
 async function kvDel(key) {
-  await kvFetch(`/del/${encodeURIComponent(key)}`, { method: "POST" });
+  return kvFetch(`/del/${encodeURIComponent(key)}`, { method: "POST" });
 }
 
-// ---------- Google token storage ----------
-function keyAccess(sid) { return `aa:access:${sid}`; }      // optional, not required by logic
-function keyGoogle(sid) { return `aa:ga:${sid}`; }          // canonical storage
-
-export function isExpired(tokens) {
-  if (!tokens) return true;
+// ---- Token storage ----
+function tokenKey(sid) {
+  return `aa:ga:${sid}`;
+}
+export async function saveGoogleTokens({ sid, tokens }) {
+  // expected tokens: { access_token, refresh_token?, expires_in? | expiry_date?, token_type, scope }
   const now = Date.now();
-  const expMs =
-    tokens.expires_at != null
-      ? Number(tokens.expires_at)
-      : tokens.expiry_date != null
-      ? Number(tokens.expiry_date)
-      : null;
-
-  if (!expMs) return true;
-
-  // safety buffer: refresh if within 60 seconds of expiry
-  return now >= (expMs - 60_000);
+  let expiry_date = tokens.expiry_date;
+  if (!expiry_date && tokens.expires_in) {
+    // convert seconds to absolute ms
+    expiry_date = now + Number(tokens.expires_in) * 1000 - 15000; // 15s early
+  }
+  const record = {
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token || null,
+    token_type: tokens.token_type || "Bearer",
+    scope: tokens.scope || "",
+    expiry_date: expiry_date || (now + 50 * 60 * 1000),
+    saved_at: new Date().toISOString(),
+  };
+  await kvSet(tokenKey(sid), record);
+  return record;
+}
+export async function clearGaTokens(req, res) {
+  const sid = readSidFromCookie(req);
+  if (sid) await kvDel(tokenKey(sid)).catch(() => {});
+  clearCookie(res, AUTH_COOKIE_NAME);
 }
 
-export async function saveGoogleTokens(sid, incoming) {
-  if (!sid) throw new Error("saveGoogleTokens: missing sid");
-  if (!incoming || typeof incoming !== "object") throw new Error("saveGoogleTokens: missing tokens");
-
-  // Pull any existing record so we can preserve the refresh_token if Google omits it on refresh.
-  const existingRaw = await kvGet(keyGoogle(sid));
-  let existing = null;
-  try { existing = existingRaw ? JSON.parse(existingRaw) : null; } catch { existing = null; }
-
-  const merged = { ...(existing || {}), ...(incoming || {}) };
-
-  // Normalise expiry -> milliseconds since epoch
-  // Google's token endpoint returns either:
-  //   - expires_in (seconds) on refresh
-  //   - expiry_date (ms) on some flows
-  if (typeof incoming.expires_in === "number") {
-    merged.expires_at = Date.now() + (incoming.expires_in * 1000);
-  } else if (typeof incoming.expiry_date === "number") {
-    merged.expires_at = incoming.expiry_date;
-  } else if (typeof existing?.expires_at === "number") {
-    merged.expires_at = existing.expires_at;
-  }
-
-  // If refresh_token omitted on refresh, keep the old one.
-  if (!incoming.refresh_token && existing?.refresh_token) {
-    merged.refresh_token = existing.refresh_token;
-  }
-
-  // Persist canonical record
-  await kvSet(keyGoogle(sid), JSON.stringify(merged));
-  // Optional mirror for debugging
-  await kvSet(keyAccess(sid), JSON.stringify(merged));
-
-  return merged;
-}
-
-export async function getGoogleTokens(sid) {
+export async function getGoogleTokens(req) {
+  const sid = readSidFromCookie(req);
   if (!sid) return null;
-  const raw = await kvGet(keyGoogle(sid));
+  const raw = await kvGet(tokenKey(sid));
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  // raw may already be object or JSON string
+  let obj = raw;
+  if (typeof raw === "string") {
+    try { obj = JSON.parse(raw); } catch { obj = null; }
+  }
+  return obj;
+}
+export function isExpired(tokens) {
+  const t = Number(tokens?.expiry_date || 0);
+  if (!t) return true;
+  return Date.now() >= t;
 }
 
-export async function clearGaTokens(sid) {
-  if (!sid) return;
-  await kvDel(keyGoogle(sid));
-  await kvDel(keyAccess(sid));
-}
-
-async function refreshGoogleTokens(sid, tokens) {
+// ---- Refresh flow ----
+async function refreshAccessToken(tokens) {
+  const { clientId, clientSecret } = getGoogleEnv();
   const refresh_token = tokens?.refresh_token;
-  if (!refresh_token) throw new Error("No refresh_token available to refresh");
+  if (!refresh_token) throw new Error("No refresh_token available");
 
-  const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID || "",
-    client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
-    grant_type: "refresh_token",
-    refresh_token,
-  });
+  const params = new URLSearchParams();
+  params.set("client_id", clientId);
+  params.set("client_secret", clientSecret);
+  params.set("grant_type", "refresh_token");
+  params.set("refresh_token", refresh_token);
 
-  const resp = await fetch("https://oauth2.googleapis.com/token", {
+  const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
   });
-
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`Token refresh failed: ${resp.status} ${t}`);
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(json?.error_description || json?.error || `Google token refresh failed (${r.status})`);
   }
-
-  const next = await resp.json();
-  // next contains: access_token, expires_in, scope, token_type
-  const merged = await saveGoogleTokens(sid, next);
-  return merged;
+  return {
+    access_token: json.access_token,
+    refresh_token: refresh_token, // keep original
+    token_type: json.token_type || "Bearer",
+    scope: json.scope || tokens.scope || "",
+    expires_in: json.expires_in,
+  };
 }
 
+// ---- Public: get bearer for any API request ----
 export async function getBearerForRequest(req) {
   const sid = readSidFromCookie(req);
-  if (!sid) return null;
+  if (!sid) return { error: "No session", bearer: null };
 
-  let tokens = await getGoogleTokens(sid);
-  if (!tokens) return null;
+  let tokens = await getGoogleTokens(req);
+  if (!tokens) return { error: "No tokens", bearer: null };
 
-  // If expired or close to expiry, refresh
   if (isExpired(tokens)) {
     try {
-      tokens = await refreshGoogleTokens(sid, tokens);
-    } catch (e) {
-      // If refresh fails, surface null so caller can respond with 401
-      return null;
+      const refreshed = await refreshAccessToken(tokens);
+      const saved = await saveGoogleTokens({ sid, tokens: refreshed });
+      tokens = saved;
+    } catch (err) {
+      return { error: `Token refresh failed: ${String(err?.message || err)}`, bearer: null };
     }
   }
 
-  const token = tokens.access_token || null;
-  return token;
+  return { bearer: tokens.access_token, error: null };
+}
+
+// ---- Convenience: mark authenticated ----
+export function markAuthed(res) {
+  setCookie(res, AUTH_COOKIE_NAME, "1", { maxAgeDays: 30 });
 }

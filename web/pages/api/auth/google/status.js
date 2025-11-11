@@ -6,23 +6,9 @@ export default async function handler(req, res) {
     const tokens = await getGoogleTokens(req);
     const hasTokens = !!tokens;
     const expired = hasTokens ? isExpired(tokens) : true;
-
-    // What index.js expects
     const connected = hasTokens && !expired;
-
-    return res.status(200).json({
-      ok: true,
-      hasTokens,
-      expired,
-      connected,
-    });
+    return res.status(200).json({ ok: true, hasTokens, expired, connected });
   } catch (e) {
-    return res.status(200).json({
-      ok: true,
-      hasTokens: false,
-      expired: true,
-      connected: false,
-      error: String(e?.message || e),
-    });
+    return res.status(200).json({ ok: true, hasTokens: false, expired: true, connected: false, error: String(e?.message || e) });
   }
 }
