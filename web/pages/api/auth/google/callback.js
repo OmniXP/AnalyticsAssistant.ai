@@ -1,53 +1,59 @@
 // web/pages/api/auth/google/callback.js
-import { ensureSid, saveGoogleTokens, markAuthed } from "../../../../lib/server/ga4-session.js";
+import { ensureSid, saveGoogleTokens } from "../../../../lib/server/ga4-session.js";
+
+async function exchangeCodeForTokens({ code, redirectUri }) {
+  const params = new URLSearchParams();
+  params.set("code", code);
+  params.set("client_id", process.env.GOOGLE_CLIENT_ID);
+  params.set("client_secret", process.env.GOOGLE_CLIENT_SECRET);
+  params.set("redirect_uri", redirectUri);
+  params.set("grant_type", "authorization_code");
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = j?.error_description || j?.error || `Token exchange failed ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  return j; // includes access_token, refresh_token, expires_in, id_token, etc.
+}
 
 export default async function handler(req, res) {
   try {
     const origin =
       process.env.NEXT_PUBLIC_APP_URL ||
       `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}`;
-    const { clientId, clientSecret } = (await import("../../../../lib/server/ga4-session.js")).getGoogleEnv?.() || {};
     const redirectUri = `${origin}/api/auth/google/callback`;
 
-    // Google sends ?code=…&state=…
-    const { code, state } = req.query || {};
-    if (!code) return res.status(400).send("Missing code");
+    const { code, state } = req.query;
+    if (!code) throw new Error("Missing ?code");
 
-    // Recover state
-    let desiredRedirect = "/";
+    // recover state
+    let redirect = "/";
     try {
-      const parsed = JSON.parse(Buffer.from(String(state || ""), "base64url").toString("utf8"));
-      if (parsed?.redirect && typeof parsed.redirect === "string") desiredRedirect = parsed.redirect;
+      const decoded = JSON.parse(Buffer.from(String(state || ""), "base64url").toString("utf8"));
+      if (decoded?.redirect) redirect = decoded.redirect;
     } catch {}
 
+    // ensure we have a sid cookie before saving
     const sid = ensureSid(req, res);
 
-    // Exchange code for tokens
-    const params = new URLSearchParams();
-    params.set("code", String(code));
-    params.set("client_id", process.env.GOOGLE_CLIENT_ID);
-    params.set("client_secret", process.env.GOOGLE_CLIENT_SECRET);
-    params.set("redirect_uri", redirectUri);
-    params.set("grant_type", "authorization_code");
+    // swap code for tokens
+    const tokens = await exchangeCodeForTokens({ code, redirectUri });
 
-    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-    const tokens = await tokenResp.json().catch(() => ({}));
-    if (!tokenResp.ok) {
-      const msg = tokens?.error_description || tokens?.error || "Token exchange failed";
-      return res.status(401).send(msg);
-    }
+    // persist against current sid
+    await saveGoogleTokens(sid, res, tokens);
 
-    await saveGoogleTokens({ sid, tokens });
-    markAuthed(res);
-
-    // Back to the app
-    res.writeHead(302, { Location: desiredRedirect || "/" });
-    return res.end();
+    // go back into the app
+    res.writeHead(302, { Location: redirect });
+    res.end();
   } catch (e) {
-    return res.status(500).send(String(e?.message || e));
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e) });
   }
 }
