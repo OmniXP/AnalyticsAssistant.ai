@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
     const payload = {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "source" }, { name: "medium" }],
+      dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
       metrics: [{ name: "sessions" }, { name: "totalUsers" }],
       orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
       limit: String(limit),
@@ -40,6 +40,6 @@ export default async function handler(req, res) {
     res.status(200).json(json);
   } catch (e) {
     const status = e?.status || 500;
-    res.status(status).json({ ok: false, error: status === 401 || status === 403 ? "No bearer" : e?.message || "Unexpected error" });
+    res.status(status).json({ ok: false, error: status === 401 || 403 ? "No bearer" : e?.message || "Unexpected error" });
   }
 }

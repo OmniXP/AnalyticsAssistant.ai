@@ -23,12 +23,11 @@ export default async function handler(req, res) {
 
     const payload = {
       dateRanges: [{ startDate, endDate }],
-      // Request both revenue metrics; GA will return those it supports
       metrics: [
         { name: "sessions" },
         { name: "totalUsers" },
         { name: "addToCarts" },
-        { name: "beginCheckout" },
+        { name: "checkouts" },          // <- fixed
         { name: "transactions" },
         { name: "purchaseRevenue" },
         { name: "totalRevenue" },
@@ -43,20 +42,18 @@ export default async function handler(req, res) {
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) return res.status(resp.status).json({ ok: false, error: json?.error?.message || `GA error ${resp.status}`, details: json });
 
-    const mv = (i) => Number(json?.rows?.[0]?.metricValues?.[i]?.value || 0);
-    // Map by header name for safety
     const headers = (json?.metricHeaders || []).map(h => h.name);
-    const val = (name) => {
+    const mv = (name) => {
       const idx = headers.indexOf(name);
-      return idx >= 0 ? mv(idx) : 0;
+      return idx >= 0 ? Number(json?.rows?.[0]?.metricValues?.[idx]?.value || 0) : 0;
     };
 
-    const sessions = val("sessions");
-    const users = val("totalUsers");
-    const addToCarts = val("addToCarts");
-    const beginCheckout = val("beginCheckout");
-    const transactions = val("transactions");
-    const revenue = val("purchaseRevenue") || val("totalRevenue");
+    const sessions = mv("sessions");
+    const users = mv("totalUsers");
+    const addToCarts = mv("addToCarts");
+    const beginCheckout = mv("checkouts"); // keep UI field name but sourced from 'checkouts'
+    const transactions = mv("transactions");
+    const revenue = mv("purchaseRevenue") || mv("totalRevenue");
 
     const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
     const aov = transactions > 0 ? revenue / transactions : 0;
