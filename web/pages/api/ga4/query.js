@@ -1,66 +1,97 @@
 // web/pages/api/ga4/query.js
 import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-function buildDimFilter(filters = {}) {
-  const exprs = [];
-  if (filters.country && filters.country !== "All") {
-    exprs.push({
-      filter: {
-        fieldName: "country",
-        stringFilter: { matchType: "EXACT", value: String(filters.country) },
-      },
-    });
-  }
-  if (filters.channelGroup && filters.channelGroup !== "All") {
-    exprs.push({
-      filter: {
-        fieldName: "defaultChannelGroup",
-        stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) },
-      },
-    });
-  }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
-}
-
+/**
+ * Returns GA4 "Default Channel Group" breakdown with sessions + users.
+ * Expects: { propertyId, startDate, endDate, filters?: { country, channelGroup } }
+ * Responds with raw GA4 runReport payload (dimensionHeaders/metricHeaders/rows/...).
+ */
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
+  if (req.method !== "POST") {
+    res.status(405).json({ ok: false, error: "Method not allowed" });
+    return;
+  }
+
+  const {
+    propertyId,
+    startDate,
+    endDate,
+    filters = {},
+    limit = 50,
+  } = req.body || {};
+
+  if (!propertyId || !startDate || !endDate) {
+    res.status(400).json({ ok: false, error: "Missing propertyId or date range" });
+    return;
+  }
 
   try {
-    const { bearer, error } = await getBearerForRequest(req);
-    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
+    const bearer = await getBearerForRequest(req, res);
 
-    const { propertyId, startDate, endDate, filters } = req.body || {};
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
+    // Build dimensionFilter from optional filters
+    const andFilter = [];
+    if (filters.country && filters.country !== "All") {
+      andFilter.push({
+        filter: {
+          fieldName: "country",
+          stringFilter: { matchType: "EXACT", value: String(filters.country) },
+        },
+      });
+    }
+    if (filters.channelGroup && filters.channelGroup !== "All") {
+      andFilter.push({
+        filter: {
+          fieldName: "sessionDefaultChannelGroup",
+          stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) },
+        },
+      });
+    }
+    const dimensionFilter =
+      andFilter.length > 0 ? { andGroup: { expressions: andFilter } } : undefined;
 
-    const body = {
+    const payload = {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "defaultChannelGroup" }],
+      dimensions: [{ name: "sessionDefaultChannelGroup" }],
       metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-      limit: "50",
-      dimensionFilter: buildDimFilter(filters),
+      keepEmptyRows: false,
+      limit: String(limit),
+      ...(dimensionFilter ? { dimensionFilter } : {}),
     };
 
-    const r = await fetch(
-      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+    const resp = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+        String(propertyId)
+      )}:runReport`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-        body: JSON.stringify(body),
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       }
     );
 
-    const json = await r.json();
-    if (!r.ok) {
-      return res
-        .status(r.status)
-        .json({ ok: false, error: json?.error?.message || "GA4 error" });
+    const json = await resp.json().catch(() => ({}));
+
+    if (!resp.ok) {
+      const msg =
+        json?.error?.message ||
+        `Google Analytics Data API error ${resp.status}`;
+      res.status(resp.status).json({ ok: false, error: msg, details: json });
+      return;
     }
 
-    // Return the raw GA4 runReport shape. index.js parses it via parseGa4Channels.
-    return res.status(200).json(json);
+    // Return raw GA payload so the client can parse consistently.
+    res.status(200).json(json);
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const status = e?.status || 500;
+    res.status(status).json({
+      ok: false,
+      error:
+        status === 401 || status === 403
+          ? "No bearer"
+          : e?.message || "Unexpected error",
+    });
   }
 }
