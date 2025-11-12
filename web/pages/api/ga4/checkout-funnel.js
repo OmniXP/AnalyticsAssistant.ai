@@ -1,59 +1,61 @@
 // web/pages/api/ga4/checkout-funnel.js
 import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-function buildDimFilter(filters = {}) {
-  const exprs = [];
+function buildFilter(filters = {}) {
+  const andFilter = [];
   if (filters.country && filters.country !== "All") {
-    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
+    andFilter.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
   if (filters.channelGroup && filters.channelGroup !== "All") {
-    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
+    andFilter.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
+  return andFilter.length ? { andGroup: { expressions: andFilter } } : undefined;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
+  const { propertyId, startDate, endDate, filters = {} } = req.body || {};
+  if (!propertyId || !startDate || !endDate) return res.status(400).json({ ok: false, error: "Missing propertyId or date range" });
+
   try {
-    const { bearer, error } = await getBearerForRequest(req);
-    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
+    const bearer = await getBearerForRequest(req, res);
 
-    const { propertyId, startDate, endDate, filters } = req.body || {};
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
-
-    const events = ["add_to_cart", "begin_checkout", "add_shipping_info", "add_payment_info", "purchase"];
-
-    const body = {
+    const payload = {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: "eventName" }],
       metrics: [{ name: "eventCount" }],
-      dimensionFilter: {
-        andGroup: {
-          expressions: [
-            { filter: { fieldName: "eventName", inListFilter: { values: events } } },
-            ...(buildDimFilter(filters)?.andGroup?.expressions || []),
-          ],
-        },
-      },
+      limit: "1000",
+      ...(buildFilter(filters) ? { dimensionFilter: buildFilter(filters) } : {}),
     };
 
-    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-      body: JSON.stringify(body),
-    });
-    const json = await r.json();
-    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
+    const resp = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
+      { method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    );
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) return res.status(resp.status).json({ ok: false, error: json?.error?.message || `GA error ${resp.status}`, details: json });
 
-    const steps = Object.fromEntries(events.map((e) => [e, 0]));
-    for (const row of json.rows || []) {
-      const name = row.dimensionValues?.[0]?.value || "";
-      const val = Number(row.metricValues?.[0]?.value || 0);
-      if (steps[name] != null) steps[name] += val;
+    const rows = json?.rows || [];
+    const byName = Object.create(null);
+    for (const r of rows) {
+      const name = r?.dimensionValues?.[0]?.value || "";
+      const count = Number(r?.metricValues?.[0]?.value || 0);
+      byName[name] = (byName[name] || 0) + count;
     }
-    return res.status(200).json({ ok: true, steps });
+
+    res.status(200).json({
+      ok: true,
+      steps: {
+        add_to_cart: byName["add_to_cart"] || 0,
+        begin_checkout: byName["begin_checkout"] || 0,
+        add_shipping_info: byName["add_shipping_info"] || 0,
+        add_payment_info: byName["add_payment_info"] || 0,
+        purchase: byName["purchase"] || 0,
+      },
+    });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const status = e?.status || 500;
+    res.status(status).json({ ok: false, error: status === 401 || status === 403 ? "No bearer" : e?.message || "Unexpected error" });
   }
 }

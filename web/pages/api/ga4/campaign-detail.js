@@ -1,83 +1,83 @@
 // web/pages/api/ga4/campaign-detail.js
 import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-function buildCommonFilter(filters = {}, campaign) {
-  const exprs = [];
-  if (campaign) {
-    exprs.push({ filter: { fieldName: "campaign", stringFilter: { matchType: "EXACT", value: String(campaign) } } });
-  }
+function baseFilter(filters = {}) {
+  const andFilter = [];
   if (filters.country && filters.country !== "All") {
-    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
+    andFilter.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
   if (filters.channelGroup && filters.channelGroup !== "All") {
-    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
+    andFilter.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
+  return andFilter;
+}
+function withCampaign(filters, campaign) {
+  const andFilter = baseFilter(filters);
+  if (campaign) {
+    andFilter.push({ filter: { fieldName: "campaign", stringFilter: { matchType: "EXACT", value: String(campaign) } } });
+  }
+  return andFilter.length ? { andGroup: { expressions: andFilter } } : undefined;
 }
 
-async function run(propertyId, bearer, body) {
-  const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-    body: JSON.stringify(body),
-  });
-  const json = await r.json();
-  if (!r.ok) throw new Error(json?.error?.message || "GA4 error");
+async function runReport(bearer, propertyId, payload) {
+  const resp = await fetch(
+    `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
+    { method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+  );
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw Object.assign(new Error(json?.error?.message || `GA error ${resp.status}`), { status: resp.status, details: json });
   return json;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
+  const { propertyId, startDate, endDate, filters = {}, campaign, limit = 50 } = req.body || {};
+  if (!propertyId || !startDate || !endDate || !campaign) return res.status(400).json({ ok: false, error: "Missing propertyId/date range/campaign" });
+
   try {
-    const { bearer, error } = await getBearerForRequest(req);
-    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
+    const bearer = await getBearerForRequest(req, res);
 
-    const { propertyId, startDate, endDate, filters = {}, campaign, limit = 50 } = req.body || {};
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
-    if (!campaign) return res.status(400).json({ ok: false, error: "Missing campaign" });
-
-    const commonFilter = buildCommonFilter(filters, campaign);
-
-    // Totals
-    const totals = await run(propertyId, bearer, {
+    // Totals for campaign
+    const totals = await runReport(bearer, propertyId, {
       dateRanges: [{ startDate, endDate }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
-      dimensionFilter: commonFilter,
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }, { name: "totalRevenue" }],
+      ...(withCampaign(filters, campaign) ? { dimensionFilter: withCampaign(filters, campaign) } : {}),
     });
 
-    // By source/medium
-    const sourceMedium = await run(propertyId, bearer, {
+    // Source / Medium breakdown
+    const sourceMedium = await runReport(bearer, propertyId, {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: "source" }, { name: "medium" }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
-      orderBys: [{ metric: { metricName: "purchaseRevenue" }, desc: true }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }, { name: "totalRevenue" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
       limit: String(limit),
-      dimensionFilter: commonFilter,
+      ...(withCampaign(filters, campaign) ? { dimensionFilter: withCampaign(filters, campaign) } : {}),
     });
 
-    // By ad content
-    const adContent = await run(propertyId, bearer, {
+    // Ad content
+    const adContent = await runReport(bearer, propertyId, {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "adContent" }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
-      orderBys: [{ metric: { metricName: "purchaseRevenue" }, desc: true }],
+      dimensions: [{ name: "sessionManualAdContent" }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }, { name: "totalRevenue" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
       limit: String(limit),
-      dimensionFilter: commonFilter,
+      ...(withCampaign(filters, campaign) ? { dimensionFilter: withCampaign(filters, campaign) } : {}),
     });
 
-    // By term
-    const term = await run(propertyId, bearer, {
+    // Term
+    const term = await runReport(bearer, propertyId, {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "term" }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
-      orderBys: [{ metric: { metricName: "purchaseRevenue" }, desc: true }],
+      dimensions: [{ name: "sessionManualTerm" }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }, { name: "totalRevenue" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
       limit: String(limit),
-      dimensionFilter: commonFilter,
+      ...(withCampaign(filters, campaign) ? { dimensionFilter: withCampaign(filters, campaign) } : {}),
     });
 
-    return res.status(200).json({ ok: true, totals, sourceMedium, adContent, term });
+    res.status(200).json({ ok: true, totals, sourceMedium, adContent, term });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const status = e?.status || 500;
+    res.status(status).json({ ok: false, error: status === 401 || status === 403 ? "No bearer" : e?.message || "Unexpected error", details: e?.details });
   }
 }

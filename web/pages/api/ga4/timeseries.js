@@ -1,56 +1,64 @@
 // web/pages/api/ga4/timeseries.js
 import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-function buildDimFilter(filters = {}) {
-  const exprs = [];
+function buildFilter(filters = {}) {
+  const andFilter = [];
   if (filters.country && filters.country !== "All") {
-    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
+    andFilter.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
   if (filters.channelGroup && filters.channelGroup !== "All") {
-    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
+    andFilter.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
+  return andFilter.length ? { andGroup: { expressions: andFilter } } : undefined;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
+  const { propertyId, startDate, endDate, filters = {}, granularity = "daily" } = req.body || {};
+  if (!propertyId || !startDate || !endDate) return res.status(400).json({ ok: false, error: "Missing propertyId or date range" });
+
+  const dim = granularity === "weekly" ? "yearWeekISO" : "date";
+
   try {
-    const { bearer, error } = await getBearerForRequest(req);
-    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
+    const bearer = await getBearerForRequest(req, res);
 
-    const { propertyId, startDate, endDate, filters, granularity = "daily" } = req.body || {};
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
-
-    const periodDim = granularity === "weekly" ? "yearWeek" : "date";
-
-    const body = {
+    const payload = {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: periodDim }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
-      orderBys: [{ dimension: { dimensionName: periodDim }, desc: false }],
-      limit: "10000",
-      dimensionFilter: buildDimFilter(filters),
+      dimensions: [{ name: dim }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }, { name: "totalRevenue" }],
+      orderBys: [{ dimension: { dimensionName: dim }, desc: false }],
+      limit: "1000",
+      ...(buildFilter(filters) ? { dimensionFilter: buildFilter(filters) } : {}),
     };
 
-    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-      body: JSON.stringify(body),
+    const resp = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
+      { method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    );
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) return res.status(resp.status).json({ ok: false, error: json?.error?.message || `GA error ${resp.status}`, details: json });
+
+    const headers = (json?.metricHeaders || []).map(h => h.name);
+    const mval = (row, name) => {
+      const idx = headers.indexOf(name);
+      return idx >= 0 ? Number(row?.metricValues?.[idx]?.value || 0) : 0;
+    };
+
+    const series = (json?.rows || []).map(r => {
+      const revenue = mval(r, "purchaseRevenue") || mval(r, "totalRevenue");
+      return {
+        period: r?.dimensionValues?.[0]?.value || "",
+        sessions: mval(r, "sessions"),
+        users: mval(r, "totalUsers"),
+        transactions: mval(r, "transactions"),
+        revenue,
+      };
     });
-    const json = await r.json();
-    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
 
-    const series = (json.rows || []).map((row) => ({
-      period: row.dimensionValues?.[0]?.value || "",
-      sessions: Number(row.metricValues?.[0]?.value || 0),
-      users: Number(row.metricValues?.[1]?.value || 0),
-      transactions: Number(row.metricValues?.[2]?.value || 0),
-      revenue: Number(row.metricValues?.[3]?.value || 0),
-    }));
-
-    return res.status(200).json({ ok: true, series });
+    res.status(200).json({ ok: true, series });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const status = e?.status || 500;
+    res.status(status).json({ ok: false, error: status === 401 || status === 403 ? "No bearer" : e?.message || "Unexpected error" });
   }
 }

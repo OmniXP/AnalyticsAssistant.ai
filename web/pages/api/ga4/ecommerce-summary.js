@@ -1,29 +1,29 @@
 // web/pages/api/ga4/ecommerce-summary.js
 import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
 
-function buildDimFilter(filters = {}) {
-  const exprs = [];
+function buildFilter(filters = {}) {
+  const andFilter = [];
   if (filters.country && filters.country !== "All") {
-    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
+    andFilter.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
   }
   if (filters.channelGroup && filters.channelGroup !== "All") {
-    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
+    andFilter.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
   }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
+  return andFilter.length ? { andGroup: { expressions: andFilter } } : undefined;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
+  const { propertyId, startDate, endDate, filters = {} } = req.body || {};
+  if (!propertyId || !startDate || !endDate) return res.status(400).json({ ok: false, error: "Missing propertyId or date range" });
+
   try {
-    const { bearer, error } = await getBearerForRequest(req);
-    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
+    const bearer = await getBearerForRequest(req, res);
 
-    const { propertyId, startDate, endDate, filters } = req.body || {};
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
-
-    const body = {
+    const payload = {
       dateRanges: [{ startDate, endDate }],
+      // Request both revenue metrics; GA will return those it supports
       metrics: [
         { name: "sessions" },
         { name: "totalUsers" },
@@ -31,38 +31,42 @@ export default async function handler(req, res) {
         { name: "beginCheckout" },
         { name: "transactions" },
         { name: "purchaseRevenue" },
+        { name: "totalRevenue" },
       ],
-      dimensionFilter: buildDimFilter(filters),
+      ...(buildFilter(filters) ? { dimensionFilter: buildFilter(filters) } : {}),
     };
 
-    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-      body: JSON.stringify(body),
-    });
-    const json = await r.json();
-    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
-
-    // Totals row is available via row aggregation if "keepEmptyRows": false; easiest is sum across rows
-    const totals = (json.rows || []).reduce(
-      (a, r) => {
-        const mv = r.metricValues || [];
-        a.sessions += Number(mv[0]?.value || 0);
-        a.users += Number(mv[1]?.value || 0);
-        a.addToCarts += Number(mv[2]?.value || 0);
-        a.beginCheckout += Number(mv[3]?.value || 0);
-        a.transactions += Number(mv[4]?.value || 0);
-        a.revenue += Number(mv[5]?.value || 0);
-        return a;
-      },
-      { sessions: 0, users: 0, addToCarts: 0, beginCheckout: 0, transactions: 0, revenue: 0 }
+    const resp = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
+      { method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) }
     );
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) return res.status(resp.status).json({ ok: false, error: json?.error?.message || `GA error ${resp.status}`, details: json });
 
-    const cvr = totals.sessions > 0 ? (totals.transactions / totals.sessions) * 100 : 0;
-    const aov = totals.transactions > 0 ? totals.revenue / totals.transactions : 0;
+    const mv = (i) => Number(json?.rows?.[0]?.metricValues?.[i]?.value || 0);
+    // Map by header name for safety
+    const headers = (json?.metricHeaders || []).map(h => h.name);
+    const val = (name) => {
+      const idx = headers.indexOf(name);
+      return idx >= 0 ? mv(idx) : 0;
+    };
 
-    return res.status(200).json({ ok: true, totals: { ...totals, cvr, aov } });
+    const sessions = val("sessions");
+    const users = val("totalUsers");
+    const addToCarts = val("addToCarts");
+    const beginCheckout = val("beginCheckout");
+    const transactions = val("transactions");
+    const revenue = val("purchaseRevenue") || val("totalRevenue");
+
+    const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
+    const aov = transactions > 0 ? revenue / transactions : 0;
+
+    res.status(200).json({
+      ok: true,
+      totals: { sessions, users, addToCarts, beginCheckout, transactions, revenue, cvr, aov },
+    });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const status = e?.status || 500;
+    res.status(status).json({ ok: false, error: status === 401 || status === 403 ? "No bearer" : e?.message || "Unexpected error" });
   }
 }
