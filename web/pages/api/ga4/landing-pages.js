@@ -1,45 +1,105 @@
 // web/pages/api/ga4/landing-pages.js
-import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
+import { getBearerForRequest } from "../../lib/server/ga4-session.js";
 
-function buildDimFilter(filters = {}) {
-  const exprs = [];
-  if (filters.country && filters.country !== "All") {
-    exprs.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: String(filters.country) } } });
-  }
-  if (filters.channelGroup && filters.channelGroup !== "All") {
-    exprs.push({ filter: { fieldName: "defaultChannelGroup", stringFilter: { matchType: "EXACT", value: String(filters.channelGroup) } } });
-  }
-  if (!exprs.length) return undefined;
-  return { andGroup: { expressions: exprs } };
-}
-
+/**
+ * Landing page × attribution:
+ * - Dimensions: landingPagePlusQueryString, sessionSource, sessionMedium
+ * - Metrics: sessions, totalUsers, purchases, purchaseRevenue
+ * Accepts: { propertyId, startDate, endDate, filters, limit }
+ */
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST required" });
+  if (req.method !== "POST") {
+    res.status(405).json({ ok: false, error: "Method not allowed" });
+    return;
+  }
   try {
-    const { bearer, error } = await getBearerForRequest(req);
-    if (error || !bearer) return res.status(401).json({ ok: false, error: error || "No bearer" });
+    const bearer = await getBearerForRequest(req);
+    if (!bearer) {
+      res.status(401).json({ ok: false, error: "No bearer" });
+      return;
+    }
 
-    const { propertyId, startDate, endDate, filters, limit = 500 } = req.body || {};
-    if (!propertyId) return res.status(400).json({ ok: false, error: "Missing propertyId" });
+    const {
+      propertyId,
+      startDate,
+      endDate,
+      filters = {},
+      limit = 500,
+    } = req.body || {};
+
+    if (!propertyId || !startDate || !endDate) {
+      res.status(400).json({ ok: false, error: "propertyId, startDate, endDate are required" });
+      return;
+    }
+
+    const dimensionFilter = buildDimensionFilter(filters);
 
     const body = {
       dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "landingPagePlusQueryString" }, { name: "source" }, { name: "medium" }],
-      metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
+      dimensions: [
+        { name: "landingPagePlusQueryString" },
+        { name: "sessionSource" },
+        { name: "sessionMedium" },
+      ],
+      metrics: [
+        { name: "sessions" },
+        { name: "totalUsers" },
+        { name: "purchases" },
+        { name: "purchaseRevenue" },
+      ],
+      limit: String(Math.max(1, Math.min(1000, Number(limit) || 500))),
       orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-      limit: String(limit),
-      dimensionFilter: buildDimFilter(filters),
+      ...(dimensionFilter ? { dimensionFilter } : {}),
     };
 
-    const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
+    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+      propertyId
+    )}:runReport`;
+
+    const gaResp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      headers: {
+        "Authorization": `Bearer ${bearer}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
-    const json = await r.json();
-    if (!r.ok) return res.status(r.status).json({ ok: false, error: json?.error?.message || "GA4 error" });
-    return res.status(200).json(json);
+
+    const data = await gaResp.json();
+    if (!gaResp.ok) {
+      res.status(gaResp.status).json({ ok: false, error: data?.error?.message || "GA4 error" });
+      return;
+    }
+
+    res.status(200).json({ ok: true, ...data });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
+}
+
+function buildDimensionFilter(filters) {
+  const andGroup = [];
+
+  const country = (filters?.country || "").trim();
+  if (country && country !== "All") {
+    andGroup.push({
+      filter: {
+        fieldName: "country",
+        stringFilter: { matchType: "EXACT", value: country, caseSensitive: false },
+      },
+    });
+  }
+
+  const channel = (filters?.channelGroup || "").trim();
+  if (channel && channel !== "All") {
+    andGroup.push({
+      filter: {
+        fieldName: "sessionDefaultChannelGroup",
+        stringFilter: { matchType: "EXACT", value: channel, caseSensitive: false },
+      },
+    });
+  }
+
+  if (andGroup.length === 0) return null;
+  return { andGroup };
 }
