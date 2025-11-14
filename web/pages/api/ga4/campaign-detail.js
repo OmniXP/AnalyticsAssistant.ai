@@ -5,6 +5,7 @@ import { getBearerForRequest } from "../../../server/ga4-session.js";
  * Drill-down for a specific campaign
  * Filters rows to EXACT sessionCampaignName
  * Returns: { totals, sourceMedium, adContent, term }
+ * Metrics: sessions, totalUsers, transactions, purchaseRevenue
  * POST body: { propertyId, startDate, endDate, filters, campaign, limit }
  */
 export default async function handler(req, res) {
@@ -30,13 +31,23 @@ export default async function handler(req, res) {
     const payloads = {
       totals: {
         dateRanges: [{ startDate, endDate }],
-        metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "purchases" }, { name: "purchaseRevenue" }],
+        metrics: [
+          { name: "sessions" },
+          { name: "totalUsers" },
+          { name: "transactions" },
+          { name: "purchaseRevenue" },
+        ],
         ...(combinedFilter ? { dimensionFilter: combinedFilter } : {}),
       },
       sourceMedium: {
         dateRanges: [{ startDate, endDate }],
         dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
-        metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "purchases" }, { name: "purchaseRevenue" }],
+        metrics: [
+          { name: "sessions" },
+          { name: "totalUsers" },
+          { name: "transactions" },
+          { name: "purchaseRevenue" },
+        ],
         limit: String(Math.max(1, Math.min(1000, Number(limit) || 25))),
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
         ...(combinedFilter ? { dimensionFilter: combinedFilter } : {}),
@@ -44,7 +55,12 @@ export default async function handler(req, res) {
       adContent: {
         dateRanges: [{ startDate, endDate }],
         dimensions: [{ name: "adContent" }],
-        metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "purchases" }, { name: "purchaseRevenue" }],
+        metrics: [
+          { name: "sessions" },
+          { name: "totalUsers" },
+          { name: "transactions" },
+          { name: "purchaseRevenue" },
+        ],
         limit: String(Math.max(1, Math.min(1000, Number(limit) || 25))),
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
         ...(combinedFilter ? { dimensionFilter: combinedFilter } : {}),
@@ -52,7 +68,12 @@ export default async function handler(req, res) {
       term: {
         dateRanges: [{ startDate, endDate }],
         dimensions: [{ name: "manualTerm" }],
-        metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "purchases" }, { name: "purchaseRevenue" }],
+        metrics: [
+          { name: "sessions" },
+          { name: "totalUsers" },
+          { name: "transactions" },
+          { name: "purchaseRevenue" },
+        ],
         limit: String(Math.max(1, Math.min(1000, Number(limit) || 25))),
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
         ...(combinedFilter ? { dimensionFilter: combinedFilter } : {}),

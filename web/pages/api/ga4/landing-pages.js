@@ -4,7 +4,7 @@ import { getBearerForRequest } from "../../../server/ga4-session.js";
 /**
  * Landing Page × Attribution
  * Dimensions: landingPagePlusQueryString, sessionSource, sessionMedium
- * Metrics: sessions, totalUsers, purchases, purchaseRevenue
+ * Metrics: sessions, totalUsers, transactions, purchaseRevenue
  * POST body: { propertyId, startDate, endDate, filters, limit }
  */
 export default async function handler(req, res) {
@@ -28,7 +28,7 @@ export default async function handler(req, res) {
       metrics: [
         { name: "sessions" },
         { name: "totalUsers" },
-        { name: "purchases" },
+        { name: "transactions" },
         { name: "purchaseRevenue" },
       ],
       limit: String(Math.max(1, Math.min(1000, Number(limit) || 500))),

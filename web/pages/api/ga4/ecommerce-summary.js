@@ -3,7 +3,7 @@ import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 /**
  * E-commerce KPI totals for a date range.
- * Metrics: sessions, totalUsers, addToCarts, checkouts, purchases, purchaseRevenue
+ * Metrics: sessions, totalUsers, addToCarts, checkouts, transactions, purchaseRevenue
  * POST body: { propertyId, startDate, endDate, filters }
  * Returns: { ok: true, totals: {...}, raw }
  */
@@ -24,9 +24,9 @@ export default async function handler(req, res) {
         { name: "sessions" },
         { name: "totalUsers" },
         { name: "addToCarts" },
-        { name: "checkouts" },          // GA4 Data API: begin checkout
-        { name: "purchases" },
-        { name: "purchaseRevenue" },
+        { name: "checkouts" },         // begin checkout
+        { name: "transactions" },      // purchase count
+        { name: "purchaseRevenue" },   // revenue
       ],
       ...(buildDimensionFilter(filters) ? { dimensionFilter: buildDimensionFilter(filters) } : {}),
     };
@@ -44,9 +44,9 @@ export default async function handler(req, res) {
     const sessions = n(m[0]?.value);
     const users = n(m[1]?.value);
     const addToCarts = n(m[2]?.value);
-    const beginCheckout = n(m[3]?.value); // checkouts
-    const transactions = n(m[4]?.value);  // purchases
-    const revenue = n(m[5]?.value);       // purchaseRevenue
+    const beginCheckout = n(m[3]?.value);   // checkouts
+    const transactions = n(m[4]?.value);    // transactions
+    const revenue = n(m[5]?.value);         // purchaseRevenue
 
     const cvr = sessions > 0 ? (transactions / sessions) * 100 : 0;
     const aov = transactions > 0 ? revenue / transactions : 0;
