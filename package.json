@@ -5,7 +5,9 @@
     "@upstash/redis": "^1.35.6",
     "iron-session": "^8.0.4",
     "next-auth": "^4.24.13",
-    "pg": "^8.16.3",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
     "prisma": "^6.18.0"
   }
 }
