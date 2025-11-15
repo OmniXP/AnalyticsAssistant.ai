@@ -182,7 +182,18 @@ export async function putAuthState(stateId, dataObj, ttlSec = 600) {
 export async function readAuthState(stateId, del = true) {
   const raw = await kvGetRaw(`oauth_state:${stateId}`);
   if (del) { try { await kvDelRaw(`oauth_state:${stateId}`); } catch {} }
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+  
+  // Redis client might return already-parsed object, or it might be a string
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`Failed to parse auth state JSON: ${e.message}`);
+    }
+  }
+  // Already an object (Redis client auto-deserialized)
+  return raw;
 }
 
 export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
