@@ -1,39 +1,54 @@
 // web/pages/api/auth/google/start.js
-import { ensureSid } from "../../../../lib/server/ga4-session.js";
+export const runtime = "nodejs";
+
+import { ensureSid } from "../../../../server/ga4-session.js";
+
+function computeBaseUrl(req) {
+  const forced = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL;
+  if (forced) return forced.replace(/\/$/, "");
+  const host = req.headers.get?.("host") || req.headers?.host;
+  const proto = req.headers.get?.("x-forwarded-proto") || (host?.startsWith("localhost") ? "http" : "https");
+  return `${proto}://${host}`;
+}
+
+function resolveRedirectUri(req) {
+  const fromEnv = process.env.GOOGLE_REDIRECT_URI;
+  if (fromEnv) return fromEnv;
+  const base = computeBaseUrl(req);
+  return `${base}/api/auth/google/callback`;
+}
 
 export default async function handler(req, res) {
-  const sid = ensureSid(req, res);
+  try {
+    const clientId =
+      process.env.GOOGLE_CLIENT_ID ||
+      process.env.GOOGLE_OAUTH_CLIENT_ID; // support both names
+    if (!clientId) throw new Error("Missing GOOGLE_CLIENT_ID");
 
-  const origin =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}`;
-  const redirectUri = `${origin}/api/auth/google/callback`;
-  const desiredRedirect =
-    typeof req.query?.redirect === "string" ? req.query.redirect : "/";
+    const redirectUri = resolveRedirectUri(req);
 
-  const state = Buffer.from(
-    JSON.stringify({ sid, redirect: desiredRedirect }),
-    "utf8"
-  ).toString("base64url");
+    const sid = ensureSid(req, res);
+    const redirect = typeof req.query?.redirect === "string" ? req.query.redirect : "/";
 
-  const params = new URLSearchParams();
-  params.set("response_type", "code");
-  params.set("client_id", process.env.GOOGLE_CLIENT_ID);
-  params.set("redirect_uri", redirectUri);
-  params.set(
-    "scope",
-    [
-      "openid",
-      "https://www.googleapis.com/auth/userinfo.email",
-      "https://www.googleapis.com/auth/analytics.readonly",
-    ].join(" ")
-  );
-  params.set("access_type", "offline");
-  params.set("include_granted_scopes", "true");
-  params.set("prompt", "consent");
-  params.set("state", state);
+    const state = Buffer.from(JSON.stringify({ sid, redirect }), "utf8").toString("base64url");
 
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-  res.writeHead(302, { Location: url });
-  res.end();
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/analytics.readonly",
+      ].join(" "),
+      access_type: "offline",
+      include_granted_scopes: "true",
+      prompt: "consent",
+      state,
+    });
+
+    res.status(200).json({ ok: true, url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
 }
