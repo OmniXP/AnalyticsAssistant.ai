@@ -1,4 +1,3 @@
-// web/pages/api/ga4/ecommerce-summary.js
 import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 /**

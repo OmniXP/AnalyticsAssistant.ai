@@ -1,11 +1,8 @@
-// web/pages/api/ga4/campaigns.js
 import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 /**
- * Campaign overview
- * Dimensions: sessionCampaignName
- * Metrics: sessions, totalUsers, transactions, purchaseRevenue
- * POST body: { propertyId, startDate, endDate, filters, limit }
+ * Campaign overview: sessions, users, transactions, revenue by sessionCampaignName.
+ * Fix for "campaign" -> use "sessionCampaignName".
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -27,12 +24,12 @@ export default async function handler(req, res) {
         { name: "transactions" },
         { name: "purchaseRevenue" },
       ],
-      limit: String(Math.max(1, Math.min(1000, Number(limit) || 100))),
       orderBys: [
         { metric: { metricName: "purchaseRevenue" }, desc: true },
         { metric: { metricName: "transactions" }, desc: true },
         { metric: { metricName: "sessions" }, desc: true },
       ],
+      limit,
       ...(buildDimensionFilter(filters) ? { dimensionFilter: buildDimensionFilter(filters) } : {}),
     };
 
@@ -45,9 +42,9 @@ export default async function handler(req, res) {
     const data = await r.json();
     if (!r.ok) return res.status(r.status).json({ ok: false, error: data?.error?.message || "GA4 error" });
 
-    res.status(200).json({ ok: true, ...data });
+    return res.status(200).json({ ok: true, rows: data?.rows ?? [], raw: data });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
 

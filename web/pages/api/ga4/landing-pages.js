@@ -1,11 +1,8 @@
-// web/pages/api/ga4/landing-pages.js
 import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 /**
- * Landing Page × Attribution
+ * Landing page x Source/Medium with sessions, users, transactions, revenue.
  * Dimensions: landingPagePlusQueryString, sessionSource, sessionMedium
- * Metrics: sessions, totalUsers, transactions, purchaseRevenue
- * POST body: { propertyId, startDate, endDate, filters, limit }
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -13,7 +10,7 @@ export default async function handler(req, res) {
     const bearer = await getBearerForRequest(req);
     if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
 
-    const { propertyId, startDate, endDate, filters = {}, limit = 500 } = req.body || {};
+    const { propertyId, startDate, endDate, filters = {}, limit = 200 } = req.body || {};
     if (!propertyId || !startDate || !endDate) {
       return res.status(400).json({ ok: false, error: "propertyId, startDate, endDate are required" });
     }
@@ -31,8 +28,11 @@ export default async function handler(req, res) {
         { name: "transactions" },
         { name: "purchaseRevenue" },
       ],
-      limit: String(Math.max(1, Math.min(1000, Number(limit) || 500))),
-      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      orderBys: [
+        { metric: { metricName: "purchaseRevenue" }, desc: true },
+        { metric: { metricName: "sessions" }, desc: true },
+      ],
+      limit,
       ...(buildDimensionFilter(filters) ? { dimensionFilter: buildDimensionFilter(filters) } : {}),
     };
 
@@ -45,9 +45,9 @@ export default async function handler(req, res) {
     const data = await r.json();
     if (!r.ok) return res.status(r.status).json({ ok: false, error: data?.error?.message || "GA4 error" });
 
-    res.status(200).json({ ok: true, ...data });
+    return res.status(200).json({ ok: true, rows: data?.rows ?? [], raw: data });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
 
