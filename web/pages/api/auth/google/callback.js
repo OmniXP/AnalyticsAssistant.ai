@@ -1,7 +1,7 @@
 // web/pages/api/auth/google/callback.js
 import crypto from "crypto";
-import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../lib/server/google-oauth.js";
-import { saveGoogleTokens } from "../../../lib/server/ga4-session.js";
+import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../server/google-oauth.js";
+import { saveGoogleTokens } from "../../../../server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
