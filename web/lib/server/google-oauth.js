@@ -1,12 +1,50 @@
 // web/lib/server/google-oauth.js
 // Google OAuth (PKCE) helpers + Upstash KV to temporarily store state + verifier
 
-// ---------- Upstash raw HTTP helpers ----------
+// ---------- Upstash KV helpers (supports both REST API and Redis client) ----------
 const KV_URL = process.env.KV_URL || process.env.UPSTASH_KV_REST_URL || "";
 const KV_TOKEN = process.env.KV_TOKEN || process.env.UPSTASH_KV_REST_TOKEN || "";
 
+// Check if we have a Redis connection string (rediss:// or redis://) vs HTTP REST URL
+const isRedisUrl = KV_URL && (KV_URL.startsWith("redis://") || KV_URL.startsWith("rediss://"));
+let redisClient = null;
+let redisClientPromise = null;
+
+// Lazy initialization of Redis client
+async function getRedisClient() {
+  if (!isRedisUrl) return null;
+  if (redisClient) return redisClient;
+  if (redisClientPromise) return redisClientPromise;
+  
+  redisClientPromise = (async () => {
+    try {
+      const { Redis } = await import("@upstash/redis");
+      redisClient = new Redis({
+        url: KV_URL,
+        token: KV_TOKEN,
+      });
+      return redisClient;
+    } catch (e) {
+      console.warn("Failed to load @upstash/redis, falling back to REST API:", e.message);
+      return null;
+    }
+  })();
+  
+  return redisClientPromise;
+}
+
 async function kvGetRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
+  
+  if (isRedisUrl) {
+    // Use Redis client
+    const client = await getRedisClient();
+    if (client) {
+      return await client.get(key);
+    }
+  }
+  
+  // Use REST API
   const resp = await fetch(`${KV_URL}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${KV_TOKEN}` },
     cache: "no-store",
@@ -16,9 +54,23 @@ async function kvGetRaw(key) {
   if (!resp.ok) throw new Error(`KV get failed: ${text}`);
   return json?.result ?? null;
 }
+
 async function kvSetRaw(key, value, ttlSec) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
-  // Upstash KV REST API: value goes in URL path, not body
+  
+  if (isRedisUrl) {
+    // Use Redis client
+    const client = await getRedisClient();
+    if (client) {
+      const valueStr = typeof value === "string" ? value : String(value);
+      if (ttlSec != null) {
+        return await client.set(key, valueStr, { ex: ttlSec });
+      }
+      return await client.set(key, valueStr);
+    }
+  }
+  
+  // Use REST API: value goes in URL path, not body
   const valueStr = typeof value === "string" ? value : String(value);
   const path = ttlSec != null
     ? `/set/${encodeURIComponent(key)}/${encodeURIComponent(valueStr)}?ex=${ttlSec}`
@@ -33,8 +85,19 @@ async function kvSetRaw(key, value, ttlSec) {
   if (!resp.ok) throw new Error(`KV set failed: ${text}`);
   return json?.result || "OK";
 }
+
 async function kvDelRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
+  
+  if (isRedisUrl) {
+    // Use Redis client
+    const client = await getRedisClient();
+    if (client) {
+      return await client.del(key);
+    }
+  }
+  
+  // Use REST API
   const resp = await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
