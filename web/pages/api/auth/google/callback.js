@@ -1,77 +1,91 @@
+// web/pages/api/auth/google/callback.js
 export const runtime = "nodejs";
 
-import { saveGoogleTokens, SESSION_COOKIE_NAME } from "../../../../server/ga4-session.js";
+import { saveGoogleTokens } from "../../../../server/ga4-session.js";
 
 function computeBaseUrl(req) {
   const forced = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL;
   if (forced) return forced.replace(/\/$/, "");
-  const host = req.headers.get?.("host") || req.headers?.host;
-  const proto = req.headers.get?.("x-forwarded-proto") || (host?.startsWith("localhost") ? "http" : "https");
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  const proto = req.headers["x-forwarded-proto"] || (host?.startsWith("localhost") ? "http" : "https");
   return `${proto}://${host}`;
 }
 
 function resolveRedirectUri(req) {
-  const fromEnv = process.env.GOOGLE_REDIRECT_URI;
-  if (fromEnv) return fromEnv;
-  const base = computeBaseUrl(req);
-  return `${base}/api/auth/google/callback`;
+  return (process.env.GOOGLE_REDIRECT_URI || `${computeBaseUrl(req)}/api/auth/google/callback`).replace(/\/$/, "");
 }
 
 export default async function handler(req, res) {
   try {
+    if (req.method !== "GET") {
+      res.setHeader("Allow", "GET");
+      return res.status(405).json({ ok: false, error: "Method Not Allowed" });
+    }
+
     const { code, state: stateB64 } = req.query || {};
-    if (!code) throw new Error("Missing ?code in callback");
+    if (!code) return res.status(400).json({ ok: false, error: "Missing code" });
+    if (!stateB64) return res.status(400).json({ ok: false, error: "Missing state" });
 
-    const clientId =
-      process.env.GOOGLE_CLIENT_ID ||
-      process.env.GOOGLE_OAUTH_CLIENT_ID;
-    const clientSecret =
-      process.env.GOOGLE_CLIENT_SECRET ||
-      process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-    if (!clientId || !clientSecret) throw new Error("Missing Google OAuth env (client id/secret)");
+    let parsedState;
+    try {
+      parsedState = JSON.parse(Buffer.from(String(stateB64), "base64url").toString("utf8"));
+    } catch {
+      return res.status(400).json({ ok: false, error: "Invalid state" });
+    }
 
-    let sid = null, redirect = "/";
-    if (stateB64) {
-      try {
-        const state = JSON.parse(Buffer.from(stateB64, "base64url").toString("utf8"));
-        sid = state.sid || null;
-        redirect = typeof state.redirect === "string" ? state.redirect : "/";
-      } catch {}
-    }
-    if (!sid) {
-      const cookie = req.headers.get?.("cookie") || req.headers?.cookie || "";
-      const m = cookie.match(new RegExp(`${SESSION_COOKIE_NAME}=([^;]+)`));
-      sid = m ? decodeURIComponent(m[1]) : null;
-    }
-    if (!sid) throw new Error("No SID for token save");
+    const sid = parsedState?.sid;
+    const redirectAfter = parsedState?.redirect || "/";
+    if (!sid) return res.status(400).json({ ok: false, error: "Missing sid in state" });
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) throw new Error("Missing Google client env");
 
     const redirectUri = resolveRedirectUri(req);
 
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      }),
+    const body = new URLSearchParams({
+      code: String(code),
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
     });
 
-    const tokenJson = await tokenRes.json().catch(() => ({}));
-    if (!tokenRes.ok) {
-      const err = tokenJson?.error || `${tokenRes.status} ${tokenRes.statusText}`;
-      return res.status(400).json({ ok: false, error: `Token exchange failed: ${err}`, details: tokenJson });
-    }
-    if (!tokenJson?.access_token) {
-      return res.status(400).json({ ok: false, error: "saveGoogleTokens: missing access_token", details: tokenJson });
+    const rsp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+
+    const json = await rsp.json().catch(() => ({}));
+    if (!rsp.ok) {
+      return res.status(502).json({ ok: false, error: `token-exchange-failed: ${rsp.status}`, details: json });
     }
 
-    await saveGoogleTokens(sid, tokenJson);
+    const { access_token, refresh_token, expires_in, id_token, token_type } = json || {};
+    if (!access_token) {
+      return res.status(500).json({ ok: false, error: "saveGoogleTokens: missing access_token", details: json });
+    }
 
-    res.setHeader("Set-Cookie", `aa_auth=1; Path=/; SameSite=Lax; Secure`);
-    res.writeHead(302, { Location: redirect || "/" });
+    // Persist tokens bound to this SID
+    await saveGoogleTokens(sid, {
+      access_token,
+      refresh_token, // may be undefined if Google didn’t return it this time
+      expires_in,
+      id_token,
+      token_type,
+      obtained_at: Date.now(),
+    });
+
+    // Optional: drop a quick hint cookie for your UI (not security sensitive)
+    res.setHeader("Set-Cookie", [
+      `aa_auth=1; Path=/; Max-Age=3600; SameSite=Lax`,
+    ]);
+
+    // Finish: redirect back to app
+    const base = computeBaseUrl(req);
+    const backTo = `${base}${redirectAfter || "/"}`;
+    res.writeHead(302, { Location: backTo });
     res.end();
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
