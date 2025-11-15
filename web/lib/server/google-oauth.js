@@ -7,30 +7,36 @@ const KV_TOKEN = process.env.KV_TOKEN || process.env.UPSTASH_KV_REST_TOKEN || ""
 
 // Check if we have a Redis connection string (rediss:// or redis://) vs HTTP REST URL
 const isRedisUrl = KV_URL && (KV_URL.startsWith("redis://") || KV_URL.startsWith("rediss://"));
+let RedisClass = null;
 let redisClient = null;
-let redisClientPromise = null;
 
-// Lazy initialization of Redis client
-async function getRedisClient() {
+// Try to load @upstash/redis at module level (works in Next.js API routes)
+if (isRedisUrl) {
+  try {
+    const redisModule = require("@upstash/redis");
+    RedisClass = redisModule.Redis;
+  } catch (e) {
+    console.error("Failed to require @upstash/redis:", e.message, e.stack);
+    // Will throw error when trying to use it
+  }
+}
+
+// Initialize Redis client if we have the class and URL
+function getRedisClient() {
   if (!isRedisUrl) return null;
   if (redisClient) return redisClient;
-  if (redisClientPromise) return redisClientPromise;
-  
-  redisClientPromise = (async () => {
-    try {
-      const { Redis } = await import("@upstash/redis");
-      redisClient = new Redis({
-        url: KV_URL,
-        token: KV_TOKEN,
-      });
-      return redisClient;
-    } catch (e) {
-      console.warn("Failed to load @upstash/redis, falling back to REST API:", e.message);
-      return null;
-    }
-  })();
-  
-  return redisClientPromise;
+  if (!RedisClass) {
+    throw new Error("Upstash Redis client not available. @upstash/redis package may not be installed or failed to load.");
+  }
+  try {
+    redisClient = new RedisClass({
+      url: KV_URL,
+      token: KV_TOKEN,
+    });
+    return redisClient;
+  } catch (e) {
+    throw new Error(`Failed to create Redis client: ${e.message}`);
+  }
 }
 
 async function kvGetRaw(key) {
@@ -38,10 +44,7 @@ async function kvGetRaw(key) {
   
   if (isRedisUrl) {
     // Use Redis client - must use client, cannot fall back to fetch with Redis URL
-    const client = await getRedisClient();
-    if (!client) {
-      throw new Error("Upstash Redis client failed to initialize. Check @upstash/redis package is installed.");
-    }
+    const client = getRedisClient();
     return await client.get(key);
   }
   
@@ -61,10 +64,7 @@ async function kvSetRaw(key, value, ttlSec) {
   
   if (isRedisUrl) {
     // Use Redis client - must use client, cannot fall back to fetch with Redis URL
-    const client = await getRedisClient();
-    if (!client) {
-      throw new Error("Upstash Redis client failed to initialize. Check @upstash/redis package is installed.");
-    }
+    const client = getRedisClient();
     const valueStr = typeof value === "string" ? value : String(value);
     if (ttlSec != null) {
       return await client.set(key, valueStr, { ex: ttlSec });
@@ -93,10 +93,7 @@ async function kvDelRaw(key) {
   
   if (isRedisUrl) {
     // Use Redis client - must use client, cannot fall back to fetch with Redis URL
-    const client = await getRedisClient();
-    if (!client) {
-      throw new Error("Upstash Redis client failed to initialize. Check @upstash/redis package is installed.");
-    }
+    const client = getRedisClient();
     return await client.del(key);
   }
   
