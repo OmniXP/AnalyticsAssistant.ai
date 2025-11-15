@@ -1,4 +1,3 @@
-// web/pages/api/auth/google/callback.js
 export const runtime = "nodejs";
 
 import { saveGoogleTokens, SESSION_COOKIE_NAME } from "../../../../server/ga4-session.js";

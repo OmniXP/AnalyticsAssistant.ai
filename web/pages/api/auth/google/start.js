@@ -1,4 +1,3 @@
-// web/pages/api/auth/google/start.js
 export const runtime = "nodejs";
 
 import { ensureSid } from "../../../../server/ga4-session.js";
@@ -22,7 +21,7 @@ export default async function handler(req, res) {
   try {
     const clientId =
       process.env.GOOGLE_CLIENT_ID ||
-      process.env.GOOGLE_OAUTH_CLIENT_ID; // support both names
+      process.env.GOOGLE_OAUTH_CLIENT_ID;
     if (!clientId) throw new Error("Missing GOOGLE_CLIENT_ID");
 
     const redirectUri = resolveRedirectUri(req);
