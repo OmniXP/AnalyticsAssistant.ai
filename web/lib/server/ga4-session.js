@@ -10,10 +10,119 @@ const {
   SESSION_COOKIE_SECRET = "change-me",
 } = process.env;
 
-// ---- Minimal token store ----
-// Replace these with your real store (Upstash/DB) if you have one.
-// Keyed by sid -> { access_token, refresh_token, expiry }
-const tokenStore = new Map();
+// ---- Upstash KV helpers for token storage ----
+const KV_URL = process.env.KV_URL || process.env.UPSTASH_KV_REST_URL || "";
+const KV_TOKEN = process.env.KV_TOKEN || process.env.UPSTASH_KV_REST_TOKEN || "";
+
+// Check if we have a Redis connection string vs HTTP REST URL
+const isRedisUrl = KV_URL && (KV_URL.startsWith("redis://") || KV_URL.startsWith("rediss://"));
+let RedisClass = null;
+let redisClient = null;
+
+// Initialize Redis client if needed (reuse logic from google-oauth.js)
+if (isRedisUrl) {
+  try {
+    const redisModule = require("@upstash/redis");
+    RedisClass = redisModule.Redis;
+  } catch (e) {
+    console.error("Failed to require @upstash/redis for token storage:", e.message);
+  }
+}
+
+// Parse Redis connection string (same logic as google-oauth.js)
+function parseRedisConnectionString(connectionString) {
+  if (!connectionString) return { url: null, token: null };
+  if (connectionString.startsWith("https://")) {
+    return { url: connectionString, token: KV_TOKEN };
+  }
+  const match = connectionString.match(/rediss?:\/\/[^:]+:([^@]+)@([^:]+)\.upstash\.io/);
+  if (match) {
+    return {
+      url: `https://${match[2]}.upstash.io`,
+      token: match[1]
+    };
+  }
+  const endpointMatch = connectionString.match(/@([^:]+)\.upstash\.io/);
+  if (endpointMatch) {
+    return {
+      url: `https://${endpointMatch[1]}.upstash.io`,
+      token: KV_TOKEN
+    };
+  }
+  return { url: null, token: null };
+}
+
+function getRedisClient() {
+  if (!isRedisUrl) return null;
+  if (redisClient) return redisClient;
+  if (!RedisClass) return null;
+  try {
+    const { url: restApiUrl, token: redisToken } = parseRedisConnectionString(KV_URL);
+    if (!restApiUrl || !redisToken) return null;
+    redisClient = new RedisClass({ url: restApiUrl, token: redisToken });
+    return redisClient;
+  } catch (e) {
+    console.error("Failed to create Redis client for token storage:", e.message);
+    return null;
+  }
+}
+
+// KV storage helpers
+async function kvGet(key) {
+  if (!KV_URL || !KV_TOKEN) return null;
+  if (isRedisUrl) {
+    const client = getRedisClient();
+    if (client) {
+      const val = await client.get(key);
+      return typeof val === "string" ? JSON.parse(val) : val;
+    }
+  }
+  const resp = await fetch(`${KV_URL}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${KV_TOKEN}` },
+    cache: "no-store",
+  });
+  if (!resp.ok) return null;
+  const text = await resp.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  return json?.result ? (typeof json.result === "string" ? JSON.parse(json.result) : json.result) : null;
+}
+
+async function kvSet(key, value, ttlSec) {
+  if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
+  const valStr = JSON.stringify(value);
+  if (isRedisUrl) {
+    const client = getRedisClient();
+    if (client) {
+      if (ttlSec != null) {
+        return await client.set(key, valStr, { ex: ttlSec });
+      }
+      return await client.set(key, valStr);
+    }
+  }
+  const path = ttlSec != null
+    ? `/set/${encodeURIComponent(key)}/${encodeURIComponent(valStr)}?ex=${ttlSec}`
+    : `/set/${encodeURIComponent(key)}/${encodeURIComponent(valStr)}`;
+  const resp = await fetch(`${KV_URL}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+  if (!resp.ok) throw new Error(`KV set failed: ${await resp.text()}`);
+  return "OK";
+}
+
+async function kvDel(key) {
+  if (!KV_URL || !KV_TOKEN) return;
+  if (isRedisUrl) {
+    const client = getRedisClient();
+    if (client) return await client.del(key);
+  }
+  await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+}
 
 // ---- Cookie utilities ----
 export function readSidFromCookie(req) {
@@ -29,7 +138,7 @@ export function ensureSid(res, sid) {
   return value;
 }
 
-// ---- Storage helpers (swap to Redis/DB as needed) ----
+// ---- Storage helpers (using Upstash KV/Redis) ----
 export async function saveGoogleTokens({ sid, access_token, refresh_token, expires_in }) {
   if (!sid) throw new Error("saveGoogleTokens: missing sid");
   if (!access_token) throw new Error("saveGoogleTokens: missing access_token");
@@ -37,23 +146,28 @@ export async function saveGoogleTokens({ sid, access_token, refresh_token, expir
   const now = Math.floor(Date.now() / 1000);
   const expiry = now + Math.max(30, Number(expires_in || 0) - 30); // safety buffer
 
-  const prev = tokenStore.get(sid) || {};
-  tokenStore.set(sid, {
+  // Get previous tokens to preserve refresh_token if Google didn't send a new one
+  const prev = await getGoogleTokens(sid) || {};
+  
+  const tokenData = {
     access_token,
-    refresh_token: refresh_token || prev.refresh_token, // keep old refresh if Google did not resend it
+    refresh_token: refresh_token || prev.refresh_token || "", // keep old refresh if Google did not resend it
     expiry,
-  });
+  };
+  
+  // Store with 30 day TTL (tokens expire before that, but keep storage clean)
+  await kvSet(`ga4_tokens:${sid}`, tokenData, 60 * 60 * 24 * 30);
   return { ok: true };
 }
 
 export async function getGoogleTokens(sid) {
   if (!sid) return null;
-  return tokenStore.get(sid) || null;
+  return await kvGet(`ga4_tokens:${sid}`);
 }
 
 export async function clearGoogleTokens(sid) {
   if (!sid) return;
-  tokenStore.delete(sid);
+  await kvDel(`ga4_tokens:${sid}`);
 }
 
 export function isExpired(record) {
