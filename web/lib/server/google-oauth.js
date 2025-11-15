@@ -37,14 +37,15 @@ async function kvGetRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
   
   if (isRedisUrl) {
-    // Use Redis client
+    // Use Redis client - must use client, cannot fall back to fetch with Redis URL
     const client = await getRedisClient();
-    if (client) {
-      return await client.get(key);
+    if (!client) {
+      throw new Error("Upstash Redis client failed to initialize. Check @upstash/redis package is installed.");
     }
+    return await client.get(key);
   }
   
-  // Use REST API
+  // Use REST API (only for HTTP URLs)
   const resp = await fetch(`${KV_URL}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${KV_TOKEN}` },
     cache: "no-store",
@@ -59,18 +60,19 @@ async function kvSetRaw(key, value, ttlSec) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
   
   if (isRedisUrl) {
-    // Use Redis client
+    // Use Redis client - must use client, cannot fall back to fetch with Redis URL
     const client = await getRedisClient();
-    if (client) {
-      const valueStr = typeof value === "string" ? value : String(value);
-      if (ttlSec != null) {
-        return await client.set(key, valueStr, { ex: ttlSec });
-      }
-      return await client.set(key, valueStr);
+    if (!client) {
+      throw new Error("Upstash Redis client failed to initialize. Check @upstash/redis package is installed.");
     }
+    const valueStr = typeof value === "string" ? value : String(value);
+    if (ttlSec != null) {
+      return await client.set(key, valueStr, { ex: ttlSec });
+    }
+    return await client.set(key, valueStr);
   }
   
-  // Use REST API: value goes in URL path, not body
+  // Use REST API: value goes in URL path, not body (only for HTTP URLs)
   const valueStr = typeof value === "string" ? value : String(value);
   const path = ttlSec != null
     ? `/set/${encodeURIComponent(key)}/${encodeURIComponent(valueStr)}?ex=${ttlSec}`
@@ -90,14 +92,15 @@ async function kvDelRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
   
   if (isRedisUrl) {
-    // Use Redis client
+    // Use Redis client - must use client, cannot fall back to fetch with Redis URL
     const client = await getRedisClient();
-    if (client) {
-      return await client.del(key);
+    if (!client) {
+      throw new Error("Upstash Redis client failed to initialize. Check @upstash/redis package is installed.");
     }
+    return await client.del(key);
   }
   
-  // Use REST API
+  // Use REST API (only for HTTP URLs)
   const resp = await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
