@@ -10,6 +10,28 @@ const isRedisUrl = KV_URL && (KV_URL.startsWith("redis://") || KV_URL.startsWith
 let RedisClass = null;
 let redisClient = null;
 
+// Convert Redis connection string to REST API URL if needed
+function getRestApiUrl(connectionString) {
+  if (!connectionString) return null;
+  if (connectionString.startsWith("https://")) return connectionString;
+  
+  // Extract endpoint from Redis connection string
+  // Format: rediss://default:TOKEN@endpoint.upstash.io:6379
+  const match = connectionString.match(/@([^:]+)\.upstash\.io/);
+  if (match) {
+    const endpoint = match[1];
+    return `https://${endpoint}.upstash.io`;
+  }
+  
+  // Fallback: try to extract from any format
+  const urlMatch = connectionString.match(/@([^.]+\.upstash\.io)/);
+  if (urlMatch) {
+    return `https://${urlMatch[1]}`;
+  }
+  
+  return null;
+}
+
 // Try to load @upstash/redis at module level (works in Next.js API routes)
 if (isRedisUrl) {
   try {
@@ -29,8 +51,14 @@ function getRedisClient() {
     throw new Error("Upstash Redis client not available. @upstash/redis package may not be installed or failed to load.");
   }
   try {
+    // Convert Redis connection string to REST API URL
+    const restApiUrl = getRestApiUrl(KV_URL);
+    if (!restApiUrl) {
+      throw new Error(`Could not convert Redis connection string to REST API URL. Please set UPSTASH_KV_REST_URL to an HTTPS URL like https://your-endpoint.upstash.io`);
+    }
+    
     redisClient = new RedisClass({
-      url: KV_URL,
+      url: restApiUrl,
       token: KV_TOKEN,
     });
     return redisClient;
