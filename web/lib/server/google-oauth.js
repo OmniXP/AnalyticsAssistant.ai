@@ -2,8 +2,8 @@
 // Google OAuth (PKCE) helpers + Upstash KV to temporarily store state + verifier
 
 // ---------- Upstash raw HTTP helpers ----------
-const KV_URL = process.env.KV_URL || "";
-const KV_TOKEN = process.env.KV_TOKEN || "";
+const KV_URL = process.env.KV_URL || process.env.UPSTASH_KV_REST_URL || "";
+const KV_TOKEN = process.env.KV_TOKEN || process.env.UPSTASH_KV_REST_TOKEN || "";
 
 async function kvGetRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
@@ -18,11 +18,14 @@ async function kvGetRaw(key) {
 }
 async function kvSetRaw(key, value, ttlSec) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
-  const qs = ttlSec ? `?expiration_ttl=${encodeURIComponent(ttlSec)}` : "";
-  const resp = await fetch(`${KV_URL}/set/${encodeURIComponent(key)}${qs}`, {
+  // Upstash KV REST API: value goes in URL path, not body
+  const valueStr = typeof value === "string" ? value : String(value);
+  const path = ttlSec != null
+    ? `/set/${encodeURIComponent(key)}/${encodeURIComponent(valueStr)}?ex=${ttlSec}`
+    : `/set/${encodeURIComponent(key)}/${encodeURIComponent(valueStr)}`;
+  const resp = await fetch(`${KV_URL}${path}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "text/plain" },
-    body: typeof value === "string" ? value : String(value),
+    headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
     cache: "no-store",
   });
   const text = await resp.text();
@@ -34,7 +37,7 @@ async function kvDelRaw(key) {
   if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
   const resp = await fetch(`${KV_URL}/del/${encodeURIComponent(key)}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${KV_TOKEN}` },
+    headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
     cache: "no-store",
   });
   const text = await resp.text();
@@ -79,8 +82,8 @@ export async function readAuthState(stateId, del = true) {
 }
 
 export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
-  const clientId = process.env.GOOGLE_CLIENT_ID || "";
-  if (!clientId) throw new Error("Missing GOOGLE_CLIENT_ID");
+  const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || "";
+  if (!clientId) throw new Error("Missing GOOGLE_CLIENT_ID or GOOGLE_OAUTH_CLIENT_ID");
 
   const origin = inferOrigin(req);
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
@@ -121,8 +124,10 @@ export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
 
 export async function exchangeCodeForTokens(code, codeVerifier, redirectUri) {
   const params = new URLSearchParams();
-  params.set("client_id", process.env.GOOGLE_CLIENT_ID || "");
-  params.set("client_secret", process.env.GOOGLE_CLIENT_SECRET || "");
+  const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || "";
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+  params.set("client_id", clientId);
+  params.set("client_secret", clientSecret);
   params.set("code", code);
   params.set("code_verifier", codeVerifier);
   params.set("grant_type", "authorization_code");

@@ -1,13 +1,18 @@
 // web/pages/api/auth/google/start.js
-import { ensureSid, buildGoogleAuthUrl } from "../../../../server/ga4-session.js";
+import { buildGoogleAuthUrl } from "../../../../server/google-oauth.js";
 
 export default async function handler(req, res) {
   try {
-    const redirect = typeof req.query.redirect === "string" ? req.query.redirect : "/";
-    const sid = ensureSid(res); // guarantees aa_sid exists for the whole flow
-    const url = buildGoogleAuthUrl({ sid, redirect });
-    res.status(200).json({ ok: true, url });
+    const desiredRedirect = typeof req.query.redirect === "string" ? req.query.redirect : "/";
+    
+    // Build Google OAuth URL with PKCE (stores state + verifier in Upstash)
+    const { url } = await buildGoogleAuthUrl(req, { desiredRedirect });
+    
+    // Redirect directly to Google's OAuth page
+    res.writeHead(302, { Location: url });
+    res.end();
   } catch (e) {
+    console.error("OAuth start error:", e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
