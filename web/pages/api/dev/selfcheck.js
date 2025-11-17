@@ -1,5 +1,5 @@
 // web/pages/api/dev/selfcheck.js
-import { getBearerForRequest, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session.js";
+import { getBearerForRequest, SESSION_COOKIE_NAME } from "../../../server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {

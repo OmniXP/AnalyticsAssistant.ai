@@ -1,5 +1,5 @@
 // web/pages/api/dev/check-ga-cookie.js
-import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../../lib/server/ga4-session.js";
+import { readSidFromCookie, SESSION_COOKIE_NAME } from "../../../server/ga4-session.js";
 
 export default function handler(req, res) {
   const sid = readSidFromCookie(req);

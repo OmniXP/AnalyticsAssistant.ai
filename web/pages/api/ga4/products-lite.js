@@ -1,5 +1,5 @@
 // web/pages/api/ga4/products-lite.js
-import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
+import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 function buildFilter(filters = {}) {
   const andFilter = [];
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   if (!propertyId || !startDate || !endDate) return res.status(400).json({ ok: false, error: "Missing propertyId or date range" });
 
   try {
-    const bearer = await getBearerForRequest(req, res);
+    const bearer = await getBearerForRequest(req);
 
     const payload = {
       dateRanges: [{ startDate, endDate }],

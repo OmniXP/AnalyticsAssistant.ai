@@ -1,7 +1,7 @@
 // web/pages/api/auth/google/callback.js
 import crypto from "crypto";
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../server/google-oauth.js";
-import { saveGoogleTokens, ensureSid } from "../../../../server/ga4-session.js";
+import { saveGoogleTokens, ensureSid, readSidFromCookie } from "../../../../server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
@@ -33,8 +33,12 @@ export default async function handler(req, res) {
     const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
     const tokens = await exchangeCodeForTokens(String(code), code_verifier, redirectUri);
 
-    // Generate session ID and set cookie (uses SESSION_COOKIE_NAME from env, defaults to "aa_sid")
-    const sid = ensureSid(res);
+    // Get existing session ID from cookie, or create a new one
+    // This ensures we reuse the same session if the user already has a cookie
+    const existingSid = readSidFromCookie(req);
+    const sid = ensureSid(res, existingSid); // Reuse existing SID if available
+    
+    console.log("[OAuth Callback] Using session ID:", sid, existingSid ? "(reused)" : "(new)");
 
     // Save tokens against the session
     await saveGoogleTokens({
@@ -43,9 +47,12 @@ export default async function handler(req, res) {
       refresh_token: tokens.refresh_token,
       expires_in: tokens.expires_in,
     });
+    
+    console.log("[OAuth Callback] Saved tokens for session:", sid);
 
-    // Redirect back to the app (use desiredRedirect from state, or default to /connections)
-    const redirectTo = desiredRedirect || "/connections";
+    // Redirect back to the app (use desiredRedirect from state, or default to /)
+    // Note: Cookie is already set by ensureSid() above
+    const redirectTo = desiredRedirect || "/";
     res.writeHead(302, { Location: redirectTo });
     res.end();
   } catch (e) {

@@ -1,5 +1,5 @@
 // web/pages/api/ga4/query-raw.js
-import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
+import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 /**
  * Low-level proxy to GA4 runReport for debugging.
@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const bearer = await getBearerForRequest(req, res);
+    const bearer = await getBearerForRequest(req);
 
     const resp = await fetch(
       `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(

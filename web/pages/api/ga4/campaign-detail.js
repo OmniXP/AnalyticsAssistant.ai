@@ -24,19 +24,30 @@ export default async function handler(req, res) {
       },
     };
 
-    // Helper to call GA4
-    async function run(dimensions) {
+    // Helper to call GA4 with fallback for incompatible metrics
+    async function run(dimensions, includeEcommerce = true) {
       const filter = mergeAnd(baseFilter, exactCampaign);
+      const metrics = includeEcommerce
+        ? [
+            { name: "sessions" },
+            { name: "totalUsers" },
+            { name: "transactions" },
+            { name: "purchaseRevenue" },
+          ]
+        : [
+            { name: "sessions" },
+            { name: "totalUsers" },
+          ];
+      
+      const orderBys = includeEcommerce
+        ? [{ metric: { metricName: "purchaseRevenue" }, desc: true }]
+        : [{ metric: { metricName: "sessions" }, desc: true }];
+      
       const body = {
         dateRanges: [{ startDate, endDate }],
         dimensions,
-        metrics: [
-          { name: "sessions" },
-          { name: "totalUsers" },
-          { name: "transactions" },
-          { name: "purchaseRevenue" },
-        ],
-        orderBys: [{ metric: { metricName: "purchaseRevenue" }, desc: true }],
+        metrics,
+        orderBys,
         ...(filter ? { dimensionFilter: filter } : {}),
         limit: 200,
       };
@@ -47,22 +58,31 @@ export default async function handler(req, res) {
         body: JSON.stringify(body),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data?.error?.message || "GA4 error");
+      if (!r.ok) {
+        // If error mentions incompatible metrics, retry without e-commerce metrics
+        const errorMsg = data?.error?.message || "";
+        if (includeEcommerce && (errorMsg.includes("incompatible") || errorMsg.includes("remove transactions"))) {
+          console.log(`[campaign-detail] Retrying without e-commerce metrics for dimensions: ${dimensions.map(d => d.name).join(", ")}`);
+          return run(dimensions, false);
+        }
+        throw new Error(errorMsg || "GA4 error");
+      }
       return data;
     }
 
-    const [bySourceMedium, byAdContent, byKeyword] = await Promise.all([
+    // Run queries - make adFormat optional (not all campaigns have ad format data)
+    const [bySourceMedium, byAdFormat, byKeyword] = await Promise.all([
       run([{ name: "sessionSource" }, { name: "sessionMedium" }]),
-      run([{ name: "adContent" }]),
+      run([{ name: "adFormat" }]).catch(() => ({ rows: [] })), // Gracefully handle if adFormat fails
       run([{ name: "manualTerm" }]), // UTM term / keyword
     ]);
 
     return res.status(200).json({
       ok: true,
       bySourceMedium: bySourceMedium?.rows ?? [],
-      byAdContent: byAdContent?.rows ?? [],
+      byAdContent: byAdFormat?.rows ?? [], // Keep same key name for frontend compatibility
       byKeyword: byKeyword?.rows ?? [],
-      raw: { bySourceMedium, byAdContent, byKeyword },
+      raw: { bySourceMedium, byAdContent: byAdFormat, byKeyword },
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });

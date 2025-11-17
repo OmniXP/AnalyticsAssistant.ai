@@ -6,13 +6,22 @@ const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_REDIRECT_URI,
-  SESSION_COOKIE_NAME = "aa_sid",
+  SESSION_COOKIE_NAME: _SESSION_COOKIE_NAME = "aa_sid",
   SESSION_COOKIE_SECRET = "change-me",
 } = process.env;
+
+// Export SESSION_COOKIE_NAME for use in other modules
+export const SESSION_COOKIE_NAME = _SESSION_COOKIE_NAME;
 
 // ---- Upstash KV helpers for token storage ----
 const KV_URL = process.env.KV_URL || process.env.UPSTASH_KV_REST_URL || "";
 const KV_TOKEN = process.env.KV_TOKEN || process.env.UPSTASH_KV_REST_TOKEN || "";
+
+// Fallback in-memory store for local development when KV is not configured
+const tokenStore = new Map();
+
+// Check if KV is configured
+const hasKV = !!(KV_URL && KV_TOKEN);
 
 // Check if we have a Redis connection string vs HTTP REST URL
 const isRedisUrl = KV_URL && (KV_URL.startsWith("redis://") || KV_URL.startsWith("rediss://"));
@@ -67,9 +76,12 @@ function getRedisClient() {
   }
 }
 
-// KV storage helpers
+// KV storage helpers with fallback to in-memory store
 async function kvGet(key) {
-  if (!KV_URL || !KV_TOKEN) return null;
+  if (!hasKV) {
+    // Fallback to in-memory store for local development
+    return tokenStore.get(key) || null;
+  }
   if (isRedisUrl) {
     const client = getRedisClient();
     if (client) {
@@ -88,7 +100,11 @@ async function kvGet(key) {
 }
 
 async function kvSet(key, value, ttlSec) {
-  if (!KV_URL || !KV_TOKEN) throw new Error("Upstash KV not configured");
+  if (!hasKV) {
+    // Fallback to in-memory store for local development
+    tokenStore.set(key, value);
+    return "OK";
+  }
   const valStr = JSON.stringify(value);
   if (isRedisUrl) {
     const client = getRedisClient();
@@ -112,7 +128,11 @@ async function kvSet(key, value, ttlSec) {
 }
 
 async function kvDel(key) {
-  if (!KV_URL || !KV_TOKEN) return;
+  if (!hasKV) {
+    // Fallback to in-memory store for local development
+    tokenStore.delete(key);
+    return;
+  }
   if (isRedisUrl) {
     const client = getRedisClient();
     if (client) return await client.del(key);
@@ -127,14 +147,42 @@ async function kvDel(key) {
 // ---- Cookie utilities ----
 export function readSidFromCookie(req) {
   const raw = req.headers?.cookie || "";
-  const m = raw.split(/;\s*/).find(c => c.startsWith(`${SESSION_COOKIE_NAME}=`));
-  return m ? decodeURIComponent(m.split("=", 2)[1]) : null;
+  if (!raw) return null;
+  
+  // Support both aa_sid (new) and aa_auth (legacy) cookie names for backwards compatibility
+  const cookieNames = [SESSION_COOKIE_NAME, "aa_auth", "aa_sid"];
+  const cookies = raw.split(/;\s*/).map(c => c.trim());
+  
+  for (const cookieName of cookieNames) {
+    const cookiePattern = `${cookieName}=`;
+    const m = cookies.find(c => c.startsWith(cookiePattern));
+    if (m) {
+      const value = m.substring(cookiePattern.length).trim();
+      if (!value) continue;
+      
+      try {
+        return decodeURIComponent(value);
+      } catch (e) {
+        // If decoding fails, return as-is (might already be decoded)
+        return value;
+      }
+    }
+  }
+  
+  return null;
 }
 
 export function ensureSid(res, sid) {
   const value = sid || crypto.randomUUID();
-  const cookie = `${SESSION_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`;
+  // Only use Secure flag in production (HTTPS), not in local development (HTTP)
+  const isSecure = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+  const secureFlag = isSecure ? "Secure; " : "";
+  // Use SameSite=Lax for both dev and prod - it works for same-origin requests
+  // SameSite=None requires Secure, which doesn't work on localhost HTTP
+  const sameSite = "SameSite=Lax";
+  const cookie = `${SESSION_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; ${secureFlag}HttpOnly; ${sameSite}; Max-Age=${60 * 60 * 24 * 365}`;
   res.setHeader("Set-Cookie", cookie);
+  console.log("[ensureSid] Setting cookie:", SESSION_COOKIE_NAME, "=", value.substring(0, 20) + "...", "SameSite=" + sameSite);
   return value;
 }
 
@@ -222,15 +270,32 @@ async function refreshAccessToken(refresh_token) {
 
 // ---- Public: used by API routes ----
 export async function getBearerForRequest(req) {
+  console.log("[getBearerForRequest] Starting, cookie header:", req.headers?.cookie?.substring(0, 100) || "none");
   const sid = readSidFromCookie(req);
-  if (!sid) throw new Error("No session cookie");
+  console.log("[getBearerForRequest] Extracted SID:", sid ? sid.substring(0, 20) + "..." : "null");
+  if (!sid) {
+    const cookieHeader = req.headers?.cookie || "none";
+    console.error("[getBearerForRequest] No session cookie found.");
+    console.error("[getBearerForRequest] Cookie header:", cookieHeader.substring(0, 200));
+    console.error("[getBearerForRequest] Looking for cookies:", [SESSION_COOKIE_NAME, "aa_auth", "aa_sid"]);
+    throw new Error("Google session expired or missing. Click \"Connect Google Analytics\" to re-authorise, then run again.");
+  }
 
+  console.log("[getBearerForRequest] Fetching tokens for SID:", sid.substring(0, 20) + "...");
   const rec = await getGoogleTokens(sid);
-  if (!rec) throw new Error("No bearer");
+  console.log("[getBearerForRequest] Tokens found:", !!rec, rec ? "expired:" + isExpired(rec) : "none");
+  if (!rec) {
+    console.error("[getBearerForRequest] No tokens found for session:", sid);
+    throw new Error("Google session expired or missing. Click \"Connect Google Analytics\" to re-authorise, then run again.");
+  }
 
-  if (!isExpired(rec)) return `Bearer ${rec.access_token}`;
+  if (!isExpired(rec)) {
+    console.log("[getBearerForRequest] Token not expired, returning access token");
+    return rec.access_token;
+  }
 
   // expired -> refresh
+  console.log("[getBearerForRequest] Token expired, refreshing...");
   if (!rec.refresh_token) throw new Error("No refresh token");
   const refreshed = await refreshAccessToken(rec.refresh_token);
   await saveGoogleTokens({
@@ -240,7 +305,8 @@ export async function getBearerForRequest(req) {
     expires_in: refreshed.expires_in,
   });
   const latest = await getGoogleTokens(sid);
-  return `Bearer ${latest.access_token ? latest.access_token : refreshed.access_token}`;
+  console.log("[getBearerForRequest] Token refreshed, returning access token");
+  return latest.access_token ? latest.access_token : refreshed.access_token;
 }
 
 // ---- Public: used by auth endpoints ----

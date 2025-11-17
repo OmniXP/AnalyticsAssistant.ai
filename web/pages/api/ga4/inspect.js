@@ -1,5 +1,5 @@
 // web/pages/api/ga4/inspect.js
-import { getBearerForRequest } from "../../../lib/server/ga4-session.js";
+import { getBearerForRequest } from "../../../server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {

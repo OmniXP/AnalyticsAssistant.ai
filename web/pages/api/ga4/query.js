@@ -7,6 +7,8 @@ import { getBearerForRequest } from "../../../server/ga4-session.js";
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
+    // Debug: log cookie header
+    console.log("[query] Cookie header:", req.headers?.cookie?.substring(0, 200) || "none");
     const bearer = await getBearerForRequest(req);
     if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
 
@@ -35,7 +37,14 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ok: true, rows: data?.rows ?? [], raw: data });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    // If it's an authentication error from getBearerForRequest, return 401
+    const errorMsg = String(e?.message || e);
+    if (errorMsg.includes("Google session expired") || errorMsg.includes("No session cookie") || errorMsg.includes("No bearer") || errorMsg.includes("No tokens")) {
+      console.error("[query] Authentication error:", errorMsg);
+      return res.status(401).json({ ok: false, error: errorMsg });
+    }
+    console.error("[query] Unexpected error:", e);
+    return res.status(500).json({ ok: false, error: errorMsg });
   }
 }
 

@@ -1,5 +1,5 @@
 // web/pages/api/dev/token-dump.js
-import { readSidFromCookie, getGoogleTokens } from "../../../lib/server/ga4-session.js";
+import { readSidFromCookie, getGoogleTokens } from "../../../server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {

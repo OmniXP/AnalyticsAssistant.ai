@@ -94,6 +94,7 @@ async function fetchJson(url, payload, opts = {}) {
     method: opts.method || "POST",
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     body: opts.method === "GET" ? undefined : JSON.stringify(payload || {}),
+    credentials: "include", // Ensure cookies are sent with requests
   });
   const text = await res.text();
   let data = null;
@@ -749,7 +750,11 @@ export default function Home() {
     : { s: "bad", label: "Property ID: Missing" };
 
   /* ============================== Premium ============================== */
-  const premium = isPremium();
+  // Use state + useEffect to avoid hydration mismatch (localStorage only available client-side)
+  const [premium, setPremium] = useState(false);
+  useEffect(() => {
+    setPremium(isPremium());
+  }, []);
 
   const runDisabled = loading || !hasProperty; // report only blocked by property presence
 
@@ -1462,11 +1467,14 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
         limit: 25,
       });
 
-      const H = getHeaderIndexes(data);
+      // Use raw data for headers (contains dimensionHeaders and metricHeaders)
+      const raw = data.raw || data;
+      const H = getHeaderIndexes(raw);
+      const rows = data.rows || raw.rows || [];
       // Accept common header names
       const iSource = ["source", "sessionSource"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
       const iMedium = ["medium", "sessionMedium"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
-      const out = (data.rows || []).map((r) => ({
+      const out = rows.map((r) => ({
         source: iSource >= 0 ? (r.dimensionValues?.[iSource]?.value || "(unknown)") : "(unknown)",
         medium: iMedium >= 0 ? (r.dimensionValues?.[iMedium]?.value || "(unknown)") : "(unknown)",
         sessions: metValByName(r, H, "sessions"),
@@ -1588,9 +1596,12 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
         limit: 50,
       });
 
-      const H = getHeaderIndexes(data);
-      const iCampaign = ["campaign", "sessionCampaign"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
-      const out = (data.rows || []).map((r, i) => ({
+      // Use raw data for headers (contains dimensionHeaders and metricHeaders)
+      const raw = data.raw || data;
+      const H = getHeaderIndexes(raw);
+      const rows = data.rows || raw.rows || [];
+      const iCampaign = ["campaign", "sessionCampaignName", "sessionCampaign"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const out = rows.map((r, i) => ({
         campaign: iCampaign >= 0 ? (r.dimensionValues?.[iCampaign]?.value || "(not set)") : `(row ${i + 1})`,
         sessions: metValByName(r, H, "sessions"),
         users: metValByName(r, H, "totalUsers", ["users"]),
@@ -1700,6 +1711,10 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   const [term, setTerm] = useState([]);
 
   const load = async () => {
+    if (!campaign || !campaign.trim()) {
+      setError("Please enter a campaign name first");
+      return;
+    }
     setLoading(true);
     setError("");
     setTotals(null);
@@ -1712,14 +1727,15 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         startDate,
         endDate,
         filters,
-        campaign,
+        campaignName: campaign.trim(), // API expects campaignName, not campaign
         limit: 25,
       });
 
       // Totals
       if (data?.totals) {
-        const HT = getHeaderIndexes(data.totals);
-        const row0 = data.totals.rows?.[0];
+        const totalsRaw = data.totals.raw || data.totals;
+        const HT = getHeaderIndexes(totalsRaw);
+        const row0 = (data.totals.rows || totalsRaw.rows || [])?.[0];
         const totalsParsed = row0
           ? {
               sessions: metValByName(row0, HT, "sessions"),
@@ -1734,10 +1750,12 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       // Utility to parse 2‑dimensional breakdowns with four metrics
       const parse2D = (block, d1Candidates, d2Candidates) => {
         if (!block) return [];
-        const H = getHeaderIndexes(block);
+        const blockRaw = block.raw || block;
+        const H = getHeaderIndexes(blockRaw);
+        const blockRows = block.rows || blockRaw.rows || [];
         const iD1 = d1Candidates.map(H.dimIdx).find((i) => i >= 0) ?? -1;
         const iD2 = d2Candidates.map(H.dimIdx).find((i) => i >= 0) ?? -1;
-        return (block.rows || []).map((r, i) => ({
+        return blockRows.map((r, i) => ({
           d1: iD1 >= 0 ? (r.dimensionValues?.[iD1]?.value || "") : "",
           d2: iD2 >= 0 ? (r.dimensionValues?.[iD2]?.value || "") : "",
           sessions: metValByName(r, H, "sessions"),
@@ -1748,20 +1766,15 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         }));
       };
 
-      setSrcMed(
-        parse2D(
-          data?.sourceMedium,
-          ["source", "sessionSource"],
-          ["medium", "sessionMedium"]
-        )
-      );
-
-      // Ad Content is 1‑dimension
-      if (data?.adContent) {
-        const Hc = getHeaderIndexes(data.adContent);
-        const iContent = ["adContent", "sessionAdContent", "creativeName"].map(Hc.dimIdx).find((i) => i >= 0) ?? -1;
+      // Source/Medium (2D breakdown) - moved to end after fixing data structure
+      if (data?.byAdContent) {
+        const adContentRaw = data.raw?.byAdContent || data.byAdContent;
+        const Hc = getHeaderIndexes(adContentRaw);
+        const adContentRows = data.byAdContent || adContentRaw?.rows || [];
+        // Check for adFormat first (what API uses), then fallback to adContent variants
+        const iContent = ["adFormat", "adContent", "sessionAdContent", "creativeName"].map(Hc.dimIdx).find((i) => i >= 0) ?? -1;
         setContent(
-          (data.adContent.rows || []).map((r, i) => ({
+          adContentRows.map((r, i) => ({
             content: iContent >= 0 ? (r.dimensionValues?.[iContent]?.value || "(not set)") : `(row ${i + 1})`,
             sessions: metValByName(r, Hc, "sessions"),
             users: metValByName(r, Hc, "totalUsers", ["users"]),
@@ -1773,11 +1786,13 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       }
 
       // Term is 1‑dimension
-      if (data?.term) {
-        const Ht = getHeaderIndexes(data.term);
-        const iTerm = ["term", "keyword"].map(Ht.dimIdx).find((i) => i >= 0) ?? -1;
+      if (data?.byKeyword) {
+        const termRaw = data.raw?.byKeyword || data.byKeyword;
+        const Ht = getHeaderIndexes(termRaw);
+        const termRows = data.byKeyword || termRaw?.rows || [];
+        const iTerm = ["term", "keyword", "manualTerm"].map(Ht.dimIdx).find((i) => i >= 0) ?? -1;
         setTerm(
-          (data.term.rows || []).map((r, i) => ({
+          termRows.map((r, i) => ({
             term: iTerm >= 0 ? (r.dimensionValues?.[iTerm]?.value || "(not set)") : `(row ${i + 1})`,
             sessions: metValByName(r, Ht, "sessions"),
             users: metValByName(r, Ht, "totalUsers", ["users"]),
@@ -1787,6 +1802,15 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
           }))
         );
       }
+      
+      // Source/Medium (2D breakdown)
+      setSrcMed(
+        parse2D(
+          data?.bySourceMedium ? { rows: data.bySourceMedium, raw: data.raw?.bySourceMedium } : null,
+          ["source", "sessionSource"],
+          ["medium", "sessionMedium"]
+        )
+      );
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -1802,17 +1826,22 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       title="Campaign drill-down"
       actions={
         <>
-          <input
-            value={campaign}
-            onChange={(e) => setCampaign(e.target.value)}
-            placeholder="Type exact campaign name…"
-            style={{
-              padding: 8,
-              minWidth: 260,
-              borderRadius: 10,
-              border: `1px solid ${COLORS.border}`,
-            }}
-          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <input
+              value={campaign}
+              onChange={(e) => setCampaign(e.target.value)}
+              placeholder="Enter campaign name (e.g., 'summer_sale' or 'Summer Sale 2024')"
+              style={{
+                padding: 8,
+                minWidth: 260,
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            />
+            <small style={{ color: COLORS.subtext, fontSize: 11, marginTop: -2 }}>
+              💡 Tip: Use the exact campaign name from the "Campaigns" section above. Case-insensitive matching.
+            </small>
+          </div>
           <Button onClick={load} disabled={loading || !propertyId || !campaign}>
             {loading ? "Loading…" : "Load"}
           </Button>
@@ -1851,9 +1880,14 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
       )}
 
       {!loading && !totals && !error && (
-        <p style={{ marginTop: 8, color: COLORS.subtext }}>
-          Enter a campaign name and click &ldquo;Load&rdquo;.
-        </p>
+        <div style={{ marginTop: 8, color: COLORS.subtext }}>
+          <p style={{ margin: 0, marginBottom: 8 }}>
+            Enter a campaign name and click &ldquo;Load&rdquo;.
+          </p>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.subtext }}>
+            <strong>How to find campaign names:</strong> Load the &ldquo;Campaigns&rdquo; section above to see all available campaign names. Copy the exact name (e.g., &ldquo;summer_sale&rdquo; or &ldquo;Summer Sale 2024&rdquo;) and paste it here.
+          </p>
+        </div>
       )}
 
       {loading && (
@@ -1945,9 +1979,12 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
         limit: 100,
       });
 
-      const H = getHeaderIndexes(data);
-      const iCampaign = ["campaign", "sessionCampaign"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
-      const parsed = (data.rows || []).map((r, i) => {
+      // Use raw data for headers (contains dimensionHeaders and metricHeaders)
+      const raw = data.raw || data;
+      const H = getHeaderIndexes(raw);
+      const rows = data.rows || raw.rows || [];
+      const iCampaign = ["campaign", "sessionCampaignName", "sessionCampaign"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      const parsed = rows.map((r, i) => {
         const name = iCampaign >= 0 ? (r.dimensionValues?.[iCampaign]?.value ?? "(not set)") : `(row ${i + 1})`;
         const sessions = metValByName(r, H, "sessions");
         const users = metValByName(r, H, "totalUsers", ["users"]);
@@ -2114,10 +2151,13 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
     try {
       const data = await fetchJson("/api/ga4/top-pages", { propertyId, startDate, endDate, filters, limit: 20 });
 
-      const H = getHeaderIndexes(data);
+      // Use raw data for headers (contains dimensionHeaders and metricHeaders)
+      const raw = data.raw || data;
+      const H = getHeaderIndexes(raw);
+      const rows = data.rows || raw.rows || [];
       const iTitle = ["pageTitle"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
       const iPath = ["pagePath", "pagePathPlusQueryString", "landingPage", "landingPagePlusQueryString"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
-      const out = (data.rows || []).map((r, i) => ({
+      const out = rows.map((r, i) => ({
         title: iTitle >= 0 ? (r.dimensionValues?.[iTitle]?.value || "(untitled)") : `(row ${i + 1})`,
         path: iPath >= 0 ? (r.dimensionValues?.[iPath]?.value || "") : "",
         views: metValByName(r, H, "screenPageViews", ["views", "pageViews", "sessions"]),
@@ -2228,7 +2268,10 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
         limit: 500,
       });
 
-      const H = getHeaderIndexes(data);
+      // Use raw data for headers (contains dimensionHeaders and metricHeaders)
+      const raw = data.raw || data;
+      const H = getHeaderIndexes(raw);
+      const rows = data.rows || raw.rows || [];
       const iLanding = [
         "landingPage",
         "landingPagePlusQueryString",
@@ -2240,7 +2283,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
       const iSource = ["source", "sessionSource"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
       const iMedium = ["medium", "sessionMedium"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
 
-      const parsed = (data?.rows || []).map((r, i) => ({
+      const parsed = rows.map((r, i) => ({
         landing: iLanding >= 0 ? (r.dimensionValues?.[iLanding]?.value || "(unknown)") : `(row ${i + 1})`,
         source: iSource >= 0 ? (r.dimensionValues?.[iSource]?.value || "(unknown)") : "(unknown)",
         medium: iMedium >= 0 ? (r.dimensionValues?.[iMedium]?.value || "(unknown)") : "(unknown)",
@@ -2633,21 +2676,20 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     mondayTarget.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
     return mondayTarget;
   }
+  function formatYYYYMMDD(s) {
+    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
+    if (!m) return String(s || "");
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    // Simplified format: "Sep 1, 2024" instead of "01 Sep 2024"
+    return `${MONTHS[mo - 1]} ${d}, ${y}`;
+  }
   function formatYearWeekRange(s) {
     const m = /^(\d{4})W?(\d{2})$/.exec(String(s) || "");
     if (!m) return String(s || "");
     const year = Number(m[1]); const week = Number(m[2]);
     const start = isoWeekStartUTC(year, week);
-    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
-    const startStr = `${pad2(start.getUTCDate())} ${MONTHS[start.getUTCMonth()]}`;
-    const endStr = `${pad2(end.getUTCDate())} ${MONTHS[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
-    return `${startStr}–${endStr}`;
-  }
-  function formatYYYYMMDD(s) {
-    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s) || "");
-    if (!m) return String(s || "");
-    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-    return `${String(d).padStart(2, "0")} ${MONTHS[mo - 1]} ${y}`;
+    // Simplified format: "Week of Sep 1" instead of "01 Sep–07 Sep 2024"
+    return `Week of ${MONTHS[start.getUTCMonth()]} ${start.getUTCDate()}, ${start.getUTCFullYear()}`;
   }
   function displayPeriodLabel(raw, gran) {
     return gran === "weekly" ? formatYearWeekRange(raw) : formatYYYYMMDD(raw);
@@ -2672,7 +2714,28 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
     setRows([]);
     try {
       const data = await fetchJson("/api/ga4/timeseries", { propertyId, startDate, endDate, filters, granularity });
-      setRows(data?.series || []);
+      
+      // Parse timeseries data - API returns rows, we need to convert to series format
+      const raw = data.raw || data;
+      const H = getHeaderIndexes(raw);
+      const rows = data.rows || raw.rows || [];
+      
+      // Find date dimension index
+      const iDate = ["date"].map(H.dimIdx).find((i) => i >= 0) ?? -1;
+      
+      // Convert rows to series format
+      const series = rows.map((r) => {
+        const dateValue = iDate >= 0 ? (r.dimensionValues?.[iDate]?.value || "") : "";
+        return {
+          period: dateValue,
+          sessions: metValByName(r, H, "sessions"),
+          users: metValByName(r, H, "totalUsers", ["users"]),
+          transactions: metValByName(r, H, "transactions"),
+          revenue: metValByName(r, H, "purchaseRevenue", ["revenue", "totalRevenue"]),
+        };
+      });
+      
+      setRows(series);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
