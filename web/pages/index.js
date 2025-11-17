@@ -1316,6 +1316,49 @@ export default function Home() {
           </pre>
         </details>
       ) : null}
+
+      {/* Footer */}
+      <footer
+        style={{
+          marginTop: 48,
+          paddingTop: 24,
+          paddingBottom: 24,
+          borderTop: `1px solid ${COLORS.frostEdge}`,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 24,
+          flexWrap: "wrap",
+          fontSize: 13,
+          color: COLORS.subtext,
+        }}
+      >
+        <a
+          href="/privacy"
+          style={{
+            color: COLORS.subtext,
+            textDecoration: "none",
+            transition: "color 0.2s",
+          }}
+          onMouseEnter={(e) => (e.target.style.color = COLORS.text)}
+          onMouseLeave={(e) => (e.target.style.color = COLORS.subtext)}
+        >
+          Privacy Policy
+        </a>
+        <span style={{ color: COLORS.border }}>•</span>
+        <a
+          href="/terms"
+          style={{
+            color: COLORS.subtext,
+            textDecoration: "none",
+            transition: "color 0.2s",
+          }}
+          onMouseEnter={(e) => (e.target.style.color = COLORS.text)}
+          onMouseLeave={(e) => (e.target.style.color = COLORS.subtext)}
+        >
+          Terms of Service
+        </a>
+      </footer>
     </main>
   );
 }
