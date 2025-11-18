@@ -1,15 +1,17 @@
-// web/pages/api/insights/summarise-ecom.js
+import { finalizeSummary } from "../../../lib/insights/ai-pro.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
+
 // Turns totals into a narrative with practical next steps. No GA auth.
 
 function fmtInt(n) { return Number(n || 0).toLocaleString("en-GB"); }
 function fmtGBP(n) { return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(n || 0)); }
 function toPct(n) { return `${(Number(n || 0)).toFixed(2)}%`; }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { totals = {}, dateRange = {}, filters = {} } = req.body || {};
+    const { totals = {}, dateRange = {}, filters = {}, qualitativeNotes = "" } = req.body || {};
     const period = dateRange?.start && dateRange?.end ? `${dateRange.start} → ${dateRange.end}` : "the selected period";
     const scope = [
       filters?.country && filters.country !== "All" ? `country = ${filters.country}` : "",
@@ -56,7 +58,7 @@ export default async function handler(req, res) {
       `• Checkout form: 1-page vs. multi-step with auto-fill; measure completion and error rate.`,
     ];
 
-    const summary = [
+    const baseSummary = [
       findings.join("\n"),
       ``,
       actions.join("\n"),
@@ -64,8 +66,57 @@ export default async function handler(req, res) {
       tests.join("\n"),
     ].join("\n");
 
+    const drivers = [
+      {
+        theme: "Acquisition",
+        label: "Traffic volume",
+        metric: "sessions",
+        value: sessions,
+        journey: "Acquisition → PDP",
+        insight: `${fmtInt(sessions)} sessions feed the funnel; quality + intent dictate conversion.`,
+        example: "A new visitor lands from paid social, scans the hero, and bounces if the offer feels irrelevant.",
+      },
+      {
+        theme: "UX",
+        label: "Cart → checkout",
+        metric: "Checkout start rate",
+        value: checkoutRate,
+        journey: "Cart → Checkout",
+        insight: `Only ${toPct(checkoutRate)} of add-to-cart sessions begin checkout.`,
+        example: "Shopper adds to cart but hesitates when shipping/fees aren’t transparent, abandoning before checkout.",
+      },
+      {
+        theme: "Content",
+        label: "Value prop & AOV",
+        metric: "AOV",
+        value: aov,
+        journey: "PDP messaging",
+        insight: `AOV at ${fmtGBP(aov)}; bundles, urgency, and reassurance can stretch baskets.`,
+        example: "A returning customer scans PDP for proof (reviews, delivery promise) before adding complimentary items.",
+      },
+      {
+        theme: "Tech",
+        label: "Instrumentation",
+        metric: "tracking",
+        value: 1,
+        journey: "Checkout events",
+        insight: "Checkout and purchase events must fire consistently to power remarketing, modelling, and paid budget decisions.",
+        example: "Marketer tries to diagnose why ROAS fell but purchase events are missing for specific payment methods.",
+      },
+    ];
+
+    const summary = finalizeSummary(req, baseSummary, {
+      topic: "ecommerce",
+      period,
+      scope,
+      drivers,
+      qualitativeNotes,
+    });
+
     res.status(200).json({ summary });
   } catch (e) {
     res.status(200).json({ summary: `Unable to summarise e-commerce: ${String(e?.message || e)}` });
   }
 }
+
+export default withUsageGuard("ai", handler);

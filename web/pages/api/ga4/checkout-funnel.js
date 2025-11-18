@@ -1,4 +1,5 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
 /**
  * Checkout funnel event counts for core steps.
@@ -12,7 +13,7 @@ const FUNNEL_EVENTS = [
   "purchase",
 ];
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     const bearer = await getBearerForRequest(req);
@@ -77,3 +78,5 @@ function buildFilterExpressions(filters) {
   }
   return out;
 }
+
+export default withUsageGuard("ga4", handler);

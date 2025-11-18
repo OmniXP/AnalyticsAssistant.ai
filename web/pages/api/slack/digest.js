@@ -1,8 +1,9 @@
-// /pages/api/slack/digest.js
-// Minimal Slack Performance Digest sender (supports "test" mode).
-// No external deps. Expects POST with a Slack Incoming Webhook URL.
+import { withPremiumGuard } from "../../../server/usage-limits.js";
 
-export default async function handler(req, res) {
+// Minimal Slack Performance Digest sender (supports "test" mode).
+// Expects POST with a Slack Incoming Webhook URL.
+
+async function handler(req, res) {
   // Allow only POST
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -10,22 +11,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const {
-      test = false,
-      slackWebhook = "",
-      premiumTag = "",
-      propertyId = "",
-      dateRange = { start: "", end: "" },
-      filters = {},
-      summary = "", // optional precomputed AI summary (if you pass one)
-    } = req.body || {};
-
-    // --- Premium gate: accept alpha/beta/pro (trim+lower for safety)
-    const tag = String(premiumTag || "").trim().toLowerCase();
-    const isPremium = tag === "alpha" || tag === "beta" || tag === "pro";
-    if (!isPremium) {
-      return res.status(401).json({ error: "premium_required" });
-    }
+    const { test = false, slackWebhook = "", propertyId = "", dateRange = { start: "", end: "" }, filters = {}, summary = "" } =
+      req.body || {};
 
     // --- Validate webhook
     if (!/^https:\/\/hooks\.slack\.com\/services\//.test(slackWebhook || "")) {
@@ -99,3 +86,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "server_error" });
   }
 }
+
+export default withPremiumGuard(handler, { methods: ["POST"] });

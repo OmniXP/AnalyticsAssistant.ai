@@ -1,6 +1,9 @@
 // web/pages/api/insights/summarise-pro.js
 // Generic summariser for multiple topics with concrete, testable recommendations.
 
+import { finalizeSummary } from "../../../lib/insights/ai-pro.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
+
 function fmtInt(n) { return Number(n || 0).toLocaleString("en-GB"); }
 function fmtGBP(n) { return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(n || 0)); }
 function pct(part, whole) { return whole > 0 ? Math.round((part / whole) * 100) : 0; }
@@ -14,15 +17,17 @@ function scopeLine(filters) {
   return s ? `Filters: ${s}` : "Filters: none";
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { topic, dateRange = {}, filters = {}, ...rest } = req.body || {};
+    const { topic, dateRange = {}, filters = {}, qualitativeNotes = "", ...rest } = req.body || {};
     const period = dateRange?.start && dateRange?.end ? `${dateRange.start} → ${dateRange.end}` : "the selected period";
     const scope = scopeLine(filters);
 
     let summary = "Summary generated.";
+    let drivers = [];
+    let resolvedTopic = topic || "channels";
 
     if (topic === "channels") {
       const { rows = [], totals = {}, prevTotals } = rest;
@@ -66,6 +71,17 @@ export default async function handler(req, res) {
         ``,
         tests.join("\n"),
       ].join("\n");
+
+      drivers = rows.slice(0, 4).map((r, idx) => ({
+        theme: "Acquisition",
+        label: r.channel || `(row ${idx + 1})`,
+        metric: "sessions",
+        value: r.sessions || 0,
+        share: pct(r.sessions, sessions),
+        journey: "Channel mix",
+        insight: `${fmtInt(r.sessions)} sessions (${pct(r.sessions, sessions)}% share)`,
+        example: `User arrives via ${r.channel}, expects matching promise on landing, and ${r.sessions > r.users ? "explores" : "bounces"}.`,
+      }));
     }
 
     else if (topic === "landing-pages") {
@@ -99,6 +115,17 @@ export default async function handler(req, res) {
         ``,
         tests.join("\n"),
       ].join("\n");
+
+      drivers = leaders.map((r, idx) => ({
+        theme: idx === 0 ? "Acquisition" : "Content",
+        label: r.landing,
+        metric: "sessions",
+        value: r.sessions || 0,
+        share: pct(r.sessions, total),
+        journey: "Landing experience",
+        insight: `${fmtInt(r.sessions)} sessions with ${fmtInt(r.users)} users · ${fmtInt(r.transactions || 0)} transactions.`,
+        example: `Visitor lands on ${r.landing} from ${r.source}/${r.medium} and needs instant proof + offer clarity.`,
+      }));
     }
 
     else if (topic === "products") {
@@ -133,6 +160,17 @@ export default async function handler(req, res) {
         ``,
         tests.join("\n"),
       ].join("\n");
+
+      drivers = topN(rows, 5, "revenue").map((r, idx) => ({
+        theme: idx === 0 ? "Acquisition" : "Content",
+        label: r.name || r.id || `(item ${idx + 1})`,
+        metric: "revenue",
+        value: r.revenue || 0,
+        share: pct(r.revenue || 0, revenue),
+        journey: "Product funnel",
+        insight: `${fmtGBP(r.revenue)} revenue · ${fmtInt(r.views)} views · ${fmtInt(r.purchases)} purchases.`,
+        example: `Shopper discovers ${r.name}, evaluates proof/price, and either adds to cart or bounces.`,
+      }));
     }
 
     else if (topic === "timeseries") {
@@ -167,6 +205,27 @@ export default async function handler(req, res) {
           tests.join("\n"),
         ].join("\n");
       }
+
+      drivers = [
+        {
+          theme: "Acquisition",
+          label: "Sessions trend",
+          metric: "sessions",
+          value: series.reduce((max, point) => Math.max(max, point.sessions || 0), 0),
+          journey: "Traffic trend",
+          insight: `Sessions moved ${sDelta >= 0 ? "+" : ""}${sDelta}% from first to last point.`,
+          example: "Traffic spike or dip likely tied to campaign launches, content pushes, or technical incidents.",
+        },
+        {
+          theme: "Content",
+          label: "User trend",
+          metric: "users",
+          value: series.reduce((max, point) => Math.max(max, point.users || 0), 0),
+          journey: "Audience engagement",
+          insight: `Users moved ${uDelta >= 0 ? "+" : ""}${uDelta}% over the same window.`,
+          example: "User growth lags session growth when acquisition brings low-intent visitors.",
+        },
+      ];
     }
 
     else if (topic === "campaigns-overview" || topic === "campaign-detail") {
@@ -188,10 +247,47 @@ export default async function handler(req, res) {
         ``,
         tests.join("\n"),
       ].join("\n");
+
+      if (topic === "campaigns-overview") {
+        const campaigns = rest.campaigns || [];
+        drivers = campaigns.slice(0, 4).map((c, idx) => ({
+          theme: "Acquisition",
+          label: c.name || `(campaign ${idx + 1})`,
+          metric: "sessions",
+          value: c.sessions || 0,
+          share: null,
+          journey: "Campaign mix",
+          insight: `${fmtInt(c.sessions)} sessions · ${fmtInt(c.transactions || 0)} transactions · ${fmtGBP(c.revenue || 0)}`,
+          example: `Prospect sees ${c.name} creative, lands on campaign page, and ${c.transactions ? "converts" : "drops"}.`,
+        }));
+      } else if (topic === "campaign-detail") {
+        const totals = rest.totals || {};
+        drivers = [
+          {
+            theme: "Acquisition",
+            label: rest.campaign || "Campaign",
+            metric: "sessions",
+            value: totals.sessions || 0,
+            journey: "Campaign performance",
+            insight: `${fmtInt(totals.sessions)} sessions · ${fmtInt(totals.users)} users · CVR ${(totals.sessions > 0 ? ((totals.transactions || 0) / totals.sessions) * 100 : 0).toFixed(2)}%`,
+            example: "Campaign audience clicks through expecting promised offer; conversion hinges on lander relevance.",
+          },
+        ];
+      }
     }
 
-    res.status(200).json({ summary });
+    const finalSummary = finalizeSummary(req, summary, {
+      topic: resolvedTopic,
+      period,
+      scope,
+      drivers,
+      qualitativeNotes,
+    });
+
+    res.status(200).json({ summary: finalSummary });
   } catch (e) {
     res.status(200).json({ summary: `Unable to summarise: ${String(e?.message || e)}` });
   }
 }
+
+export default withUsageGuard("ai", handler);

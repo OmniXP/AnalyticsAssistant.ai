@@ -1,26 +1,19 @@
-// /workspaces/insightsgpt/web/pages/api/insights/summarise-top-pages.js
-export const config = { runtime: "edge" };
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
-export default async function handler(req) {
+async function handler(req, res) {
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
-    const { rows, dateRange } = await req.json();
+    const { rows, dateRange } = req.body || {};
     if (!Array.isArray(rows) || !rows.length || !dateRange?.start || !dateRange?.end) {
-      return new Response(JSON.stringify({ error: "Missing rows/dateRange" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      return res.status(400).json({ error: "Missing rows/dateRange" });
     }
 
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     if (!OPENAI_API_KEY) {
-      return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
+      return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
     }
 
     const prompt = `
@@ -38,7 +31,7 @@ Write:
 Return plain text only.
 `.trim();
 
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -54,24 +47,18 @@ Return plain text only.
       }),
     });
 
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
       const message = data?.error?.message || data?.message || "OpenAI error";
-      return new Response(JSON.stringify({ error: message }), {
-        status: res.status,
-        headers: { "Content-Type": "application/json" },
-      });
+      return res.status(response.status).json({ error: message });
     }
 
     const summary = data?.choices?.[0]?.message?.content?.trim() || "No summary";
-    return new Response(JSON.stringify({ summary }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return res.status(200).json({ summary });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return res.status(500).json({ error: String(e?.message || e) });
   }
 }
+
+export default withUsageGuard("ai", handler);
+

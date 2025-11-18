@@ -1,5 +1,6 @@
 // web/pages/api/ga4/products-lite.js
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
 function buildFilter(filters = {}) {
   const andFilter = [];
@@ -12,7 +13,7 @@ function buildFilter(filters = {}) {
   return andFilter.length ? { andGroup: { expressions: andFilter } } : undefined;
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
   const { propertyId, startDate, endDate, filters = {}, limit = 100 } = req.body || {};
@@ -43,3 +44,5 @@ export default async function handler(req, res) {
     res.status(status).json({ ok: false, error: status === 401 || status === 403 ? "No bearer" : e?.message || "Unexpected error" });
   }
 }
+
+export default withUsageGuard("ga4", handler);

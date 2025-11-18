@@ -5,6 +5,8 @@ import { getServerSession } from "next-auth/next";
 import { PrismaClient } from "@prisma/client";
 import { authOptions } from "../lib/authOptions";
 
+const PREMIUM_LANDING_PATH = process.env.NEXT_PUBLIC_PREMIUM_URL || "/premium";
+
 // --- Prisma (singleton to avoid hot-reload leaks locally)
 let prisma;
 if (process.env.NODE_ENV === "production") {
@@ -27,7 +29,7 @@ export async function getServerSideProps(ctx) {
   });
 
   if (!user?.premium) {
-    return { redirect: { destination: "/start?upgrade=1", permanent: false } };
+    return { redirect: { destination: PREMIUM_LANDING_PATH, permanent: false } };
   }
 
   return { props: {} };

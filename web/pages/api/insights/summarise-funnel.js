@@ -1,9 +1,11 @@
-// /workspaces/insightsgpt/web/pages/api/insights/summarise-funnel.js
-export default async function handler(req, res) {
+import { finalizeSummary } from "../../../lib/insights/ai-pro.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
+
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
   try {
-    const { steps, dateRange, filters } = req.body || {};
+    const { steps, dateRange, filters, qualitativeNotes = "" } = req.body || {};
     // Expect shape: { add_to_cart, begin_checkout, add_shipping_info, add_payment_info, purchase }
     const s = steps || {};
     const atc = Number(s.add_to_cart || 0);
@@ -69,7 +71,7 @@ export default async function handler(req, res) {
       "Persistent order summary + mini cart in checkout; remove distractions and coupon field hunts.",
     ];
 
-    const summary =
+    const baseSummary =
 `Checkout funnel (${range})
 ${filterLine}
 
@@ -86,6 +88,53 @@ Recommended tests:
 
 Tip: track checkout_error reasons (custom dim) and segment this funnel by device, country, and channel to isolate UX vs. acquisition issues.`;
 
+    const drivers = [
+      {
+        theme: "UX",
+        label: worst?.label || "Checkout bottleneck",
+        metric: "step-through rate",
+        value: Number(worst?.rate || 0),
+        journey: "Checkout sequence",
+        insight: `Only ${worst?.rate ?? 0}% of users progress through ${worst?.label || "the slowest step"}.`,
+        example: "A user hits shipping/payment, encounters unexpected costs or form friction, and abandons.",
+      },
+      {
+        theme: "Acquisition",
+        label: "Cart quality",
+        metric: "add_to_cart",
+        value: atc,
+        journey: "Acquisition → Cart",
+        insight: `${atc.toLocaleString()} add-to-cart events feed the funnel; traffic intent determines how many reach checkout.`,
+        example: "Paid social visitor adds to cart but lacks purchase intent, inflating drop-offs early in the flow.",
+      },
+      {
+        theme: "Content",
+        label: "Shipping transparency",
+        metric: "shipping step",
+        value: ship,
+        journey: "Messaging in checkout",
+        insight: `${ship.toLocaleString()} sessions reach shipping; clarity on delivery promise and fees keeps them moving.`,
+        example: "Shopper sees late-stage delivery fees and abandons to comparison-shop.",
+      },
+      {
+        theme: "Tech",
+        label: "Payment instrumentation",
+        metric: "payment step",
+        value: pay,
+        journey: "Payment collection",
+        insight: `Payment step handles ${pay.toLocaleString()} attempts; errors or missing wallets break attribution + revenue.`,
+        example: "Certain payment methods fail silently, so conversions and remarketing pools shrink.",
+      },
+    ];
+
+    const summary = finalizeSummary(req, baseSummary, {
+      topic: "checkout-funnel",
+      period: range,
+      scope: filterLine.replace("Filters: ", ""),
+      drivers,
+      qualitativeNotes,
+    });
+
     return res.status(200).json({ summary });
   } catch (err) {
     return res
@@ -93,3 +142,5 @@ Tip: track checkout_error reasons (custom dim) and segment this funnel by device
       .json({ error: "Failed to summarise checkout funnel", details: String(err?.message || err) });
   }
 }
+
+export default withUsageGuard("ai", handler);

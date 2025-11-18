@@ -1,10 +1,11 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { enforceDataLimits, withUsageGuard } from "../../../server/usage-limits.js";
 
 /**
  * Channels hero: sessions and users by sessionDefaultChannelGroup.
  * POST: { propertyId, startDate, endDate, filters, limit }
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     // Debug: log cookie header
@@ -16,6 +17,8 @@ export default async function handler(req, res) {
     if (!propertyId || !startDate || !endDate) {
       return res.status(400).json({ ok: false, error: "propertyId, startDate, endDate are required" });
     }
+
+    await enforceDataLimits(req, res, { propertyId, startDate, endDate });
 
     const body = {
       dateRanges: [{ startDate, endDate }],
@@ -47,6 +50,8 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: errorMsg });
   }
 }
+
+export default withUsageGuard("ga4", handler);
 
 function buildDimensionFilter(filters) {
   const andGroup = [];

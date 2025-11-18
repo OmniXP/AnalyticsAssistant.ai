@@ -1,10 +1,11 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
 /**
  * Lists GA4 properties accessible to the user via Analytics Admin API.
  * Returns: { ok:true, email, properties:[{id, displayName, propertyType, account}] }
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     const bearer = await getBearerForRequest(req);
@@ -38,3 +39,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
+
+export default withUsageGuard("ga4", handler, { methods: ["GET"] });

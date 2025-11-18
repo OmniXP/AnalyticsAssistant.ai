@@ -1,11 +1,12 @@
 // web/pages/api/ga4/query-raw.js
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
 /**
  * Low-level proxy to GA4 runReport for debugging.
  * Body is passed straight through (propertyId + GA4 request body fields).
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ ok: false, error: "Method not allowed" });
     return;
@@ -56,3 +57,5 @@ export default async function handler(req, res) {
     });
   }
 }
+
+export default withUsageGuard("ga4", handler);

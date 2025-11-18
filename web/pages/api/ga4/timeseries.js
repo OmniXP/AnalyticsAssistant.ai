@@ -1,10 +1,11 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { withGuards } from "../../../server/usage-limits.js";
 
 /**
  * Daily timeseries for sessions, users, transactions, revenue.
  * POST: { propertyId, startDate, endDate, filters }
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     const bearer = await getBearerForRequest(req);
@@ -57,3 +58,5 @@ function buildDimensionFilter(filters) {
   if (!andGroup.length) return null;
   return { andGroup };
 }
+
+export default withGuards({ usageKind: "ga4", requirePremium: true }, handler);

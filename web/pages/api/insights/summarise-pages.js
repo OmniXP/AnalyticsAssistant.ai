@@ -1,4 +1,6 @@
-// web/pages/api/insights/summarise-pages.js
+import { finalizeSummary } from "../../../lib/insights/ai-pro.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
+
 // Produces a practical, opinionated summary of "Top pages" with concrete tests.
 // No GA auth; works entirely on posted rows.
 
@@ -6,11 +8,11 @@ function fmtInt(n) { return Number(n || 0).toLocaleString("en-GB"); }
 function pct(part, whole) { return whole > 0 ? Math.round((part / whole) * 100) : 0; }
 function topN(arr, n) { return [...(arr || [])].sort((a,b)=> (b.views||0)-(a.views||0)).slice(0,n); }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { rows = [], dateRange = {}, filters = {} } = req.body || {};
+    const { rows = [], dateRange = {}, filters = {}, qualitativeNotes = "" } = req.body || {};
     if (!Array.isArray(rows) || rows.length === 0) {
       return res.status(200).json({ summary: "No page rows to summarise for the selected period." });
     }
@@ -65,7 +67,7 @@ export default async function handler(req, res) {
       `• Content module order: move “Why us” above fold vs. control; measure bounce and CTA clicks.`,
     ];
 
-    const summary = [
+    const baseSummary = [
       findings.join("\n"),
       ``,
       actions.join("\n"),
@@ -73,8 +75,32 @@ export default async function handler(req, res) {
       tests.join("\n"),
     ].join("\n");
 
+    const drivers = leaders.slice(0, 4).map((r, idx) => {
+      const sharePct = totalViews > 0 ? Math.round(((r.views || 0) / totalViews) * 100) : null;
+      return {
+        theme: idx === 0 ? "Acquisition" : "Content",
+        label: r.title || r.path || `(row ${idx + 1})`,
+        metric: "views",
+        value: r.views || 0,
+        share: sharePct,
+        journey: idx === 0 ? "Acquisition → Landing" : "On-site storytelling",
+        insight: `${fmtInt(r.views)} views${sharePct != null ? ` (${sharePct}% of all views)` : ""} with ${fmtInt(r.users)} users.`,
+        example: `Visitor lands on ${r.title || r.path}, scans the hero for relevance, and either continues or bounces.`,
+      };
+    });
+
+    const summary = finalizeSummary(req, baseSummary, {
+      topic: "top-pages",
+      period,
+      scope: scopeLine,
+      drivers,
+      qualitativeNotes,
+    });
+
     res.status(200).json({ summary });
   } catch (e) {
     res.status(200).json({ summary: `Unable to summarise pages: ${String(e?.message || e)}` });
   }
 }
+
+export default withUsageGuard("ai", handler);

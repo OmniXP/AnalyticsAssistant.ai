@@ -1,5 +1,6 @@
 // web/pages/api/insights/summarise.js
 import { getIronSession } from "iron-session";
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
 const sessionOptions = {
   password: process.env.SESSION_PASSWORD,
@@ -44,7 +45,7 @@ async function callOpenAI({ system, user }) {
   return { ok: true, text: content };
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   // Require a connected session (consistent with rest of app)
@@ -103,3 +104,5 @@ Write:
   if (!ai.ok) return res.status(500).json({ error: "AI error (channels)", details: ai.text });
   return res.status(200).json({ summary: ai.text });
 }
+
+export default withUsageGuard("ai", handler);

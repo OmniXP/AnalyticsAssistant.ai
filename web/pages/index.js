@@ -19,6 +19,93 @@ const SAVED_VIEWS_KEY = "insightgpt_saved_views_v1";
 const KPI_TARGETS_KEY = "insightgpt_kpi_targets_v1";
 const ALERTS_CFG_KEY = "insightgpt_alerts_cfg_v1";
 const PREMIUM_FLAG_KEY = "insightgpt_premium_flag_v1"; // "Alpha" or "Pro"
+const FREE_USAGE_LIMITS = { ga4: 25, ai: 10 };
+const PREMIUM_USAGE_LIMITS = { ga4: 3000, ai: 100 };
+const FREE_DATE_WINDOW_DAYS = 90;
+const FREE_PROPERTY_LIMIT = 1;
+const PRO_PROPERTY_LIMIT = 5;
+const PREMIUM_LANDING_PATH = process.env.NEXT_PUBLIC_PREMIUM_URL || "/premium";
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const DATE_PRESETS = [
+  {
+    id: "today",
+    label: "Today",
+    compute: () => {
+      const today = new Date();
+      const day = ymd(today);
+      return { start: day, end: day };
+    },
+  },
+  {
+    id: "yesterday",
+    label: "Yesterday",
+    compute: () => {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const day = ymd(d);
+      return { start: day, end: day };
+    },
+  },
+  {
+    id: "last7",
+    label: "Last 7 days",
+    compute: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 6);
+      return { start: ymd(start), end: ymd(end) };
+    },
+  },
+  {
+    id: "last28",
+    label: "Last 28 days",
+    compute: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 27);
+      return { start: ymd(start), end: ymd(end) };
+    },
+  },
+  {
+    id: "last30",
+    label: "Last 30 days",
+    compute: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 29);
+      return { start: ymd(start), end: ymd(end) };
+    },
+  },
+  {
+    id: "thisMonth",
+    label: "This month",
+    compute: () => {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { start: ymd(start), end: ymd(now) };
+    },
+  },
+  {
+    id: "lastMonth",
+    label: "Last month",
+    compute: () => {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: ymd(start), end: ymd(end) };
+    },
+  },
+  {
+    id: "last90",
+    label: "Last 90 days",
+    compute: () => {
+      const end = new Date();
+      const start = new Date(end.getTime() - (FREE_DATE_WINDOW_DAYS - 1) * DAY_MS);
+      return { start: ymd(start), end: ymd(end) };
+    },
+  },
+];
 
 const COLORS = {
   googleBlue: "#4285F4",
@@ -89,6 +176,31 @@ function decodeQuery() {
     comparePrev: q.compare === "1",
   };
 }
+
+function formatErrorMessage(err, fallback = "Something went wrong") {
+  if (!err) return fallback;
+  if (err.userMessage) return err.userMessage;
+  if (err.status === 429 && err.limit) {
+    const kindLabel =
+      err.limit.kind === "ai"
+        ? err.limit.plan === "premium"
+          ? "Summarise with AI PRO"
+          : "Summarise with AI"
+        : "GA4 reports";
+    const planLabel = err.limit.plan === "premium" ? "Premium" : "Free";
+    return `Monthly limit reached for ${kindLabel} on your ${planLabel} plan (${err.limit.limit} per month). Try again next month or upgrade for more headroom.`;
+  }
+  if (err.code === "PREMIUM_REQUIRED") {
+    return `This feature is part of the Premium plan. Visit ${PREMIUM_LANDING_PATH} to upgrade.`;
+  }
+  if (err.code === "AUTH_REQUIRED" || err.status === 401) {
+    return "Please sign in again or reconnect Google Analytics, then retry.";
+  }
+  if (err.status === 403) {
+    return "Access denied for this request. Check your permissions or reconnect Google Analytics.";
+  }
+  return String(err.message || fallback);
+}
 async function fetchJson(url, payload, opts = {}) {
   const res = await fetch(url, {
     method: opts.method || "POST",
@@ -110,6 +222,10 @@ async function fetchJson(url, payload, opts = {}) {
       `HTTP ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
+    if (data?.code) err.code = data.code;
+    if (data?.limit) err.limit = data.limit;
+    if (data?.details) err.details = data.details;
+    err.userMessage = formatErrorMessage(err, msg);
     throw err;
   }
   return data || {};
@@ -424,13 +540,13 @@ if (typeof document !== "undefined" && !document.getElementById("sweep-keyframes
   document.head.appendChild(style);
 }
 
-/* ============================== Premium Gate ============================== */
-function isPremium() {
+/* ============================== Premium Gate helpers ============================== */
+function hasLocalPremiumFlag() {
   try {
-    const raw = localStorage.getItem(PREMIUM_FLAG_KEY);
-    if (!raw) return false;
-    const v = String(raw || "").toLowerCase();
-    return v === "alpha" || v === "pro" || v === "true" || v === "yes";
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const raw = window.localStorage.getItem(PREMIUM_FLAG_KEY);
+    const value = raw ? String(raw).toLowerCase() : "";
+    return value === "alpha" || value === "pro" || value === "true" || value === "yes";
   } catch {
     return false;
   }
@@ -500,6 +616,8 @@ export default function Home() {
   const [startDate, setStartDate] = useState("2024-09-01");
   const [endDate, setEndDate] = useState("2024-09-30");
   const [comparePrev, setComparePrev] = useState(false);
+  const [datePreset, setDatePreset] = useState("custom");
+  const [presetNotice, setPresetNotice] = useState("");
 
   // Filters
   const [countrySel, setCountrySel] = useState("All");
@@ -708,7 +826,7 @@ export default function Home() {
           'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.'
         );
       } else {
-        setError(String(e.message || e));
+      setError(formatErrorMessage(e));
       }
     } finally {
       setLoading(false);
@@ -721,6 +839,8 @@ export default function Home() {
     } catch {}
     setStartDate("2024-09-01");
     setEndDate("2024-09-30");
+    setDatePreset("custom");
+    setPresetNotice("");
     setCountrySel("All");
     setChannelSel("All");
     setAppliedFilters({ country: "All", channelGroup: "All" });
@@ -739,6 +859,44 @@ export default function Home() {
   const topShare =
     top && totals.sessions > 0 ? Math.round((top.sessions / totals.sessions) * 100) : 0;
 
+  const applyDatePreset = (presetId) => {
+    const preset = DATE_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    const { start, end } = preset.compute();
+    if (!start || !end) return;
+
+    let nextStart = start;
+    let nextEnd = end;
+    let notice = "";
+
+    if (!premium) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - (FREE_DATE_WINDOW_DAYS - 1));
+      const cutoffStr = ymd(cutoff);
+      const cutoffMs = cutoff.getTime();
+      const startDateObj = nextStart ? new Date(`${nextStart}T00:00:00`) : null;
+      if (startDateObj && startDateObj.getTime() < cutoffMs) {
+        nextStart = cutoffStr;
+        const endDateObj = nextEnd ? new Date(`${nextEnd}T00:00:00`) : null;
+        if (!endDateObj || endDateObj.getTime() < cutoffMs) {
+          nextEnd = cutoffStr;
+        }
+        notice = `Free plan shows the last ${FREE_DATE_WINDOW_DAYS} days. Upgrade for full history.`;
+      } else {
+        notice = "";
+      }
+    }
+
+    if (premium) {
+      notice = "";
+    }
+
+    setStartDate(nextStart);
+    setEndDate(nextEnd);
+    setDatePreset(presetId);
+    setPresetNotice(notice);
+  };
+
   /* ============================== Sticky header ============================== */
   const sessionStatus = gaStatusLoading
     ? { s: "unknown", label: "Google session: Checking…" }
@@ -750,11 +908,56 @@ export default function Home() {
     : { s: "bad", label: "Property ID: Missing" };
 
   /* ============================== Premium ============================== */
-  // Use state + useEffect to avoid hydration mismatch (localStorage only available client-side)
-  const [premium, setPremium] = useState(false);
+  const [account, setAccount] = useState({
+    loading: true,
+    premium: false,
+    plan: null,
+    signedIn: false,
+    email: null,
+  });
+  const [qaPremiumOverride, setQaPremiumOverride] = useState(false);
+
   useEffect(() => {
-    setPremium(isPremium());
+    setQaPremiumOverride(hasLocalPremiumFlag());
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/me", { method: "GET", credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        setAccount({
+          loading: false,
+          premium: !!data?.premium,
+          plan: data?.plan || null,
+          signedIn: !!data?.signedIn,
+          email: data?.email || null,
+        });
+      } catch {
+        if (!cancelled) {
+          setAccount((prev) => ({ ...prev, loading: false }));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const premium = qaPremiumOverride || account.premium;
+  const planLabel = premium
+    ? qaPremiumOverride
+      ? "QA override"
+      : account.plan || "Premium"
+    : "Free";
+
+  useEffect(() => {
+    if (premium) {
+      setPresetNotice("");
+    }
+  }, [premium]);
 
   const runDisabled = loading || !hasProperty; // report only blocked by property presence
 
@@ -859,9 +1062,9 @@ export default function Home() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 12,
-            alignItems: "end",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: 16,
+            alignItems: "start",
           }}
         >
           <div>
@@ -893,7 +1096,11 @@ export default function Home() {
               name="start-date"
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                setDatePreset("custom");
+                setPresetNotice("");
+              }}
               style={{
                 marginTop: 6,
                 padding: 10,
@@ -913,7 +1120,11 @@ export default function Home() {
               name="end-date"
               type="date"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(e) => {
+                setEndDate(e.target.value);
+                setDatePreset("custom");
+                setPresetNotice("");
+              }}
               style={{
                 marginTop: 6,
                 padding: 10,
@@ -984,7 +1195,88 @@ export default function Home() {
             )}
           </div>
         </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {DATE_PRESETS.map((preset) => {
+              const isActive = datePreset === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applyDatePreset(preset.id)}
+                  style={{
+                    borderRadius: 999,
+                    border: isActive ? `1px solid ${COLORS.googleBlue}` : `1px solid ${COLORS.border}`,
+                    background: isActive ? "#EEF2FF" : "#FFFFFF",
+                    color: isActive ? COLORS.googleBlue : COLORS.text,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => {
+                setDatePreset("custom");
+                setPresetNotice("");
+              }}
+              style={{
+                borderRadius: 999,
+                border: datePreset === "custom" ? `1px solid ${COLORS.googleBlue}` : `1px solid ${COLORS.border}`,
+                background: datePreset === "custom" ? "#EEF2FF" : "#FFFFFF",
+                color: datePreset === "custom" ? COLORS.googleBlue : COLORS.text,
+                padding: "6px 12px",
+                fontSize: 12,
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+              }}
+            >
+              Custom
+            </button>
+          </div>
+          {presetNotice && (
+            <p style={{ marginTop: 8, fontSize: 12, color: COLORS.subtext }}>{presetNotice}</p>
+          )}
+        </div>
       </FrostCard>
+
+      <div
+        style={{
+          marginTop: 12,
+          padding: 16,
+          borderRadius: 14,
+          border: `1px solid ${COLORS.frostEdge}`,
+          background: COLORS.frost,
+        }}
+      >
+        <div style={{ fontWeight: 600 }}>
+          Plan status:{" "}
+          {premium
+            ? `Premium${account.plan ? ` (${account.plan})` : ""}`
+            : "Free"}
+        </div>
+        <p style={{ margin: "6px 0 0", color: COLORS.subtext, fontSize: 13, lineHeight: 1.5 }}>
+          {premium
+            ? `Pro unlocks effectively unlimited GA4 reports (fair use), ${PREMIUM_USAGE_LIMITS.ai.toLocaleString()} AI summaries/month, up to ${PRO_PROPERTY_LIMIT} GA4 properties, full historical lookback + comparisons, exports, scheduled Slack/email digests, saved questions/templates, advanced AI deep dives, and priority support.`
+            : `Free includes ${FREE_USAGE_LIMITS.ga4} GA4 reports/month, ${FREE_USAGE_LIMITS.ai} AI summaries/month, ${FREE_PROPERTY_LIMIT} GA4 property, and the last ${FREE_DATE_WINDOW_DAYS} days of data. Upgrade to unlock multiple properties, full history, exports, schedules, saved questions, multi-property comparisons, and advanced AI.`}{" "}
+          {!premium && (
+            <a href={PREMIUM_LANDING_PATH} style={{ color: COLORS.googleBlue }}>
+              Upgrade →
+            </a>
+          )}
+        </p>
+        {qaPremiumOverride && (
+          <p style={{ margin: "6px 0 0", color: COLORS.subtext, fontSize: 12 }}>
+            QA override is active locally via <code>{PREMIUM_FLAG_KEY}</code> in localStorage.
+          </p>
+        )}
+      </div>
 
       {/* Saved Views (Premium) */}
       <div style={{ marginTop: 12 }}>
@@ -1076,6 +1368,7 @@ export default function Home() {
                 }}
                 resetSignal={refreshSignal}
                 blueCta
+                premium={premium}
               />
               <Button
                 onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
@@ -1163,6 +1456,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+            premium={premium}
           />
         </MobileAccordionSection>
 
@@ -1174,6 +1468,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+            premium={premium}
           />
         </MobileAccordionSection>
 
@@ -1185,6 +1480,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+            premium={premium}
           />
         </MobileAccordionSection>
 
@@ -1196,6 +1492,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+            premium={premium}
           />
         </MobileAccordionSection>
       </div>
@@ -1210,6 +1507,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+          premium={premium}
           />
           <SourceMedium
             key={`sm2-${dashKey}`}
@@ -1218,6 +1516,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+          premium={premium}
           />
           <EcommerceKPIs
             key={`ekpi2-${dashKey}`}
@@ -1226,6 +1525,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+          premium={premium}
           />
           <CheckoutFunnel
             key={`cf2-${dashKey}`}
@@ -1234,6 +1534,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
+          premium={premium}
           />
         </HideOnMobile>
       </div>
@@ -1245,6 +1546,7 @@ export default function Home() {
           startDate={startDate}
           endDate={endDate}
           filters={appliedFilters}
+          premium={premium}
         />
       </PremiumGate>
 
@@ -1254,6 +1556,7 @@ export default function Home() {
           startDate={startDate}
           endDate={endDate}
           filters={appliedFilters}
+          premium={premium}
         />
       </PremiumGate>
 
@@ -1263,6 +1566,7 @@ export default function Home() {
           startDate={startDate}
           endDate={endDate}
           filters={appliedFilters}
+          premium={premium}
         />
       </PremiumGate>
 
@@ -1272,6 +1576,7 @@ export default function Home() {
           startDate={startDate}
           endDate={endDate}
           filters={appliedFilters}
+          premium={premium}
         />
       </PremiumGate>
 
@@ -1281,6 +1586,7 @@ export default function Home() {
           startDate={startDate}
           endDate={endDate}
           filters={appliedFilters}
+          premium={premium}
         />
       </PremiumGate>
 
@@ -1291,6 +1597,7 @@ export default function Home() {
           endDate={endDate}
           filters={appliedFilters}
           resetSignal={refreshSignal}
+          premium={premium}
         />
       )}
 
@@ -1408,16 +1715,26 @@ function MobileAccordionSection({ title, children }) {
 }
 
 /* ============================== Reusable AI block ============================== */
-function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint, payload, resetSignal, blueCta = false }) {
+function AiBlock({
+  asButton = false,
+  buttonLabel = "Summarise with AI",
+  endpoint,
+  payload,
+  resetSignal,
+  blueCta = false,
+  premium = false,
+}) {
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [qualNotes, setQualNotes] = useState("");
 
   useEffect(() => {
     setText("");
     setError("");
     setCopied(false);
+    setQualNotes("");
   }, [resetSignal]);
 
   const run = async () => {
@@ -1426,11 +1743,15 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
     setText("");
     setCopied(false);
     try {
-      const data = await fetchJson(endpoint, payload);
+      const requestPayload = payload ? { ...payload } : {};
+      if (premium && qualNotes.trim()) {
+        requestPayload.qualitativeNotes = qualNotes.trim();
+      }
+      const data = await fetchJson(endpoint, requestPayload);
       const summary = data?.summary || (typeof data === "string" ? data : "");
       setText(summary || "No response");
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to generate a summary right now."));
     } finally {
       setLoading(false);
     }
@@ -1446,13 +1767,20 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
     }
   };
 
+  const baseLabel = buttonLabel || "Summarise with AI";
+  const resolvedLabel = premium
+    ? baseLabel.includes("Summarise with AI")
+      ? baseLabel.replace("Summarise with AI", "Summarise with AI PRO")
+      : `${baseLabel} PRO`
+    : baseLabel;
+
   const runBtn = blueCta ? (
     <BlueAiButton onClick={run} disabled={loading} title="AI summary">
-      {loading ? "Summarising…" : buttonLabel}
+      {loading ? "Summarising…" : resolvedLabel}
     </BlueAiButton>
   ) : (
     <Button onClick={run} disabled={loading} title="AI summary">
-      {loading ? "Summarising…" : buttonLabel}
+      {loading ? "Summarising…" : resolvedLabel}
     </Button>
   );
 
@@ -1460,7 +1788,7 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
     <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       {asButton ? runBtn : (
         <BlueAiButton onClick={run} disabled={loading} title="AI summary">
-          {loading ? "Summarising…" : "Summarise with AI"}
+          {loading ? "Summarising…" : resolvedLabel}
         </BlueAiButton>
       )}
       <Button onClick={copy} disabled={!text}>
@@ -1482,12 +1810,36 @@ function AiBlock({ asButton = false, buttonLabel = "Summarise with AI", endpoint
           {text}
         </div>
       )}
+      {premium && (
+        <div style={{ flexBasis: "100%", marginTop: 8 }}>
+          <label style={{ display: "block", fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>
+            Qualitative notes (optional) — paste survey quotes, onsite feedback, or support tickets
+          </label>
+          <textarea
+            value={qualNotes}
+            onChange={(e) => setQualNotes(e.target.value)}
+            placeholder="Example: “Checkout shipping step is confusing” or “Chat feedback about pricing surprise”."
+            rows={3}
+            style={{
+              width: "100%",
+              padding: 8,
+              borderRadius: 8,
+              border: `1px solid ${COLORS.border}`,
+              fontFamily: "Inter, system-ui, sans-serif",
+              resize: "vertical",
+            }}
+          />
+          <small style={{ color: COLORS.subtext, fontSize: 11 }}>
+            We weave these notes into the Summarise with AI PRO hypotheses and playbooks.
+          </small>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ============================== Sections ============================== */
-function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) {
+function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -1526,7 +1878,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
 
       setRows(out);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load source / medium."));
     } finally {
       setLoading(false);
     }
@@ -1560,6 +1912,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
             payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -1621,7 +1974,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal }) 
   );
 }
 
-function Campaigns({ propertyId, startDate, endDate, filters }) {
+function Campaigns({ propertyId, startDate, endDate, filters, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -1652,7 +2005,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
 
       setRows(out);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load campaigns."));
     } finally {
       setLoading(false);
     }
@@ -1685,6 +2038,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
             endpoint="/api/insights/summarise-campaigns"
             payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -1743,7 +2097,7 @@ function Campaigns({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
+function CampaignDrilldown({ propertyId, startDate, endDate, filters, premium }) {
   const [campaign, setCampaign] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -1855,7 +2209,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
         )
       );
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load campaign drill-down."));
     } finally {
       setLoading(false);
     }
@@ -1905,6 +2259,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
               filters,
             }}
             blueCta
+            premium={premium}
           />
         </>
       }
@@ -2003,7 +2358,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
+function CampaignsOverview({ propertyId, startDate, endDate, filters, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -2040,7 +2395,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
       parsed.sort((a, b) => b.revenue - a.revenue);
       setRows(parsed);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load campaigns."));
     } finally {
       setLoading(false);
     }
@@ -2091,6 +2446,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
               filters,
             }}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -2177,7 +2533,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
+function TopPages({ propertyId, startDate, endDate, filters, resetSignal, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -2209,7 +2565,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
 
       setRows(out);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load top pages."));
     } finally {
       setLoading(false);
     }
@@ -2230,6 +2586,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
             payload={{ rows, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -2291,7 +2648,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal }) {
   );
 }
 
-function LandingPages({ propertyId, startDate, endDate, filters }) {
+function LandingPages({ propertyId, startDate, endDate, filters, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -2340,7 +2697,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
       setTopOnly(false);
       setMinSessions(0);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load landing pages."));
     } finally {
       setLoading(false);
     }
@@ -2386,6 +2743,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
               })),
             }}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -2497,7 +2855,7 @@ function LandingPages({ propertyId, startDate, endDate, filters }) {
   );
 }
 
-function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal }) {
+function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, premium }) {
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState("");
@@ -2520,7 +2878,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
       });
       setTotals(data?.totals || null);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load e-commerce KPIs."));
     } finally {
       setLoading(false);
     }
@@ -2563,6 +2921,7 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal })
             payload={{ totals, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
             blueCta
+            premium={premium}
           />
         </>
       }
@@ -2616,7 +2975,7 @@ function Tr({ label, value }) {
   );
 }
 
-function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }) {
+function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal, premium }) {
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState(null);
   const [error, setError] = useState("");
@@ -2634,7 +2993,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
       const data = await fetchJson("/api/ga4/checkout-funnel", { propertyId, startDate, endDate, filters });
       setSteps(data?.steps || null);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load checkout funnel."));
     } finally {
       setLoading(false);
     }
@@ -2655,6 +3014,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
             payload={{ steps, dateRange: { start: startDate, end: endDate }, filters }}
             resetSignal={resetSignal}
             blueCta
+            premium={premium}
           />
         </>
       }
@@ -2702,7 +3062,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal }
   );
 }
 
-function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
+function TrendsOverTime({ propertyId, startDate, endDate, filters, premium }) {
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState("daily");
   const [rows, setRows] = useState([]);
@@ -2780,7 +3140,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
       
       setRows(series);
     } catch (e) {
-      setError(String(e.message || e));
+      setError(formatErrorMessage(e, "Unable to load the time series."));
     } finally {
       setLoading(false);
     }
@@ -2824,6 +3184,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters }) {
               ],
             }}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -2957,7 +3318,7 @@ function TdRight({ children }) {
   );
 }
 
-function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
+function Products({ propertyId, startDate, endDate, filters, resetSignal, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -3037,7 +3398,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
         setRows(parsed);
       }
     } catch (e) {
-      setError(String(e?.message || e) || "Failed to load products");
+      setError(formatErrorMessage(e, "Failed to load products"));
     } finally {
       setLoading(false);
     }
@@ -3070,6 +3431,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal }) {
             }}
             resetSignal={resetSignal}
             blueCta
+            premium={premium}
           />
           <Button
             onClick={() =>
@@ -3510,9 +3872,17 @@ function LabeledInput({ label, value, onChange, type = "text", placeholder, hint
 function PremiumGate({ label, premium, children }) {
   if (!premium) {
     return (
-      <FrostCard title={`${label} (Premium)`} actions={<Pill color="#6366F1" bg="#EEF2FF" text="Premium required" />}>
+      <FrostCard
+        title={`${label} (Premium)`}
+        actions={
+          <Button onClick={() => (window.location.href = PREMIUM_LANDING_PATH)} kind="primaryCta">
+            Upgrade
+          </Button>
+        }
+      >
         <p style={{ margin: 0, color: COLORS.subtext }}>
-          This panel is available on Premium and remains fully implemented behind the gate. No features removed.
+          This panel is available on the Premium plan (higher GA4 + AI limits, campaign drill-downs, landing page insights,
+          digests, and more). Upgrade to unlock it.
         </p>
       </FrostCard>
     );

@@ -1,5 +1,6 @@
-// /workspaces/insightsgpt/web/pages/api/insights/summarise-products.js
-export default async function handler(req, res) {
+import { withUsageGuard } from "../../../server/usage-limits.js";
+
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   try {
@@ -47,3 +48,5 @@ ${table}`;
     res.status(500).json({ error: String(e?.message || e) });
   }
 }
+
+export default withUsageGuard("ai", handler);

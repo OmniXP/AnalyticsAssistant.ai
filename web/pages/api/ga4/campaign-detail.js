@@ -1,11 +1,12 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { enforceDataLimits, withGuards } from "../../../server/usage-limits.js";
 
 /**
  * Campaign drill-down for a specific sessionCampaignName.
  * Returns three blocks: bySourceMedium, byAdContent, byKeyword.
  * POST: { propertyId, startDate, endDate, campaignName, filters }
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     const bearer = await getBearerForRequest(req);
@@ -16,6 +17,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ ok: false, error: "propertyId, startDate, endDate, campaignName are required" });
     }
 
+    await enforceDataLimits(req, res, { propertyId, startDate, endDate });
     const baseFilter = buildDimensionFilter(filters);
     const exactCampaign = {
       filter: {
@@ -109,3 +111,5 @@ function mergeAnd(base, extraExpression) {
   expressions.push(extraExpression);
   return { andGroup: { expressions } };
 }
+
+export default withGuards({ usageKind: "ga4", requirePremium: true }, handler);

@@ -2,6 +2,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../lib/authOptions";
 import { PrismaClient } from "@prisma/client";
+import { useMemo, useState } from "react";
 
 const prisma = new PrismaClient();
 
@@ -33,9 +34,41 @@ export async function getServerSideProps(ctx) {
 }
 
 export default function AdminUsers({ users }) {
+  const [query, setQuery] = useState("");
+  const normalized = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!normalized) return users;
+    return users.filter((u) => {
+      const fields = [
+        u.email?.toLowerCase?.() || "",
+        u.plan?.toLowerCase?.() || "",
+        u.ga4PropertyName?.toLowerCase?.() || "",
+      ];
+      return fields.some((value) => value.includes(normalized));
+    });
+  }, [normalized, users]);
+
   return (
     <main style={{ maxWidth: 920, margin: "48px auto", padding: 16 }}>
       <h1 style={{ fontSize: 22, fontWeight: 600 }}>Users</h1>
+
+      <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter by email, plan, or property"
+          style={{
+            flex: "1 1 260px",
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid #d1d5db",
+          }}
+        />
+        <span style={{ color: "#6b7280", fontSize: 13 }}>
+          Showing {filtered.length} of {users.length}
+        </span>
+      </div>
+
       <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
         <thead>
           <tr>
@@ -47,7 +80,7 @@ export default function AdminUsers({ users }) {
           </tr>
         </thead>
         <tbody>
-          {users.map((u) => (
+          {filtered.map((u) => (
             <tr key={u.id}>
               <td style={{ padding: 6 }}>{u.email}</td>
               <td style={{ padding: 6 }}>{u.premium ? "Yes" : "No"}</td>

@@ -1,4 +1,5 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
 
 /**
  * E-commerce KPI totals for a date range.
@@ -6,7 +7,7 @@ import { getBearerForRequest } from "../../../server/ga4-session.js";
  * POST body: { propertyId, startDate, endDate, filters }
  * Returns: { ok: true, totals: {...}, raw }
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     const bearer = await getBearerForRequest(req);
@@ -78,3 +79,5 @@ function buildDimensionFilter(filters) {
   if (!andGroup.length) return null;
   return { andGroup };
 }
+
+export default withUsageGuard("ga4", handler);

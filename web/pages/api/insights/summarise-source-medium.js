@@ -1,15 +1,17 @@
-// web/pages/api/insights/summarise-source-medium.js
+import { finalizeSummary } from "../../../lib/insights/ai-pro.js";
+import { withUsageGuard } from "../../../server/usage-limits.js";
+
 // Opinionated analysis of sessionSource/sessionMedium distribution with budget/test ideas.
 
 function fmtInt(n) { return Number(n || 0).toLocaleString("en-GB"); }
 function pct(part, whole) { return whole > 0 ? Math.round((part / whole) * 100) : 0; }
 function topN(arr, n, key="sessions") { return [...(arr||[])].sort((a,b)=> (b[key]||0)-(a[key]||0)).slice(0,n); }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { rows = [], dateRange = {}, filters = {} } = req.body || {};
+    const { rows = [], dateRange = {}, filters = {}, qualitativeNotes = "" } = req.body || {};
 
     const period = dateRange?.start && dateRange?.end ? `${dateRange.start} → ${dateRange.end}` : "the selected period";
     const scope = [
@@ -68,7 +70,7 @@ export default async function handler(req, res) {
       `• Social ad hook: 3x creative angles (problem, social proof, offer) across 2 audiences; pick winners by CAC/LTV.`,
     ];
 
-    const summary = [
+    const baseSummary = [
       findings.join("\n"),
       ``,
       actions.join("\n"),
@@ -76,8 +78,50 @@ export default async function handler(req, res) {
       tests.join("\n"),
     ].join("\n");
 
+    const drivers = [
+      ...leaders.slice(0, 3).map((r, idx) => ({
+        theme: "Acquisition",
+        label: `${r.source || "(not set)"} / ${r.medium || "(not set)"}`,
+        metric: "sessions",
+        value: r.sessions || 0,
+        share: pct(r.sessions, totalSessions),
+        journey: "Acquisition mix",
+        insight: `${fmtInt(r.sessions)} sessions (${pct(r.sessions, totalSessions)}% share)`,
+        example: `User arrives via ${r.source || "(not set)"} / ${r.medium || "(not set)"}, expects matching landing messaging, and either continues or bounces.`,
+      })),
+      heavyDirect && {
+        theme: "Content",
+        label: "High Direct share",
+        metric: "direct",
+        value: direct?.sessions || 0,
+        share: directShare,
+        journey: "Brand / navigation",
+        insight: `Direct is ${directShare}% of sessions; double-check tagging gaps and branded demand.`,
+        example: "Users type the URL or click untagged links; promise may be missing vs. original acquisition context.",
+      },
+      untagged.length && {
+        theme: "Tech",
+        label: "UTM hygiene",
+        metric: "not set rows",
+        value: untagged.length,
+        journey: "Tracking",
+        insight: `${untagged.length} rows include “(not set)” entries; patch tagging to keep attribution trustworthy.`,
+        example: "Team launches newsletters without UTMs, so traffic shows as (not set)/(not set) and cannot be optimised.",
+      },
+    ].filter(Boolean);
+
+    const summary = finalizeSummary(req, baseSummary, {
+      topic: "source-medium",
+      period,
+      scope,
+      drivers,
+      qualitativeNotes,
+    });
+
     res.status(200).json({ summary });
   } catch (e) {
     res.status(200).json({ summary: `Unable to summarise source/medium: ${String(e?.message || e)}` });
   }
 }
+
+export default withUsageGuard("ai", handler);

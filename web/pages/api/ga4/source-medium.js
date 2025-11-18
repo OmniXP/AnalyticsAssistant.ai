@@ -1,10 +1,11 @@
 import { getBearerForRequest } from "../../../server/ga4-session.js";
+import { enforceDataLimits, withUsageGuard } from "../../../server/usage-limits.js";
 
 /**
  * Source / Medium with sessions and users.
  * Dimensions: sessionSource, sessionMedium
  */
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
   try {
     const bearer = await getBearerForRequest(req);
@@ -15,6 +16,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ ok: false, error: "propertyId, startDate, endDate are required" });
     }
 
+    await enforceDataLimits(req, res, { propertyId, startDate, endDate });
     const body = {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
@@ -52,3 +54,5 @@ function buildDimensionFilter(filters) {
   if (!andGroup.length) return null;
   return { andGroup };
 }
+
+export default withUsageGuard("ga4", handler);

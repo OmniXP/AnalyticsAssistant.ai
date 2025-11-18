@@ -127,6 +127,15 @@ async function kvSet(key, value, ttlSec) {
   return "OK";
 }
 
+// Generic JSON helpers so other modules (e.g. usage limits) can reuse the same KV wiring
+export async function kvGetJson(key) {
+  return await kvGet(key);
+}
+
+export async function kvSetJson(key, value, ttlSec) {
+  return await kvSet(key, value, ttlSec);
+}
+
 async function kvDel(key) {
   if (!hasKV) {
     // Fallback to in-memory store for local development
