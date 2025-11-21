@@ -6,6 +6,10 @@ import prisma from "../prisma.js";
 import { authOptions } from "../authOptions.js";
 import { kvGetJson, kvSetJson, readSidFromCookie } from "./ga4-session.js";
 
+const QA_PREMIUM_HEADER = "x-aa-premium-override";
+const ALLOW_QA_PREMIUM_OVERRIDE =
+  process.env.ALLOW_QA_PREMIUM_OVERRIDE === "true" || process.env.NODE_ENV !== "production";
+
 export const USAGE_LIMITS = {
   free: {
     ga4ReportsPerMonth: 25,
@@ -28,6 +32,17 @@ const LOOKBACK_LIMIT_DAYS = {
 };
 
 const USAGE_PERIOD_TTL_SECONDS = 60 * 60 * 24 * 45; // keep month records for ~45 days
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const CSV_DOWNLOAD_LIMIT = 3;
+const CSV_WINDOW_MS = 7 * ONE_DAY_MS;
+const CSV_USAGE_TTL_SECONDS = Math.ceil(CSV_WINDOW_MS / 1000) + 3600;
+
+function hasQaPremiumOverride(req) {
+  if (!ALLOW_QA_PREMIUM_OVERRIDE) return false;
+  const header = req?.headers?.[QA_PREMIUM_HEADER];
+  if (!header) return false;
+  return header === "true" || header === "1";
+}
 
 function currentPeriodKey() {
   const now = new Date();
@@ -41,6 +56,7 @@ export async function getUsageIdentity(req, res) {
   let userId = null;
   let premium = false;
   let plan = null;
+  const qaOverride = hasQaPremiumOverride(req);
 
   try {
     const session = await getServerSession(req, res, authOptions);
@@ -60,14 +76,33 @@ export async function getUsageIdentity(req, res) {
     console.error("[usage-limits] getUsageIdentity failed:", err?.message || err);
   }
 
+  if (qaOverride && !premium) {
+    premium = true;
+    plan = plan || "qa-premium";
+  }
+
   if (email) return { key: `user:${email}`, premium, plan, source: "user", userId };
 
   const sid = readSidFromCookie(req);
-  if (sid) return { key: `sid:${sid}`, premium: false, plan: null, source: "sid", userId: null };
+  if (sid) {
+    return {
+      key: `sid:${sid}`,
+      premium: qaOverride,
+      plan: qaOverride ? "qa-premium" : null,
+      source: "sid",
+      userId: null,
+    };
+  }
 
   const ipRaw = req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown";
   const ip = Array.isArray(ipRaw) ? ipRaw[0] : String(ipRaw).split(",")[0].trim();
-  return { key: `ip:${ip}`, premium: false, plan: null, source: "ip", userId: null };
+  return {
+    key: `ip:${ip}`,
+    premium: qaOverride,
+    plan: qaOverride ? "qa-premium" : null,
+    source: "ip",
+    userId: null,
+  };
 }
 
 export async function checkAndIncrementUsage(req, res, kind) {
@@ -115,8 +150,6 @@ export async function checkAndIncrementUsage(req, res, kind) {
 function planKeyFromIdentity(ident) {
   return ident.premium ? "premium" : "free";
 }
-
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 async function resolveIdentity(req, res) {
   if (req?.usageMeta?.identity) return req.usageMeta.identity;
@@ -254,7 +287,7 @@ async function enforceDateLimit(req, res, startDate) {
   }
 
   const today = parseDate(new Date().toISOString().slice(0, 10));
-  const earliest = new Date(today.getTime() - maxDays * ONE_DAY_MS);
+  const earliest = new Date(today.getTime() - (maxDays - 1) * ONE_DAY_MS);
   if (parsed < earliest) {
     const err = new Error(`Free plan includes GA4 data from the last ${maxDays} days. Upgrade to Pro for full history.`);
     err.code = "DATE_RANGE_LIMIT";
@@ -354,5 +387,26 @@ export function withUsageGuard(kind, handler, options = {}) {
 
 export function withPremiumGuard(handler, options = {}) {
   return withGuards({ requirePremium: true, ...options }, handler);
+}
+
+export async function assertCsvDownloadAllowance(req, res) {
+  const ident = await resolveIdentity(req, res);
+  const kvKey = `csv:${ident.key}`;
+  const now = Date.now();
+  let record = (await kvGetJson(kvKey)) || { count: 0, startedAt: now };
+  if (!record.startedAt || now - record.startedAt > CSV_WINDOW_MS) {
+    record = { count: 0, startedAt: now };
+  }
+  if (record.count >= CSV_DOWNLOAD_LIMIT) {
+    const err = new Error("CSV exports are limited to 3 per week on your current plan. Upgrade for more headroom.");
+    err.code = "CSV_LIMIT";
+    err.status = 429;
+    err.meta = { limit: CSV_DOWNLOAD_LIMIT, windowDays: 7 };
+    err.identityKey = ident.key;
+    throw err;
+  }
+  record.count += 1;
+  await kvSetJson(kvKey, record, CSV_USAGE_TTL_SECONDS);
+  return { remaining: Math.max(0, CSV_DOWNLOAD_LIMIT - record.count) };
 }
 

@@ -1,6 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 // pages/index.js
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 
 /**
@@ -107,16 +107,86 @@ const DATE_PRESETS = [
   },
 ];
 
+function clampRangeForFree(startStr, endStr) {
+  if (!startStr) return { start: startStr, end: endStr, notice: "", clamped: false };
+  const now = new Date();
+  const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const cutoff = new Date(utcToday.getTime() - (FREE_DATE_WINDOW_DAYS - 1) * DAY_MS);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const cutoffMs = cutoff.getTime();
+
+  const parseToMs = (value) => {
+    if (!value) return null;
+    const ms = Date.parse(`${value}T00:00:00Z`);
+    return Number.isFinite(ms) ? ms : null;
+  };
+
+  let nextStart = startStr;
+  let nextEnd = endStr;
+  let clamped = false;
+
+  const startMs = parseToMs(startStr);
+  if (startMs != null && startMs < cutoffMs) {
+    nextStart = cutoffStr;
+    clamped = true;
+  }
+
+  const endMs = parseToMs(endStr);
+  if (clamped && (endMs == null || endMs < cutoffMs)) {
+    nextEnd = cutoffStr;
+  }
+
+  const notice = clamped ? `Free plan shows the last ${FREE_DATE_WINDOW_DAYS} days. Upgrade for full history.` : "";
+  return { start: nextStart, end: nextEnd, notice, clamped };
+}
+
 const COLORS = {
-  googleBlue: "#4285F4",
-  googleGreen: "#34A853",
-  googleRed: "#EA4335",
-  frost: "#F7F9FB",
-  frostEdge: "#E9EEF5",
-  text: "#111827",
-  subtext: "#6B7280",
-  border: "#E5E7EB",
-  soft: "#F3F4F6",
+  googleBlue: "var(--aa-primary)",
+  googleGreen: "#22C55E",
+  googleRed: "#EF4444",
+  frost: "var(--aa-color-bg)",
+  frostEdge: "var(--aa-color-border)",
+  text: "var(--aa-color-ink)",
+  subtext: "var(--aa-color-muted)",
+  border: "var(--aa-color-border)",
+  soft: "#EEF1F7",
+};
+const PREMIUM_PREVIEW_COPY = {
+  "Trends over time": [
+    "Overlay sessions, revenue, and conversions with MoM/YoY call-outs.",
+    "Surface anomalies automatically with narrative context.",
+    "Download annotated charts for decks or async updates.",
+  ],
+  Campaigns: [
+    "Rank campaigns by lift, spend efficiency, and assisted impact.",
+    "Flag naming/UTM hygiene issues before they block analysis.",
+    "Generate CRO-ready AI summaries per campaign theme.",
+  ],
+  "Campaign drill-down": [
+    "Deep dive into ad format, creative, and keyword splits.",
+    "Spot incompatible metrics and retry with safe fallbacks automatically.",
+    "Map drop-offs to best-practice fixes (copy, offer, UX).",
+  ],
+  "Campaigns (KPI metrics)": [
+    "Track CPA, ROAS, CVR, and revenue per session in one table.",
+    "Highlight KPI deltas vs. last period with targets/badges.",
+    "Export directly to CSV / Docs for board or investor updates.",
+  ],
+  "Landing Pages × Attribution": [
+    "Blend landing page performance with source/medium for intent clarity.",
+    "Flag UX issues: slow loads, weak reassurance, misleading promise.",
+    "Tie each opportunity to AI playbooks + experiment backlog entries.",
+  ],
+  "KPI Targets & Alerts / Digest": [
+    "Set KPI targets and receive Slack/email digests with deltas.",
+    "Get proactive alerts when GA4 usage or AI limits are close.",
+    "Attach AI PRO commentary so the team knows what to do next.",
+  ],
+  __default: [
+    "Full-fidelity GA4 report with exports, saves, and schedules.",
+    "Summarise with AI PRO: hypotheses, playbooks, experiments, best practices.",
+    "Priority support plus higher GA4/AI limits for power users.",
+  ],
 };
 
 const COUNTRY_OPTIONS = [
@@ -199,12 +269,23 @@ function formatErrorMessage(err, fallback = "Something went wrong") {
   if (err.status === 403) {
     return "Access denied for this request. Check your permissions or reconnect Google Analytics.";
   }
+  if (err.code === "CSV_LIMIT") {
+    return "CSV exports are limited to 3 per week on your current plan. Upgrade for more headroom.";
+  }
   return String(err.message || fallback);
 }
 async function fetchJson(url, payload, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (typeof window !== "undefined") {
+    try {
+      if (hasLocalPremiumFlag()) {
+        headers["x-aa-premium-override"] = "true";
+      }
+    } catch {}
+  }
   const res = await fetch(url, {
     method: opts.method || "POST",
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers,
     body: opts.method === "GET" ? undefined : JSON.stringify(payload || {}),
     credentials: "include", // Ensure cookies are sent with requests
   });
@@ -229,6 +310,19 @@ async function fetchJson(url, payload, opts = {}) {
     throw err;
   }
   return data || {};
+}
+function useCsvGuard(setter) {
+  return useCallback(
+    (fn) => async () => {
+      try {
+        await fetchJson("/api/usage/csv-download");
+        await fn();
+      } catch (err) {
+        setter(formatErrorMessage(err, "Unable to export right now."));
+      }
+    },
+    [setter]
+  );
 }
 function ymd(d) {
   const yyyy = d.getFullYear();
@@ -284,8 +378,13 @@ function formatPctDelta(curr, prev) {
   const pct = Math.round(((curr - prev) / prev) * 100);
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
-function downloadCsvChannels(rows, totals, startDate, endDate) {
+async function trackCsvDownloadUsage() {
+  return fetchJson("/api/usage/csv-download", {});
+}
+
+async function downloadCsvChannels(rows, totals, startDate, endDate) {
   if (!rows?.length) return;
+  await trackCsvDownloadUsage();
   const header = ["Channel", "Sessions", "Users", "% of Sessions"];
   const totalSessions = rows.reduce((a, r) => a + (r.sessions || 0), 0);
   const lines = rows.map((r) => {
@@ -308,8 +407,9 @@ function downloadCsvChannels(rows, totals, startDate, endDate) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-function downloadCsvGeneric(filenamePrefix, rows, columns) {
+async function downloadCsvGeneric(filenamePrefix, rows, columns) {
   if (!rows?.length) return;
+  await trackCsvDownloadUsage();
   const header = columns.map((c) => c.header);
   const lines = rows.map((r) => columns.map((c) => r[c.key]));
   const csv = [header, ...lines]
@@ -375,7 +475,7 @@ function pctToTarget(current, target) {
 }
 
 /* ============================== Reusable UI ============================== */
-function Pill({ color = "#999", bg = "#eee", text, title }) {
+function Pill({ color = "var(--aa-primary)", bg = "var(--aa-color-pill)", text, title }) {
   return (
     <span
       title={title || ""}
@@ -385,7 +485,7 @@ function Pill({ color = "#999", bg = "#eee", text, title }) {
         gap: 6,
         padding: "4px 10px",
         borderRadius: 999,
-        border: `1px solid ${bg}`,
+        border: `1px solid ${COLORS.frostEdge}`,
         background: bg,
         color,
         fontSize: 12,
@@ -412,77 +512,93 @@ function FrostCard({ title, actions, children, id }) {
     <section
       id={id}
       style={{
-        marginTop: 18,
+        marginTop: 24,
         border: `1px solid ${COLORS.frostEdge}`,
-        borderRadius: 14,
-        background: "rgba(255,255,255,0.7)",
-        backdropFilter: "blur(8px)",
-        boxShadow: "0 8px 24px rgba(16,24,40,0.06)",
+        borderRadius: 28,
+        background: "var(--aa-color-surface-muted)",
+        backdropFilter: "blur(18px)",
+        boxShadow: "var(--aa-shadow-card)",
       }}
     >
       <div
         style={{
-          padding: "12px 14px",
+          padding: "18px 24px",
           borderBottom: `1px solid ${COLORS.frostEdge}`,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
           flexWrap: "wrap",
+          background: "var(--aa-color-surface-strong)",
         }}
       >
         <h3 style={{ margin: 0, fontSize: 16, color: COLORS.text }}>{title}</h3>
         {actions ? <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>{actions}</div> : null}
       </div>
-      <div style={{ padding: 14 }}>{children}</div>
+      <div style={{ padding: 24 }}>{children}</div>
     </section>
   );
 }
 function Button({ onClick, children, disabled, kind = "default", title, id, style }) {
   const base = {
-    padding: "11px 16px",
-    borderRadius: 12,
+    padding: "12px 20px",
+    borderRadius: 999,
     border: `1px solid ${COLORS.border}`,
-    background: "#fff",
+    background: "var(--aa-color-surface)",
     color: COLORS.text,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.6 : 1,
-    fontWeight: 700,
+    fontWeight: 600,
     letterSpacing: "0.01em",
-    boxShadow: "0 1px 0 rgba(16,24,40,0.05)",
+    boxShadow: disabled ? "none" : "0 10px 25px rgba(15,23,42,0.08)",
+    transition: "transform 120ms ease, box-shadow 200ms ease, background 200ms ease",
   };
   const kinds = {
     default: base,
     primary: {
       ...base,
       background: COLORS.googleBlue,
-      borderColor: "#2C6AD9",
+      borderColor: "transparent",
       color: "#fff",
+      boxShadow: "var(--aa-cta-shadow)",
     },
     primaryCta: {
       ...base,
       background: COLORS.googleBlue,
-      borderColor: "#1b5bd6",
+      borderColor: "transparent",
       color: "#fff",
-      boxShadow: "0 6px 20px rgba(66,133,244,0.35)",
-      transform: "translateZ(0)",
+      boxShadow: "var(--aa-cta-shadow)",
     },
     subtle: {
       ...base,
-      background: COLORS.soft,
+      background: "var(--aa-primary-soft)",
+      borderColor: "transparent",
+      color: COLORS.text,
+    },
+    ghost: {
+      ...base,
+      background: "transparent",
       borderColor: COLORS.border,
       color: COLORS.text,
+      boxShadow: "none",
     },
     danger: {
       ...base,
-      background: "#fff5f5",
-      borderColor: "#ffd6d6",
+      background: "#fef2f2",
+      borderColor: "#fecaca",
       color: COLORS.googleRed,
     },
   };
   const st = { ...kinds[kind] };
   return (
-    <button id={id} title={title} onClick={onClick} disabled={disabled} style={{ ...st, ...(style || {}) }}>
+    <button
+      type="button"
+      id={id}
+      title={title}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      style={{ ...st, ...(style || {}) }}
+    >
       {children}
     </button>
   );
@@ -774,11 +890,27 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setLoading(true);
+    let startForFetch = startDate;
+    let endForFetch = endDate;
+
+    if (!premium) {
+      const clamped = clampRangeForFree(startDate, endDate);
+      startForFetch = clamped.start;
+      endForFetch = clamped.end;
+      if (clamped.clamped) {
+        setStartDate(clamped.start);
+        setEndDate(clamped.end);
+      }
+      if (clamped.notice) {
+        setPresetNotice(clamped.notice);
+      }
+    }
+
     try {
       const curr = await fetchGa4Channels({
         propertyId,
-        startDate,
-        endDate,
+        startDate: startForFetch,
+        endDate: endForFetch,
         filters: appliedFilters,
       });
       // If the call works, we are definitely connected
@@ -788,10 +920,16 @@ export default function Home() {
       } catch {}
 
       setResult(curr);
+      setPendingScroll(true);
 
       // Update URL to reflect the view we just ran
       try {
-        const qs = encodeQuery({ startDate, endDate, appliedFilters, comparePrev });
+        const qs = encodeQuery({
+          startDate: startForFetch,
+          endDate: endForFetch,
+          appliedFilters,
+          comparePrev,
+        });
         const path = window.location.pathname + (qs ? `?${qs}` : "");
         window.history.replaceState(null, "", path);
       } catch {}
@@ -799,15 +937,8 @@ export default function Home() {
       // Broadcast reset for sections & AI
       setRefreshSignal((n) => n + 1);
 
-      // Scroll user to the hero block after run
-      setTimeout(() => {
-        if (topAnchorRef.current) {
-          topAnchorRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }, 80);
-
       if (comparePrev) {
-        const { prevStart, prevEnd } = computePreviousRange(startDate, endDate);
+        const { prevStart, prevEnd } = computePreviousRange(startForFetch, endForFetch);
         const prev = await fetchGa4Channels({
           propertyId,
           startDate: prevStart,
@@ -815,6 +946,8 @@ export default function Home() {
           filters: appliedFilters,
         });
         setPrevResult(prev);
+      } else {
+        setPrevResult(null);
       }
     } catch (e) {
       if (e.status === 401 || e.status === 403) {
@@ -828,6 +961,7 @@ export default function Home() {
       } else {
       setError(formatErrorMessage(e));
       }
+      setPendingScroll(false);
     } finally {
       setLoading(false);
     }
@@ -870,24 +1004,11 @@ export default function Home() {
     let notice = "";
 
     if (!premium) {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - (FREE_DATE_WINDOW_DAYS - 1));
-      const cutoffStr = ymd(cutoff);
-      const cutoffMs = cutoff.getTime();
-      const startDateObj = nextStart ? new Date(`${nextStart}T00:00:00`) : null;
-      if (startDateObj && startDateObj.getTime() < cutoffMs) {
-        nextStart = cutoffStr;
-        const endDateObj = nextEnd ? new Date(`${nextEnd}T00:00:00`) : null;
-        if (!endDateObj || endDateObj.getTime() < cutoffMs) {
-          nextEnd = cutoffStr;
-        }
-        notice = `Free plan shows the last ${FREE_DATE_WINDOW_DAYS} days. Upgrade for full history.`;
-      } else {
-        notice = "";
-      }
-    }
-
-    if (premium) {
+      const clamped = clampRangeForFree(nextStart, nextEnd);
+      nextStart = clamped.start;
+      nextEnd = clamped.end;
+      notice = clamped.notice;
+    } else {
       notice = "";
     }
 
@@ -916,6 +1037,7 @@ export default function Home() {
     email: null,
   });
   const [qaPremiumOverride, setQaPremiumOverride] = useState(false);
+  const [pendingScroll, setPendingScroll] = useState(false);
 
   useEffect(() => {
     setQaPremiumOverride(hasLocalPremiumFlag());
@@ -959,70 +1081,57 @@ export default function Home() {
     }
   }, [premium]);
 
+  useEffect(() => {
+    if (pendingScroll && !loading && topAnchorRef.current) {
+      topAnchorRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      setPendingScroll(false);
+    }
+  }, [pendingScroll, loading, rows.length]);
+
   const runDisabled = loading || !hasProperty; // report only blocked by property presence
+  const controlFieldStyle = {
+    marginTop: 6,
+    padding: 12,
+    width: "100%",
+    borderRadius: 18,
+    border: `1px solid ${COLORS.border}`,
+    background: "var(--aa-color-surface)",
+    boxShadow: "0 12px 26px rgba(15,23,42,0.05)",
+  };
+  const csvGuard = useCsvGuard(setError);
 
   return (
-    <main
-      style={{
-        padding: 16,
-        fontFamily:
-          "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-        maxWidth: 1150,
-        margin: "0 auto",
-        color: COLORS.text,
-      }}
-    >
-      {/* Sticky nav */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 20,
-          background: "rgba(255,255,255,0.9)",
-          backdropFilter: "blur(8px)",
-          borderBottom: `1px solid ${COLORS.frostEdge}`,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            padding: "10px 2px",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <>
+      <header className="aa-nav">
+        <div className="aa-nav__inner">
+          <div className="aa-nav__logo">
             <Image
-              src="/logo.svg"
+              src="/header-logo.png"
               alt="AnalyticsAssistant"
-              width={26}
-              height={26}
+              width={2415}
+              height={207}
               priority
+              style={{ height: 20, width: "auto" }}
             />
-            <h1 style={{ margin: 0, fontSize: 18 }}>AnalyticsAssistant (MVP)</h1>
           </div>
-
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <StatusDot status={sessionStatus.s} label={sessionStatus.label} />
-            <StatusDot status={propertyStatus.s} label={propertyStatus.label} />
+          <div className="aa-nav__cta">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <StatusDot status={sessionStatus.s} label={sessionStatus.label} />
+              <StatusDot status={propertyStatus.s} label={propertyStatus.label} />
+            </div>
             <Button
               onClick={connect}
               title="Connect Google Analytics"
               kind="primaryCta"
-              id="cta-connect-google"
+              id="cta-connect-google-nav"
             >
               Connect Google Analytics
             </Button>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Subheading */}
-      <p style={{ marginTop: 12, color: COLORS.subtext }}>
-        Connect GA4, enter a Property ID, choose a date range, optionally apply filters, and run your report.
-      </p>
-
+      <main className="aa-shell">
       {/* Controls */}
       <FrostCard
         title="Controls"
@@ -1038,13 +1147,16 @@ export default function Home() {
               {loading ? "Running…" : "Run GA4 Report"}
             </Button>
             <Button
-              onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
+              onClick={csvGuard(() => downloadCsvChannels(rows, totals, startDate, endDate))}
               disabled={!rows.length}
               title={rows.length ? "Download channels table as CSV" : "Run a report first"}
             >
               Download CSV
             </Button>
-            <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            <label
+              style={{ display: "inline-flex", gap: 8, alignItems: "center" }}
+              title="Compare vs previous period"
+            >
               <input
                 id="compare-prev"
                 type="checkbox"
@@ -1068,7 +1180,7 @@ export default function Home() {
           }}
         >
           <div>
-            <label htmlFor="property-id" style={{ fontSize: 12, color: COLORS.subtext }}>
+            <label htmlFor="property-id" style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
               GA4 Property ID
             </label>
             <input
@@ -1077,18 +1189,12 @@ export default function Home() {
               value={propertyId}
               onChange={(e) => setPropertyId(e.target.value)}
               placeholder="e.g. 123456789"
-              style={{
-                marginTop: 6,
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
+              style={controlFieldStyle}
             />
           </div>
 
           <div>
-            <label htmlFor="start-date" style={{ fontSize: 12, color: COLORS.subtext }}>
+            <label htmlFor="start-date" style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
               Start date
             </label>
             <input
@@ -1101,18 +1207,12 @@ export default function Home() {
                 setDatePreset("custom");
                 setPresetNotice("");
               }}
-              style={{
-                marginTop: 6,
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
+              style={controlFieldStyle}
             />
           </div>
 
           <div>
-            <label htmlFor="end-date" style={{ fontSize: 12, color: COLORS.subtext }}>
+            <label htmlFor="end-date" style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
               End date
             </label>
             <input
@@ -1125,31 +1225,19 @@ export default function Home() {
                 setDatePreset("custom");
                 setPresetNotice("");
               }}
-              style={{
-                marginTop: 6,
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
+              style={controlFieldStyle}
             />
           </div>
 
           <div>
-            <label htmlFor="country-filter" style={{ fontSize: 12, color: COLORS.subtext }}>
+            <label htmlFor="country-filter" style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
               Country
             </label>
             <select
               id="country-filter"
               value={countrySel}
               onChange={(e) => setCountrySel(e.target.value)}
-              style={{
-                marginTop: 6,
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
+              style={controlFieldStyle}
             >
               {COUNTRY_OPTIONS.map((opt) => (
                 <option key={opt} value={opt}>
@@ -1160,20 +1248,14 @@ export default function Home() {
           </div>
 
           <div>
-            <label htmlFor="channel-filter" style={{ fontSize: 12, color: COLORS.subtext }}>
+            <label htmlFor="channel-filter" style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
               Channel Group
             </label>
             <select
               id="channel-filter"
               value={channelSel}
               onChange={(e) => setChannelSel(e.target.value)}
-              style={{
-                marginTop: 6,
-                padding: 10,
-                width: "100%",
-                borderRadius: 10,
-                border: `1px solid ${COLORS.border}`,
-              }}
+              style={controlFieldStyle}
             >
               {CHANNEL_GROUP_OPTIONS.map((opt) => (
                 <option key={opt} value={opt}>
@@ -1208,11 +1290,13 @@ export default function Home() {
                   style={{
                     borderRadius: 999,
                     border: isActive ? `1px solid ${COLORS.googleBlue}` : `1px solid ${COLORS.border}`,
-                    background: isActive ? "#EEF2FF" : "#FFFFFF",
-                    color: isActive ? COLORS.googleBlue : COLORS.text,
-                    padding: "6px 12px",
+                    background: isActive ? "var(--aa-primary-soft)" : "var(--aa-color-surface)",
+                    color: isActive ? COLORS.googleBlue : COLORS.subtext,
+                    padding: "8px 14px",
                     fontSize: 12,
+                    fontWeight: 600,
                     cursor: "pointer",
+                    boxShadow: isActive ? "0 12px 22px rgba(76,110,245,0.25)" : "none",
                     transition: "all 0.2s ease",
                   }}
                 >
@@ -1229,11 +1313,13 @@ export default function Home() {
               style={{
                 borderRadius: 999,
                 border: datePreset === "custom" ? `1px solid ${COLORS.googleBlue}` : `1px solid ${COLORS.border}`,
-                background: datePreset === "custom" ? "#EEF2FF" : "#FFFFFF",
-                color: datePreset === "custom" ? COLORS.googleBlue : COLORS.text,
-                padding: "6px 12px",
+                background: datePreset === "custom" ? "var(--aa-primary-soft)" : "var(--aa-color-surface)",
+                color: datePreset === "custom" ? COLORS.googleBlue : COLORS.subtext,
+                padding: "8px 14px",
                 fontSize: 12,
+                fontWeight: 600,
                 cursor: "pointer",
+                boxShadow: datePreset === "custom" ? "0 12px 22px rgba(76,110,245,0.25)" : "none",
                 transition: "all 0.2s ease",
               }}
             >
@@ -1248,25 +1334,26 @@ export default function Home() {
 
       <div
         style={{
-          marginTop: 12,
-          padding: 16,
-          borderRadius: 14,
+          marginTop: 32,
+          padding: 24,
+          borderRadius: 28,
           border: `1px solid ${COLORS.frostEdge}`,
-          background: COLORS.frost,
+          background: "var(--aa-color-surface)",
+          boxShadow: "var(--aa-shadow-card)",
         }}
       >
-        <div style={{ fontWeight: 600 }}>
-          Plan status:{" "}
-          {premium
-            ? `Premium${account.plan ? ` (${account.plan})` : ""}`
-            : "Free"}
+        <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>Plan status</span>
+          <span className="aa-badge">
+            {premium ? `Premium${account.plan ? ` (${account.plan})` : ""}` : "Free"}
+          </span>
         </div>
-        <p style={{ margin: "6px 0 0", color: COLORS.subtext, fontSize: 13, lineHeight: 1.5 }}>
+        <p style={{ margin: "10px 0 0", color: COLORS.subtext, fontSize: 14, lineHeight: 1.6 }}>
           {premium
             ? `Pro unlocks effectively unlimited GA4 reports (fair use), ${PREMIUM_USAGE_LIMITS.ai.toLocaleString()} AI summaries/month, up to ${PRO_PROPERTY_LIMIT} GA4 properties, full historical lookback + comparisons, exports, scheduled Slack/email digests, saved questions/templates, advanced AI deep dives, and priority support.`
             : `Free includes ${FREE_USAGE_LIMITS.ga4} GA4 reports/month, ${FREE_USAGE_LIMITS.ai} AI summaries/month, ${FREE_PROPERTY_LIMIT} GA4 property, and the last ${FREE_DATE_WINDOW_DAYS} days of data. Upgrade to unlock multiple properties, full history, exports, schedules, saved questions, multi-property comparisons, and advanced AI.`}{" "}
           {!premium && (
-            <a href={PREMIUM_LANDING_PATH} style={{ color: COLORS.googleBlue }}>
+            <a href={PREMIUM_LANDING_PATH} style={{ color: COLORS.googleBlue, fontWeight: 600 }}>
               Upgrade →
             </a>
           )}
@@ -1327,7 +1414,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Anchor to scroll after running */}
       <div ref={topAnchorRef} />
 
       {/* HERO: Traffic by Default Channel Group (always under controls) */}
@@ -1371,7 +1457,7 @@ export default function Home() {
                 premium={premium}
               />
               <Button
-                onClick={() => downloadCsvChannels(rows, totals, startDate, endDate)}
+                onClick={csvGuard(() => downloadCsvChannels(rows, totals, startDate, endDate))}
                 disabled={!rows.length}
                 title="Download channels CSV"
               >
@@ -1507,7 +1593,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
-          premium={premium}
+            premium={premium}
           />
           <SourceMedium
             key={`sm2-${dashKey}`}
@@ -1516,7 +1602,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
-          premium={premium}
+            premium={premium}
           />
           <EcommerceKPIs
             key={`ekpi2-${dashKey}`}
@@ -1525,7 +1611,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
-          premium={premium}
+            premium={premium}
           />
           <CheckoutFunnel
             key={`cf2-${dashKey}`}
@@ -1534,7 +1620,7 @@ export default function Home() {
             endDate={endDate}
             filters={appliedFilters}
             resetSignal={refreshSignal}
-          premium={premium}
+            premium={premium}
           />
         </HideOnMobile>
       </div>
@@ -1624,49 +1710,16 @@ export default function Home() {
         </details>
       ) : null}
 
-      {/* Footer */}
-      <footer
-        style={{
-          marginTop: 48,
-          paddingTop: 24,
-          paddingBottom: 24,
-          borderTop: `1px solid ${COLORS.frostEdge}`,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: 24,
-          flexWrap: "wrap",
-          fontSize: 13,
-          color: COLORS.subtext,
-        }}
-      >
-        <a
-          href="/privacy"
-          style={{
-            color: COLORS.subtext,
-            textDecoration: "none",
-            transition: "color 0.2s",
-          }}
-          onMouseEnter={(e) => (e.target.style.color = COLORS.text)}
-          onMouseLeave={(e) => (e.target.style.color = COLORS.subtext)}
-        >
-          Privacy Policy
-        </a>
-        <span style={{ color: COLORS.border }}>•</span>
-        <a
-          href="/terms"
-          style={{
-            color: COLORS.subtext,
-            textDecoration: "none",
-            transition: "color 0.2s",
-          }}
-          onMouseEnter={(e) => (e.target.style.color = COLORS.text)}
-          onMouseLeave={(e) => (e.target.style.color = COLORS.subtext)}
-        >
-          Terms of Service
-        </a>
-      </footer>
-    </main>
+        {/* Footer */}
+        <footer className="aa-footer">
+          <span>Read-only, Google-verified connection to your GA4 data.</span>
+          <span className="aa-footer__divider">•</span>
+          <a href="/privacy">Privacy Policy</a>
+          <span className="aa-footer__divider">•</span>
+          <a href="/terms">Terms of Service</a>
+        </footer>
+      </main>
+    </>
   );
 }
 
@@ -1784,52 +1837,49 @@ function AiBlock({
     </Button>
   );
 
+  const trigger = asButton ? (
+    runBtn
+  ) : (
+    <BlueAiButton onClick={run} disabled={loading} title="AI summary">
+      {loading ? "Summarising…" : resolvedLabel}
+    </BlueAiButton>
+  );
+
+  const placeholder = premium
+    ? "Summarise with AI PRO surfaces hypotheses, best practices, and experiment-ready playbooks once you run it."
+    : "Summarise with AI turns this table into a plain-English digest once you run it.";
+  const labelText = premium ? "AI PRO insight" : "AI insight";
+  const statusText = text ? "Latest run" : "Insight will appear here";
+
   return (
-    <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      {asButton ? runBtn : (
-        <BlueAiButton onClick={run} disabled={loading} title="AI summary">
-          {loading ? "Summarising…" : resolvedLabel}
-        </BlueAiButton>
-      )}
-      <Button onClick={copy} disabled={!text}>
-        {copied ? "Copied!" : "Copy insight"}
-      </Button>
-      {error && <span style={{ color: COLORS.googleRed }}>Error: {error}</span>}
-      {text && (
-        <div
-          style={{
-            marginTop: 8,
-            background: "#fffceb",
-            border: "1px solid #f5e08f",
-            padding: 10,
-            borderRadius: 6,
-            whiteSpace: "pre-wrap",
-            width: "100%",
-          }}
-        >
-          {text}
+    <div className="aa-ai-block" data-premium={premium ? "true" : "false"}>
+      <div className="aa-ai-block__controls">{trigger}</div>
+      {error && <p className="aa-ai-block__error">Error: {error}</p>}
+      <article className={`aa-ai-block__output${text ? " aa-ai-block__output--ready" : ""}`}>
+        <div className="aa-ai-block__output-head">
+          <div className="aa-ai-block__label">
+            <span className="aa-ai-block__badge">{labelText}</span>
+            <span className="aa-ai-block__meta-text">{statusText}</span>
+          </div>
+          <Button onClick={copy} disabled={!text} kind="ghost" title="Copy AI insight">
+            {copied ? "Copied!" : "Copy insight"}
+          </Button>
         </div>
-      )}
+        <div className={`aa-ai-block__body${text ? " is-filled" : " is-empty"}`}>{text || placeholder}</div>
+      </article>
       {premium && (
-        <div style={{ flexBasis: "100%", marginTop: 8 }}>
-          <label style={{ display: "block", fontSize: 12, color: COLORS.subtext, marginBottom: 4 }}>
+        <div className="aa-ai-block__notes">
+          <label className="aa-ai-block__notes-label">
             Qualitative notes (optional) — paste survey quotes, onsite feedback, or support tickets
           </label>
           <textarea
             value={qualNotes}
             onChange={(e) => setQualNotes(e.target.value)}
-            placeholder="Example: “Checkout shipping step is confusing” or “Chat feedback about pricing surprise”."
+            placeholder='Example: "Checkout shipping step is confusing" or "Chat feedback about pricing surprise".'
             rows={3}
-            style={{
-              width: "100%",
-              padding: 8,
-              borderRadius: 8,
-              border: `1px solid ${COLORS.border}`,
-              fontFamily: "Inter, system-ui, sans-serif",
-              resize: "vertical",
-            }}
+            className="aa-ai-block__textarea"
           />
-          <small style={{ color: COLORS.subtext, fontSize: 11 }}>
+          <small className="aa-ai-block__hint">
             We weave these notes into the Summarise with AI PRO hypotheses and playbooks.
           </small>
         </div>
@@ -1843,6 +1893,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, pr
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const csvGuard = useCsvGuard(setError);
 
   useEffect(() => {
     setRows([]);
@@ -1915,7 +1966,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, pr
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `source_medium_${startDate}_to_${endDate}`,
                 rows,
@@ -1926,7 +1977,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, pr
                   { header: "Users", key: "users" },
                 ]
               )
-            }
+            )}
             disabled={!rows.length}
           >
             Download CSV
@@ -1978,6 +2029,7 @@ function Campaigns({ propertyId, startDate, endDate, filters, premium }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const csvGuard = useCsvGuard(setError);
 
   const load = async () => {
     setLoading(true);
@@ -2041,7 +2093,7 @@ function Campaigns({ propertyId, startDate, endDate, filters, premium }) {
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `campaigns_${startDate}_to_${endDate}`,
                 rows,
@@ -2051,7 +2103,7 @@ function Campaigns({ propertyId, startDate, endDate, filters, premium }) {
                   { header: "Users", key: "users" },
                 ]
               )
-            }
+            )}
             disabled={!rows.length}
           >
             Download CSV
@@ -2363,6 +2415,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, premium })
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
+  const csvGuard = useCsvGuard(setError);
 
   const load = async () => {
     setLoading(true);
@@ -2449,7 +2502,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, premium })
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `campaigns_${startDate}_to_${endDate}`,
                 visible.map((r) => ({
@@ -2471,7 +2524,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, premium })
                   { header: "AOV", key: "aov" },
                 ]
               )
-            }
+            )}
             disabled={!visible.length}
           >
             Download CSV
@@ -2537,6 +2590,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal, premiu
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const csvGuard = useCsvGuard(setError);
 
   useEffect(() => {
     setRows([]);
@@ -2589,7 +2643,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal, premiu
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `top_pages_${startDate}_to_${endDate}`,
                 rows,
@@ -2600,7 +2654,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal, premiu
                   { header: "Users", key: "users" },
                 ]
               )
-            }
+            )}
             disabled={!rows.length}
           >
             Download CSV
@@ -2654,6 +2708,7 @@ function LandingPages({ propertyId, startDate, endDate, filters, premium }) {
   const [error, setError] = useState("");
   const [topOnly, setTopOnly] = useState(false);
   const [minSessions, setMinSessions] = useState(0);
+  const csvGuard = useCsvGuard(setError);
 
   const load = async () => {
     setLoading(true);
@@ -2746,7 +2801,7 @@ function LandingPages({ propertyId, startDate, endDate, filters, premium }) {
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `landing_pages_${startDate}_to_${endDate}`,
                 filtered,
@@ -2760,7 +2815,7 @@ function LandingPages({ propertyId, startDate, endDate, filters, premium }) {
                   { header: "Revenue", key: "revenue" },
                 ]
               )
-            }
+            )}
             disabled={!filtered.length}
           >
             Download CSV
@@ -3067,6 +3122,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters, premium }) {
   const [granularity, setGranularity] = useState("daily");
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
+  const csvGuard = useCsvGuard(setError);
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   function pad2(n) { return String(n).padStart(2, "0"); }
@@ -3187,7 +3243,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters, premium }) {
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `timeseries_${granularity}_${startDate}_to_${endDate}`,
                 rows,
@@ -3199,7 +3255,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters, premium }) {
                   { header: "Revenue", key: "revenue" },
                 ]
               )
-            }
+            )}
             disabled={!hasRows}
           >
             Download CSV
@@ -3323,6 +3379,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal, premiu
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [debug, setDebug] = useState(null);
+  const csvGuard = useCsvGuard(setError);
 
   useEffect(() => {
     setRows([]);
@@ -3434,7 +3491,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal, premiu
             premium={premium}
           />
           <Button
-            onClick={() =>
+            onClick={csvGuard(() =>
               downloadCsvGeneric(
                 `product_performance_${startDate}_to_${endDate}`,
                 rows.map((r) => ({
@@ -3454,7 +3511,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal, premiu
                   { header: "Item revenue", key: "revenue" },
                 ]
               )
-            }
+            )}
             disabled={!rows.length}
           >
             Download CSV
@@ -3867,27 +3924,53 @@ function LabeledInput({ label, value, onChange, type = "text", placeholder, hint
     </div>
   );
 }
+function PremiumTeaserMock() {
+  return (
+    <div className="premium-preview__mock" aria-hidden="true">
+      <div className="premium-preview__mock-card">
+        <div className="premium-preview__mock-chip">AI PRO insight</div>
+        <div className="premium-preview__mock-title" />
+        <div className="premium-preview__mock-subtitle" />
+        <div className="premium-preview__mock-grid">
+          <div className="premium-preview__mock-cell" />
+          <div className="premium-preview__mock-cell" />
+          <div className="premium-preview__mock-cell" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ============================== Premium Gate Wrapper ============================== */
 function PremiumGate({ label, premium, children }) {
-  if (!premium) {
-    return (
-      <FrostCard
-        title={`${label} (Premium)`}
-        actions={
-          <Button onClick={() => (window.location.href = PREMIUM_LANDING_PATH)} kind="primaryCta">
-            Upgrade
-          </Button>
-        }
-      >
-        <p style={{ margin: 0, color: COLORS.subtext }}>
-          This panel is available on the Premium plan (higher GA4 + AI limits, campaign drill-downs, landing page insights,
-          digests, and more). Upgrade to unlock it.
-        </p>
-      </FrostCard>
-    );
-  }
-  return children;
+  if (premium) return children;
+  const copy = PREMIUM_PREVIEW_COPY[label] || PREMIUM_PREVIEW_COPY.__default;
+  return (
+    <FrostCard title={`${label} (Premium)`} actions={<Pill text="Premium required" color="#92400e" bg="#FEF3C7" />}>
+      <p style={{ margin: 0, color: COLORS.subtext }}>
+        Premium unlocks this panel with higher GA4/AI limits, exports, saved questions, and AI PRO deep dives tailored to your data.
+      </p>
+      <div className="premium-preview">
+        <div className="premium-preview__label">Preview</div>
+        <div className="premium-preview__body premium-preview__body--locked">
+          <PremiumTeaserMock />
+          <ul className="premium-preview__list">
+            {copy.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <div className="premium-preview__cta">
+            <p style={{ margin: 0, color: COLORS.subtext }}>
+              This block is live for Premium users — unlock it to run the full workflow.
+            </p>
+            <Button onClick={() => (window.location.href = PREMIUM_LANDING_PATH)} kind="primaryCta">
+              Upgrade to unlock
+            </Button>
+          </div>
+        </div>
+      </div>
+    </FrostCard>
+  );
 }
 
 /* ============================== END ============================== */

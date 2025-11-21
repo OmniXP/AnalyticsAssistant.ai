@@ -1,4 +1,6 @@
 // /workspaces/insightsgpt/web/pages/_app.js
+import "../styles/globals.css";
+import "../styles/theme.css";
 import React from "react";
 
 function ErrorFallback({ error, reset }) {

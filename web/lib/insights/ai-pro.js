@@ -37,6 +37,57 @@ const DEFAULT_PATTERN = [
   "Instrument the journey end to end (events + qualitative) so drops are explainable within minutes.",
 ];
 
+const BEST_PRACTICE_LIBRARY = {
+  channels: [
+    "Retail: mirror ad promise in the hero, surface delivery/returns above the fold, and maintain sticky reassurance.",
+    "Subscriptions/SaaS: segment message by intent (evaluation vs. comparison) and reinforce proof (logos, metrics, reviews).",
+    "Paid social spikes? Double-check creative to landing alignment and keep remarketing sequences short + value-led.",
+  ],
+  campaigns: [
+    "Group brand, demand gen, and remarketing with distinct KPIs so success/failure is obvious.",
+    "Maintain strict UTM guardrails; inconsistent tagging hides winning spend and inflates dark traffic.",
+    "Benchmark creative fatigue weekly—declining CTR with flat CVR often means the promise no longer lands.",
+  ],
+  "landing-pages": [
+    "High mobile bounce? Use sticky add-to-basket, above-the-fold social proof, and ultra-clear shipping info.",
+    "Clarify value prop + proof in the first scroll, then layer FAQs, returns, and compliance near CTAs.",
+    "Map landing templates to traffic types (problem-aware vs. solution-aware) instead of one-size-fits-all.",
+  ],
+  products: [
+    "Hero SKUs deserve personalized bundles, financing hints, and social proof near price.",
+    "Show real availability + delivery windows to reduce hesitation for big-ticket items.",
+    "Surface cross-sells anchored in customer behaviour (\"people who viewed\"), not generic merch pushes.",
+  ],
+  timeseries: [
+    "Annotate launches, promos, and outages; teams forget the causes within a sprint.",
+    "Compare paid vs. organic trend lines to detect cannibalisation or halo lift.",
+    "Run cadence reviews (weekly/monthly) so insights turn into backlog items, not retro vanity.",
+  ],
+  ecommerce: [
+    "Instrument every checkout step; add reassurance (shipping, payment trust, guest checkout) near friction points.",
+    "Use urgency carefully—low-stock copy works only when inventory is truthful and shipping is fast.",
+    "Treat product detail page load time as a CRO metric; sub-2.5s correlates with double-digit CVR uplifts.",
+  ],
+  default: [
+    "Pair quantitative changes with qualitative sources (support, reviews, surveys) to explain the \"why\".",
+    "Ship an experiment backlog (ICE/PIE scoring) so insight always leads to a test.",
+    "Close the loop with stakeholders via Slack/email digests that include numbers + narrative.",
+  ],
+};
+
+const TOPIC_VERTICALS = {
+  channels: "Acquisition & demand gen",
+  campaigns: "Performance marketing",
+  "campaigns-overview": "Performance marketing",
+  "campaign-detail": "Performance marketing",
+  "landing-pages": "Ecommerce / CRO",
+  products: "Merchandising & PDP",
+  timeseries: "Growth & retention",
+  ecommerce: "Checkout & funnel",
+  "top-pages": "Content & SEO",
+  default: "Digital analytics",
+};
+
 function fmtInt(n) {
   const num = Number(n || 0);
   return Number.isFinite(num) ? num.toLocaleString("en-GB") : "0";
@@ -224,6 +275,17 @@ function formatPatterns(topic, facts) {
   return lines.join("\n");
 }
 
+function formatBestPractices(topic, facts) {
+  const tips = BEST_PRACTICE_LIBRARY[topic] || BEST_PRACTICE_LIBRARY.default;
+  const hero = facts[0]?.label || "your flagship journey";
+  const vertical = TOPIC_VERTICALS[topic] || TOPIC_VERTICALS.default;
+  const lines = [`Industry best-practice recommendations (${vertical}):`];
+  tips.forEach((tip) => lines.push(`• ${tip}`));
+  lines.push(`• Anchor on ${hero} as the control journey and benchmark uplift after applying these treatments.`);
+  lines.push("• Implementation blueprint: convert each bullet into a Jira/Asana card with owner, metric, and due date.");
+  return lines.join("\n");
+}
+
 function formatQualitativeLayer(rawNotes, facts, topic) {
   const notes = typeof rawNotes === "string"
     ? rawNotes
@@ -262,6 +324,7 @@ export function buildProNarrative({ topic, baseSummary, period, scope, drivers =
   parts.push(formatPlaybooks(facts));
   parts.push(formatExperiments(facts));
   parts.push(formatPatterns(topic, facts));
+  parts.push(formatBestPractices(topic, facts));
   parts.push(formatQualitativeLayer(qualitativeNotes, facts, topic));
   return parts.filter(Boolean).join("\n\n");
 }
