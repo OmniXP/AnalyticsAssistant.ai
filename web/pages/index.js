@@ -887,6 +887,7 @@ export default function Home() {
 
   const runReport = async () => {
     setError("");
+    setGaSessionConnected(true); // optimistic until backend says otherwise
     setResult(null);
     setPrevResult(null);
     setLoading(true);
@@ -956,7 +957,9 @@ export default function Home() {
           localStorage.setItem("insightgpt_ga_session_connected", "0");
         } catch {}
         setError(
-          'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.'
+          e.userMessage ||
+            e.message ||
+            'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.'
         );
       } else {
       setError(formatErrorMessage(e));
