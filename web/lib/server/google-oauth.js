@@ -223,7 +223,6 @@ export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
     "email",
     "profile",
     "https://www.googleapis.com/auth/analytics.readonly",
-    "https://www.googleapis.com/auth/analytics.edit", // optional, keep readonly if you prefer
   ].join(" "));
   params.set("code_challenge", codeChallenge);
   params.set("code_challenge_method", "S256");

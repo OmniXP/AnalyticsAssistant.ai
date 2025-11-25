@@ -55,6 +55,7 @@ export default async function handler(req, res) {
         const session = event.data.object; // mode === 'subscription'
         const customerId = session.customer || null;
         const customerEmail = session.customer_details?.email || null;
+        const appUserId = session.metadata?.app_user_id || null;
 
         // Determine plan by the purchased price ID
         const lineItems = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
@@ -79,11 +80,17 @@ export default async function handler(req, res) {
           });
         }
 
-        // Persist to your DB (User row) by email
-        if (customerEmail) {
+        // Persist to your DB (User row), preferring explicit app_user_id if present
+        const where = appUserId
+          ? { id: appUserId }
+          : customerEmail
+          ? { email: customerEmail }
+          : null;
+
+        if (where) {
           try {
             await prisma.user.update({
-              where: { email: customerEmail },
+              where,
               data: {
                 premium: true,
                 plan,
@@ -125,6 +132,7 @@ export default async function handler(req, res) {
         const sub = event.data.object;
         const customerId = sub.customer;
         const activeish = ["trialing", "active", "past_due"].includes(sub.status);
+        const appUserId = sub.metadata?.app_user_id || null;
 
         // Infer plan from current item price
         let plan = "monthly";
@@ -142,14 +150,20 @@ export default async function handler(req, res) {
           });
         }
 
-        // Update your DB row using the customer's email from Stripe
+        // Update your DB row using explicit app_user_id when possible, falling back to email
         try {
-          const cust = await stripe.customers.retrieve(customerId);
-          const email = cust?.email || null;
+          let where = null;
+          if (appUserId) {
+            where = { id: appUserId };
+          } else {
+            const cust = await stripe.customers.retrieve(customerId);
+            const email = cust?.email || null;
+            if (email) where = { email };
+          }
 
-          if (email) {
+          if (where) {
             await prisma.user.update({
-              where: { email },
+              where,
               data: {
                 premium: activeish,
                 plan,
@@ -168,6 +182,7 @@ export default async function handler(req, res) {
       case "customer.subscription.deleted": {
         const sub = event.data.object;
         const customerId = sub.customer;
+        const appUserId = sub.metadata?.app_user_id || null;
 
         // Update Stripe metadata
         if (customerId) {
@@ -180,14 +195,20 @@ export default async function handler(req, res) {
           });
         }
 
-        // Update DB (set premium=false, clear plan/sub)
+        // Update DB (set premium=false, clear plan/sub), preferring explicit app_user_id
         try {
-          const cust = await stripe.customers.retrieve(customerId);
-          const email = cust?.email || null;
+          let where = null;
+          if (appUserId) {
+            where = { id: appUserId };
+          } else {
+            const cust = await stripe.customers.retrieve(customerId);
+            const email = cust?.email || null;
+            if (email) where = { email };
+          }
 
-          if (email) {
+          if (where) {
             await prisma.user.update({
-              where: { email },
+              where,
               data: {
                 premium: false,
                 plan: null,

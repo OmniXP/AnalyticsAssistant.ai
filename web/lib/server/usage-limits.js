@@ -216,7 +216,7 @@ export async function recordPropertySelection(req, res, propertyId, metadata = {
   if (record.properties.length >= limit) {
     const err = new Error(
       planKey === "free"
-        ? "Free plan supports one GA4 property. Upgrade to Pro to connect multiple properties."
+        ? "Free plan supports one GA4 property. Upgrade to Premium to connect multiple properties."
         : "Pro plan supports up to 5 GA4 properties. Remove one before adding another."
     );
     err.code = "PROPERTY_LIMIT";
@@ -289,7 +289,9 @@ async function enforceDateLimit(req, res, startDate) {
   const today = parseDate(new Date().toISOString().slice(0, 10));
   const earliest = new Date(today.getTime() - (maxDays - 1) * ONE_DAY_MS);
   if (parsed < earliest) {
-    const err = new Error(`Free plan includes GA4 data from the last ${maxDays} days. Upgrade to Pro for full history.`);
+    const err = new Error(
+      `Free plan includes GA4 data from the last ${maxDays} days. Upgrade to Premium for full history.`
+    );
     err.code = "DATE_RANGE_LIMIT";
     err.status = 402;
     err.meta = { maxDays };

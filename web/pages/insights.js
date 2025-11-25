@@ -1,6 +1,6 @@
 // web/pages/insights.js
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getServerSession } from "next-auth/next";
 import { PrismaClient } from "@prisma/client";
 import { authOptions } from "../lib/authOptions";
@@ -36,14 +36,27 @@ export async function getServerSideProps(ctx) {
 }
 
 export default function InsightsPage() {
-  // Correct way to read query string on the client
-  const isSuccess =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("checkout") === "success";
+  // Read query string on the client
+  const [checkoutStatus, setCheckoutStatus] = useState({ success: false, plan: null });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const success = p.get("checkout") === "success";
+    const plan = p.get("plan");
+    setCheckoutStatus({ success, plan });
+  }, []);
 
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const bannerTitle = useMemo(() => {
+    if (!checkoutStatus.success) return null;
+    if (checkoutStatus.plan === "annual") return "You're now on AnalyticsAssistant Premium — Annual.";
+    if (checkoutStatus.plan === "monthly") return "You're now on AnalyticsAssistant Premium — Monthly.";
+    return "You're now on AnalyticsAssistant Premium.";
+  }, [checkoutStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -72,17 +85,27 @@ export default function InsightsPage() {
 
   return (
     <div style={{ padding: 24 }}>
-      {isSuccess && (
+      {bannerTitle && (
         <div
           style={{
-            background: "#e6ffed",
-            border: "1px solid #b7eb8f",
-            padding: 12,
-            marginBottom: 12,
-            borderRadius: 6,
+            margin: "0 auto 16px",
+            maxWidth: 720,
+            borderRadius: 20,
+            border: "1px solid rgba(76,110,245,0.25)",
+            background:
+              "linear-gradient(135deg, rgba(219,234,254,0.95), rgba(240,249,255,0.98))",
+            boxShadow: "0 22px 60px rgba(15,23,42,0.12)",
+            padding: "14px 18px",
           }}
         >
-          Payment successful — Pro unlocked.
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>{bannerTitle}</div>
+            <div style={{ fontSize: 13, color: "#4b5563" }}>
+              We've linked this subscription to the Google account you're signed in with now.
+              If you sign in with a different Google account, Premium won't be available on that
+              account.
+            </div>
+          </div>
         </div>
       )}
 

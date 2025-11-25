@@ -537,3 +537,134 @@
   }
 }
 
+/* Start / upgrade page */
+.aa-start {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f5f5f7 0%, #e8edff 100%);
+}
+
+.aa-start__hero {
+  text-align: center;
+}
+
+.aa-start__plans {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.aa-start__plan-btn {
+  min-width: 220px;
+  border-radius: var(--aa-r-pill);
+  border: 1px solid var(--aa-color-border);
+  background: var(--aa-color-surface);
+  color: var(--aa-color-ink);
+  font-weight: 600;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aa-start__plan-btn[data-variant="primary"] {
+  background: var(--aa-primary);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--aa-cta-shadow);
+}
+
+.aa-start__plan-btn span {
+  font-size: 13px;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.aa-start__note {
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--aa-color-muted);
+}
+
+.aa-start__error {
+  margin-top: 16px;
+  color: var(--aa-color-negative);
+  font-weight: 600;
+}
+
+.aa-alert {
+  margin-top: 14px;
+  border-radius: var(--aa-r-card-tight);
+  border: 1px solid var(--aa-color-border);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 12px 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.aa-alert--danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.aa-alert--ghost {
+  border-color: var(--aa-color-border);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.aa-alert__close {
+  border: none;
+  background: transparent;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+}
+
+.aa-start__grid {
+  margin-top: clamp(32px, 6vw, 56px);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+}
+
+.aa-start-card {
+  border-radius: var(--aa-r-card);
+  border: 1px solid var(--aa-color-border);
+  background: var(--aa-color-surface);
+  padding: 24px;
+  box-shadow: var(--aa-shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aa-start-card h3 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--aa-color-ink);
+}
+
+.aa-start-card p {
+  margin: 0;
+  color: var(--aa-color-muted);
+  font-size: 14px;
+}
+
+.aa-start-card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--aa-color-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.aa-start-card__cta {
+  margin-top: auto;
+  justify-content: center;
+}
+

@@ -32,7 +32,17 @@ _Last updated: 2025-11-17_
 
 ## Operational runbook
 
-- Stripe webhooks (`/api/stripe/webhook`) update `User.premium`, `plan`, `stripeCustomerId`, `stripeSubId`; see `/pages/admin/users` for a lightweight subscriber view and manual search.
+- Stripe webhooks (`/api/stripe/webhook`) update `User.premium`, `plan`, `stripeCustomerId`, `stripeSubId` using explicit app identifiers from Stripe metadata where possible:
+  - Checkout and subscription events carry `metadata.app_user_id` / `metadata.app_email` so we can update `User` rows by `id` first, falling back to email only if needed.
+  - Subscriptions cancelled or moved in Stripe flow back via `customer.subscription.deleted` and friends, which clear `premium` and `plan` in the DB.
+- `/admin/users` (requires an email listed in `ADMIN_EMAILS`) is the primary admin view for checking:
+  - Whether a user is premium, which plan they are on, and which GA4 property they’ve connected.
+  - The `stripeCustomerId` / `stripeSubId` needed to look up the same user in the Stripe dashboard.
+- Typical troubleshooting steps for “I paid but don’t see Premium”:
+  - Ask which Google account they used to sign in to AnalyticsAssistant and which email appears on their Stripe receipt.
+  - In `/admin/users`, search by the Google email; confirm whether `premium` is true and note the `stripeCustomerId`.
+  - In Stripe, search by `stripeCustomerId` or receipt email; confirm there is an active subscription and that `metadata.app_user_id` matches the expected `User.id`.
+  - If the user checked out with the wrong email, either update the Stripe customer email to match their Google login or (if necessary) cancel/refund and have them restart checkout while signed in with the correct Google account.
 - Use `/api/auth/google/status` to verify GA4 tokens, `/api/ga4/debug-session` for bearer inspection, and `/api/dev/*` helpers during SRE rotations.
 - The QA “premium override” flag (`insightgpt_premium_flag_v1` in `localStorage`) is still supported but surfaces a UI warning when active.
 
