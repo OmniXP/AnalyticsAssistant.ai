@@ -325,9 +325,9 @@ function useCsvGuard(setter) {
   );
 }
 function ymd(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 function computePreviousRange(startStr, endStr) {
@@ -891,6 +891,7 @@ export default function Home() {
     setResult(null);
     setPrevResult(null);
     setLoading(true);
+    setPendingScroll(true);
     let startForFetch = startDate;
     let endForFetch = endDate;
 
@@ -962,9 +963,8 @@ export default function Home() {
             'Google session expired or missing. Click "Connect Google Analytics" to re-authorise, then run again.'
         );
       } else {
-      setError(formatErrorMessage(e));
+        setError(formatErrorMessage(e));
       }
-      setPendingScroll(false);
     } finally {
       setLoading(false);
     }
@@ -3717,7 +3717,7 @@ function SavedViews({ premium, startDate, endDate, countrySel, channelSel, compa
     return (
       <FrostCard
         title="Saved Views (Premium)"
-        actions={<Pill color="#6366F1" bg="#EEF2FF" text="Premium required" />}
+        actions={<Pill color="#92400e" bg="#FEF3C7" text="Premium required" />}
       >
         <p style={{ color: COLORS.subtext, margin: 0 }}>
           Saved views are available on Premium. Your existing storage key is preserved ({SAVED_VIEWS_KEY}).
