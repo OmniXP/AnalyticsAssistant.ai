@@ -5,8 +5,20 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 
 const PLAN_OPTIONS = [
-  { plan: "monthly", label: "Go Pro — Monthly", helper: "Cancel anytime" },
-  { plan: "annual", label: "Go Pro — Annual", helper: "Best value (save ~2 months)" },
+  {
+    plan: "annual",
+    label: "Premium Annual",
+    price: "$24/mo",
+    detail: "Billed annually · Best value",
+    primary: true,
+  },
+  {
+    plan: "monthly",
+    label: "Premium Monthly",
+    price: "$29/mo",
+    detail: "Billed monthly · Flexible",
+    primary: false,
+  },
 ];
 
 const ERROR_MESSAGES = {
@@ -14,7 +26,8 @@ const ERROR_MESSAGES = {
     "Google closed the window before finishing sign-in. Please try again and accept the permissions prompt.",
   OAuthCreateAccount:
     "We couldn’t save your Google profile to our database. Clear cookies for localhost or remove AnalyticsAssistant from https://myaccount.google.com/permissions, then try again.",
-  AccessDenied: "Google reported that access was denied. Use the same Google account that owns your GA4 property.",
+  access_denied:
+    "Google reported access was denied. Please accept the requested permissions or try a different Google account.",
 };
 
 function resolveAuthError(code) {
@@ -46,9 +59,17 @@ export default function StartPage({ signedIn, userEmail }) {
   const checkoutParam = router?.query?.checkout;
 
   useEffect(() => {
-    if (!router.isReady) return;
+    if (!router.isReady || signedIn) return;
     setAuthError(resolveAuthError(typeof errorCode === "string" ? errorCode : ""));
-  }, [router.isReady, errorCode]);
+  }, [router.isReady, errorCode, signedIn]);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (!router.query.error) return;
+    const nextQuery = { ...router.query };
+    delete nextQuery.error;
+    router.replace({ pathname: router.pathname, query: nextQuery }, undefined, { shallow: true });
+  }, [router.isReady, router.query, router.pathname, router]);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -61,10 +82,6 @@ export default function StartPage({ signedIn, userEmail }) {
 
   function dismissAuthError() {
     setAuthError("");
-    if (!router.isReady) return;
-    const nextQuery = { ...router.query };
-    delete nextQuery.error;
-    router.replace({ pathname: router.pathname, query: nextQuery }, undefined, { shallow: true });
   }
 
   function handleSignIn() {
@@ -102,7 +119,7 @@ export default function StartPage({ signedIn, userEmail }) {
       <div className="aa-shell">
         <section className="aa-hero aa-start__hero">
           <p className="aa-hero__eyebrow">Upgrade in two quick steps</p>
-          <h1 className="aa-hero__title">
+          <h1 className="aa-hero__title aa-hero__title--tight">
             Unlock Premium GA4 insights with the same Google account you use for Analytics.
           </h1>
           <p className="aa-hero__subtitle">
@@ -123,17 +140,39 @@ export default function StartPage({ signedIn, userEmail }) {
           ) : (
             <>
               <div className="aa-start__plans">
-                {PLAN_OPTIONS.map(({ plan, label, helper }) => (
+                {PLAN_OPTIONS.map(({ plan, label, price, detail, primary }) => (
                   <button
                     key={plan}
                     type="button"
-                    className="aa-button aa-start__plan-btn"
-                    data-variant={plan === "monthly" ? "primary" : "ghost"}
+                    className="aa-plan-card"
+                    data-primary={primary ? "true" : "false"}
                     onClick={() => handleUpgrade(plan)}
                     disabled={loadingPlan !== null && loadingPlan !== plan}
                   >
-                    {loadingPlan === plan ? "Opening Stripe…" : label}
-                    <span>{helper}</span>
+                    <span className="aa-plan-card__label">{primary ? "Best value" : "Flexible"}</span>
+                    <div className="aa-plan-card__price">
+                      {price} <small>/ seat</small>
+                    </div>
+                    <div className="aa-plan-card__title">{label}</div>
+                    <p className="aa-plan-card__detail">{detail}</p>
+                    <div className="aa-plan-card__badge">
+                      <span>
+                        {loadingPlan === plan ? "Opening Stripe…" : "Upgrade now"}
+                      </span>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                        <polyline points="12 5 19 12 12 19" />
+                      </svg>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -147,7 +186,7 @@ export default function StartPage({ signedIn, userEmail }) {
 
           {checkoutError && <p className="aa-start__error">{checkoutError}</p>}
 
-          {authError && (
+          {!signedIn && authError && (
             <div className="aa-alert aa-alert--danger">
               <span>{authError}</span>
               <button type="button" className="aa-alert__close" onClick={dismissAuthError}>
@@ -192,9 +231,9 @@ export default function StartPage({ signedIn, userEmail }) {
           <article className="aa-start-card">
             <h3>Need help with upgrading?</h3>
             <p>
-              Email <a href="mailto:support@analyticsassistant.ai">support@analyticsassistant.ai</a>{" "}
-              and include the Google email you’re signing in with. Admins can also verify premium
-              status via <code>/admin/users</code>.
+              Email <a href="mailto:contact@analyticsassistant.ai">contact@analyticsassistant.ai</a>{" "}
+              and include the Google email you’re signing in with. We will reply to all messages
+              within 24 hours.
             </p>
             <p style={{ color: "var(--aa-color-muted)" }}>
               After a successful checkout you’ll land on Insights with a green confirmation banner.
