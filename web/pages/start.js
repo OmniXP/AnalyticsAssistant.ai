@@ -1,8 +1,10 @@
 // web/pages/start.js
 import Link from "next/link";
-import { signIn, getSession } from "next-auth/react";
+import { signIn } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../lib/authOptions";
 import PlanCard from "../components/PlanCard";
 import { PLAN_OPTIONS } from "../lib/plans";
 import { PREMIUM_PROMISES } from "../lib/copy/premium";
@@ -67,7 +69,7 @@ function resolveAuthError(code) {
 }
 
 export async function getServerSideProps(ctx) {
-  const session = await getSession({ req: ctx.req });
+  const session = await getServerSession(ctx.req, ctx.res, authOptions);
   const callbackParam = Array.isArray(ctx.query?.callbackUrl)
     ? ctx.query.callbackUrl[0]
     : ctx.query?.callbackUrl;

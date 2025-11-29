@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { useState } from "react";
-import { getSession, signIn } from "next-auth/react";
+import { signIn } from "next-auth/react";
 import PlanCard from "../components/PlanCard";
 import { PLAN_OPTIONS } from "../lib/plans";
 import { requestBillingPortalUrl } from "../lib/billing";
 import { PREMIUM_FEATURES, PREMIUM_PROMISES, PREMIUM_WHY } from "../lib/copy/premium";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../lib/authOptions";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
 
@@ -23,7 +25,7 @@ function resolveCallbackUrl(pathname) {
 }
 
 export async function getServerSideProps(ctx) {
-  const session = await getSession({ req: ctx.req });
+  const session = await getServerSession(ctx.req, ctx.res, authOptions);
   return {
     props: {
       signedIn: !!session,
