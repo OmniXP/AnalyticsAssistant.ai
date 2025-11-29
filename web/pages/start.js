@@ -3,23 +3,10 @@ import Link from "next/link";
 import { signIn, getSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
-
-const PLAN_OPTIONS = [
-  {
-    plan: "annual",
-    label: "Premium Annual",
-    price: "$24/mo",
-    detail: "Billed annually · Best value",
-    primary: true,
-  },
-  {
-    plan: "monthly",
-    label: "Premium Monthly",
-    price: "$29/mo",
-    detail: "Billed monthly · Flexible",
-    primary: false,
-  },
-];
+import PlanCard from "../components/PlanCard";
+import { PLAN_OPTIONS } from "../lib/plans";
+import { PREMIUM_PROMISES } from "../lib/copy/premium";
+import { requestBillingPortalUrl } from "../lib/billing";
 
 const ERROR_MESSAGES = {
   Callback:
@@ -54,6 +41,8 @@ export default function StartPage({ signedIn, userEmail }) {
   const [checkoutError, setCheckoutError] = useState("");
   const [authError, setAuthError] = useState("");
   const [checkoutNotice, setCheckoutNotice] = useState("");
+  const [billingError, setBillingError] = useState("");
+  const [billingLoading, setBillingLoading] = useState(false);
 
   const errorCode = router?.query?.error;
   const checkoutParam = router?.query?.checkout;
@@ -62,14 +51,6 @@ export default function StartPage({ signedIn, userEmail }) {
     if (!router.isReady || signedIn) return;
     setAuthError(resolveAuthError(typeof errorCode === "string" ? errorCode : ""));
   }, [router.isReady, errorCode, signedIn]);
-
-  useEffect(() => {
-    if (!router.isReady) return;
-    if (!router.query.error) return;
-    const nextQuery = { ...router.query };
-    delete nextQuery.error;
-    router.replace({ pathname: router.pathname, query: nextQuery }, undefined, { shallow: true });
-  }, [router.isReady, router.query, router.pathname, router]);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -114,6 +95,24 @@ export default function StartPage({ signedIn, userEmail }) {
     }
   }
 
+  async function handleBillingPortal() {
+    if (!signedIn) {
+      handleSignIn();
+      return;
+    }
+
+    try {
+      setBillingError("");
+      setBillingLoading(true);
+      const url = await requestBillingPortalUrl();
+      window.location.href = url;
+    } catch (err) {
+      setBillingError(err.message || "Unable to open the billing portal right now.");
+    } finally {
+      setBillingLoading(false);
+    }
+  }
+
   return (
     <div className="aa-start">
       <div className="aa-shell">
@@ -140,46 +139,20 @@ export default function StartPage({ signedIn, userEmail }) {
           ) : (
             <>
               <div className="aa-start__plans">
-                {PLAN_OPTIONS.map(({ plan, label, price, detail, primary }) => (
-                  <button
-                    key={plan}
-                    type="button"
-                    className="aa-plan-card"
-                    data-primary={primary ? "true" : "false"}
-                    onClick={() => handleUpgrade(plan)}
-                    disabled={loadingPlan !== null && loadingPlan !== plan}
-                  >
-                    <span className="aa-plan-card__label">{primary ? "Best value" : "Flexible"}</span>
-                    <div className="aa-plan-card__price">
-                      {price} <small>/ seat</small>
-                    </div>
-                    <div className="aa-plan-card__title">{label}</div>
-                    <p className="aa-plan-card__detail">{detail}</p>
-                    <div className="aa-plan-card__badge">
-                      <span>
-                        {loadingPlan === plan ? "Opening Stripe…" : "Upgrade now"}
-                      </span>
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                        <polyline points="12 5 19 12 12 19" />
-                      </svg>
-                    </div>
-                  </button>
+                {PLAN_OPTIONS.map((option) => (
+                  <PlanCard
+                    key={option.plan}
+                    option={option}
+                    loadingPlan={loadingPlan}
+                    onSelect={handleUpgrade}
+                    priceSuffix="/ seat"
+                  />
                 ))}
               </div>
               <p className="aa-start__note">
                 We’ll open Stripe in a new tab and link this plan to{" "}
-                <strong>{userEmail || "your Google login"}</strong>. You can manage billing anytime
-                via the “Manage billing” link in-app.
+                <strong>{userEmail || "your Google login"}</strong>. You can manage or cancel anytime
+                via the billing portal.
               </p>
             </>
           )}
@@ -197,10 +170,27 @@ export default function StartPage({ signedIn, userEmail }) {
 
           {checkoutNotice && <div className="aa-alert aa-alert--ghost">{checkoutNotice}</div>}
 
+          <div className="aa-billing-hint">
+            <span>
+              {signedIn
+                ? "Already upgraded? Open your Stripe billing portal in one click."
+                : "Already upgraded? Sign in so we can open your Stripe billing portal."}
+            </span>
+            <button
+              type="button"
+              className="aa-button aa-button--ghost"
+              onClick={handleBillingPortal}
+              disabled={billingLoading}
+            >
+              {billingLoading ? "Opening billing portal…" : "Manage billing"}
+            </button>
+            {billingError && <p className="aa-billing-hint__error">{billingError}</p>}
+          </div>
+
           <div className="aa-feature-callouts">
-            <span>Secure Stripe checkout</span>
-            <span>Premium linked to your Google login</span>
-            <span>Cancel anytime via billing portal</span>
+            {PREMIUM_PROMISES.map((promise) => (
+              <span key={promise}>{promise}</span>
+            ))}
           </div>
         </section>
 

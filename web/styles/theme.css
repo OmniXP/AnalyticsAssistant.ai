@@ -160,6 +160,8 @@
   flex-wrap: wrap;
   color: var(--aa-color-muted);
   font-size: 13px;
+  position: relative;
+  z-index: 1;
 }
 
 .aa-feature-callouts span {
@@ -586,6 +588,12 @@
   max-width: 560px;
   margin-left: auto;
   margin-right: auto;
+  position: relative;
+  z-index: 1;
+}
+
+.aa-premium__plans {
+  max-width: 640px;
 }
 
 .aa-plan-card {
@@ -655,6 +663,12 @@
   color: var(--aa-color-muted);
 }
 
+.aa-plan-card__helper {
+  font-size: 13px;
+  color: var(--aa-primary);
+  font-weight: 600;
+}
+
 .aa-plan-card__badge {
   margin-top: 10px;
   display: inline-flex;
@@ -673,6 +687,24 @@
   margin-top: 14px;
   font-size: 14px;
   color: var(--aa-color-muted);
+  position: relative;
+  z-index: 1;
+}
+
+.aa-billing-hint {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--aa-color-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.aa-billing-hint__error {
+  color: var(--aa-color-negative);
+  font-weight: 600;
 }
 
 .aa-start__error {
