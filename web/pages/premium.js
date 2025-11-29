@@ -6,6 +6,22 @@ import { PLAN_OPTIONS } from "../lib/plans";
 import { requestBillingPortalUrl } from "../lib/billing";
 import { PREMIUM_FEATURES, PREMIUM_PROMISES, PREMIUM_WHY } from "../lib/copy/premium";
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
+
+function resolveCallbackUrl(pathname) {
+  if (typeof window !== "undefined") {
+    return new URL(pathname, window.location.origin).toString();
+  }
+  if (APP_URL) {
+    try {
+      return new URL(pathname, APP_URL).toString();
+    } catch {
+      return pathname;
+    }
+  }
+  return pathname;
+}
+
 export async function getServerSideProps(ctx) {
   const session = await getSession({ req: ctx.req });
   return {
@@ -33,7 +49,8 @@ export default function PremiumPage({ signedIn, userEmail }) {
   const [billingLoading, setBillingLoading] = useState(false);
 
   function handleSignIn() {
-    signIn("google", { callbackUrl: "/premium?upgrade=1" });
+    const callbackUrl = resolveCallbackUrl("/premium");
+    signIn("google", { callbackUrl });
   }
 
   async function handleUpgrade(plan = "monthly") {

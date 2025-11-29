@@ -8,6 +8,47 @@ import { PLAN_OPTIONS } from "../lib/plans";
 import { PREMIUM_PROMISES } from "../lib/copy/premium";
 import { requestBillingPortalUrl } from "../lib/billing";
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
+
+function resolveCallbackUrl(pathname) {
+  if (typeof window !== "undefined") {
+    return new URL(pathname, window.location.origin).toString();
+  }
+  if (APP_URL) {
+    try {
+      return new URL(pathname, APP_URL).toString();
+    } catch {
+      return pathname;
+    }
+  }
+  return pathname;
+}
+
+function getBaseUrl(req) {
+  const proto = req.headers["x-forwarded-proto"] || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${proto}://${host}`;
+}
+
+function getSafeCallbackDestination(callbackParam, req) {
+  if (!callbackParam || !req) return null;
+  const baseUrl = getBaseUrl(req);
+  let decoded = callbackParam;
+  try {
+    decoded = decodeURIComponent(callbackParam);
+  } catch {
+    decoded = callbackParam;
+  }
+  try {
+    const dest = new URL(decoded, baseUrl);
+    const baseOrigin = new URL(baseUrl).origin;
+    if (dest.origin !== baseOrigin) return null;
+    return dest.pathname + dest.search + dest.hash;
+  } catch {
+    return null;
+  }
+}
+
 const ERROR_MESSAGES = {
   Callback:
     "Google closed the window before finishing sign-in. Please try again and accept the permissions prompt.",
@@ -27,6 +68,20 @@ function resolveAuthError(code) {
 
 export async function getServerSideProps(ctx) {
   const session = await getSession({ req: ctx.req });
+  const callbackParam = Array.isArray(ctx.query?.callbackUrl)
+    ? ctx.query.callbackUrl[0]
+    : ctx.query?.callbackUrl;
+  if (session && callbackParam) {
+    const destination = getSafeCallbackDestination(callbackParam, ctx.req);
+    if (destination) {
+      return {
+        redirect: {
+          destination,
+          permanent: false,
+        },
+      };
+    }
+  }
   return {
     props: {
       signedIn: !!session,
@@ -66,7 +121,8 @@ export default function StartPage({ signedIn, userEmail }) {
   }
 
   function handleSignIn() {
-    signIn("google", { callbackUrl: "/start?upgrade=1" });
+    const callbackUrl = resolveCallbackUrl("/start?upgrade=1");
+    signIn("google", { callbackUrl });
   }
 
   async function handleUpgrade(plan) {
