@@ -1338,29 +1338,64 @@ export default function Home() {
       <div
         style={{
           marginTop: 32,
-          padding: 24,
-          borderRadius: 28,
-          border: `1px solid ${COLORS.frostEdge}`,
-          background: "var(--aa-color-surface)",
-          boxShadow: "var(--aa-shadow-card)",
+          padding: premium ? 24 : 28,
+          borderRadius: premium ? 28 : 32,
+          border: premium ? `1px solid ${COLORS.frostEdge}` : "1px solid rgba(79, 70, 229, 0.35)",
+          background: premium
+            ? "var(--aa-color-surface)"
+            : "linear-gradient(135deg, rgba(238,242,255,0.95), rgba(255,255,255,0.98))",
+          boxShadow: premium ? "var(--aa-shadow-card)" : "0 25px 60px rgba(79,70,229,0.16)",
         }}
       >
         <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span role="img" aria-label="status sparkle">
+            ✨
+          </span>
           <span>Plan status</span>
           <span className="aa-badge">
             {premium ? `Premium${account.plan ? ` (${account.plan})` : ""}` : "Free"}
           </span>
         </div>
-        <p style={{ margin: "10px 0 0", color: COLORS.subtext, fontSize: 14, lineHeight: 1.6 }}>
-          {premium
-            ? `Pro unlocks effectively unlimited GA4 reports (fair use), ${PREMIUM_USAGE_LIMITS.ai.toLocaleString()} AI summaries/month, up to ${PRO_PROPERTY_LIMIT} GA4 properties, full historical lookback + comparisons, exports, scheduled Slack/email digests, saved questions/templates, advanced AI deep dives, and priority support.`
-            : `Free includes ${FREE_USAGE_LIMITS.ga4} GA4 reports/month, ${FREE_USAGE_LIMITS.ai} AI summaries/month, ${FREE_PROPERTY_LIMIT} GA4 property, and the last ${FREE_DATE_WINDOW_DAYS} days of data. Upgrade to unlock multiple properties, full history, exports, schedules, saved questions, multi-property comparisons, and advanced AI.`}{" "}
-          {!premium && (
-            <a href={PREMIUM_LANDING_PATH} style={{ color: COLORS.googleBlue, fontWeight: 600 }}>
-              Upgrade →
+        {premium ? (
+          <p style={{ margin: "10px 0 0", color: COLORS.subtext, fontSize: 14, lineHeight: 1.6 }}>
+            Pro unlocks effectively unlimited GA4 reports (fair use), {PREMIUM_USAGE_LIMITS.ai.toLocaleString()} AI summaries/month,
+            up to {PRO_PROPERTY_LIMIT} GA4 properties, full historical lookback + comparisons, exports, scheduled Slack/email
+            digests, saved questions/templates, advanced AI deep dives, and priority support.
+          </p>
+        ) : (
+          <>
+            <p style={{ margin: "14px 0 8px", color: COLORS.subtext, fontSize: 14, lineHeight: 1.6 }}>
+              Free includes {FREE_USAGE_LIMITS.ga4} GA4 reports/month, {FREE_USAGE_LIMITS.ai} AI summaries/month,{" "}
+              {FREE_PROPERTY_LIMIT} GA4 property, and the last {FREE_DATE_WINDOW_DAYS} days of data. Upgrade to unlock:
+            </p>
+            <ul style={{ margin: "0 0 14px 18px", color: COLORS.subtext, fontSize: 14, lineHeight: 1.5 }}>
+              <li>Full GA4 history with comparisons</li>
+              <li>Multiple properties + saved views</li>
+              <li>AI PRO summaries, exports, and digests</li>
+            </ul>
+            <a
+              href={PREMIUM_LANDING_PATH}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                padding: "12px 22px",
+                borderRadius: 999,
+                fontWeight: 600,
+                color: "#fff",
+                background: COLORS.googleBlue,
+                boxShadow: "var(--aa-cta-shadow)",
+                textDecoration: "none",
+              }}
+            >
+              Upgrade to Premium
             </a>
-          )}
-        </p>
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: COLORS.subtext }}>
+              Cancel anytime via the Stripe billing portal.
+            </p>
+          </>
+        )}
         {qaPremiumOverride && (
           <p style={{ margin: "6px 0 0", color: COLORS.subtext, fontSize: 12 }}>
             QA override is active locally via <code>{PREMIUM_FLAG_KEY}</code> in localStorage.
