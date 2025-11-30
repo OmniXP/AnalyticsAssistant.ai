@@ -37,6 +37,14 @@ export async function getServerSideProps(ctx) {
 const PRICE_ENV_HINT =
   "Missing Stripe price IDs. Set STRIPE_PRICE_ID_MONTHLY and STRIPE_PRICE_ID_ANNUAL in web/.env.local (use your price_xxx IDs from Stripe).";
 
+const PAYMENT_BRANDS = [
+  { name: "Visa", icon: "/payments/visa.svg" },
+  { name: "Mastercard", icon: "/payments/mastercard.svg" },
+  { name: "Amex", icon: "/payments/amex.svg" },
+  { name: "Apple Pay", icon: "/payments/applepay.svg" },
+  { name: "Google Pay", icon: "/payments/googlepay.svg" },
+];
+
 function formatCheckoutError(message = "") {
   if (/invalid or missing price/i.test(message)) {
     return `${message}. ${PRICE_ENV_HINT}`;
@@ -130,6 +138,21 @@ export default function PremiumPage({ signedIn, userEmail }) {
                 ctaLabel={signedIn ? "Upgrade now" : "Continue with Google"}
               />
             ))}
+          </div>
+          <div className="aa-payment-options">
+            <p className="aa-payment-options__title">Pay securely via Stripe — no surprise fees.</p>
+            <div className="aa-payment-icons">
+              {PAYMENT_BRANDS.map(({ name, icon }) => (
+                <div key={name} className="aa-payment-pill">
+                  {icon && <img src={icon} alt={`${name} logo`} loading="lazy" />}
+                  <span>{name}</span>
+                </div>
+              ))}
+            </div>
+            <p className="aa-payment-options__note">
+              Stripe is PCI Level 1 compliant. We never see or store your card details, and you can cancel anytime in the
+              billing portal.
+            </p>
           </div>
           <p className="aa-start__note">
             Premium Annual is <strong>$24/mo</strong> (billed annually) and saves roughly 17% compared to Premium Monthly
