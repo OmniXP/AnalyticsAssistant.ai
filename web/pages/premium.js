@@ -143,9 +143,8 @@ export default function PremiumPage({ signedIn, userEmail }) {
             <p className="aa-payment-options__title">Pay securely via Stripe — no surprise fees.</p>
             <div className="aa-payment-icons">
               {PAYMENT_BRANDS.map(({ name, icon }) => (
-                <div key={name} className="aa-payment-pill">
+                <div key={name} className="aa-payment-pill" aria-label={name}>
                   {icon && <img src={icon} alt={`${name} logo`} loading="lazy" />}
-                  <span>{name}</span>
                 </div>
               ))}
             </div>
