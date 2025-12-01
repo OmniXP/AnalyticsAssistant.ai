@@ -1771,14 +1771,6 @@ export default function Home() {
         </details>
       ) : null}
 
-        {/* Footer */}
-        <footer className="aa-footer">
-          <span>Read-only, Google-verified connection to your GA4 data.</span>
-          <span className="aa-footer__divider">•</span>
-          <a href="/privacy">Privacy Policy</a>
-          <span className="aa-footer__divider">•</span>
-          <a href="/terms">Terms of Service</a>
-        </footer>
       </main>
     </>
   );

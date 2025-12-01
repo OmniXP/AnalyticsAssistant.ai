@@ -18,10 +18,14 @@ export default function Footer() {
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
-          gap: 24,
+          gap: 16,
           flexWrap: "wrap",
         }}
       >
+        <span style={{ color: "#6b7280", fontSize: 14 }}>
+          Read-only, Google-verified connection to your GA4 data.
+        </span>
+        <span style={{ color: "#9ca3af", fontSize: 14 }}>•</span>
         <Link
           href="/premium"
           style={{
@@ -34,29 +38,27 @@ export default function Footer() {
           Premium
         </Link>
         <span style={{ color: "#9ca3af", fontSize: 14 }}>•</span>
-        <a
-          href="https://www.analyticsassistant.ai"
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link
+          href="/privacy"
           style={{
             color: "#6b7280",
             textDecoration: "none",
             fontSize: 14,
           }}
         >
-          About
-        </a>
+          Privacy Policy
+        </Link>
         <span style={{ color: "#9ca3af", fontSize: 14 }}>•</span>
-        <a
-          href="mailto:contact@analyticsassistant.ai"
+        <Link
+          href="/terms"
           style={{
             color: "#6b7280",
             textDecoration: "none",
             fontSize: 14,
           }}
         >
-          Contact
-        </a>
+          Terms of Service
+        </Link>
       </div>
     </footer>
   );
