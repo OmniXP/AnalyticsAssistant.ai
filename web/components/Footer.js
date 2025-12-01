@@ -38,6 +38,19 @@ export default function Footer() {
           Premium
         </Link>
         <span style={{ color: "#9ca3af", fontSize: 14 }}>•</span>
+        <a
+          href="https://www.analyticsassistant.ai"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: "#6b7280",
+            textDecoration: "none",
+            fontSize: 14,
+          }}
+        >
+          About
+        </a>
+        <span style={{ color: "#9ca3af", fontSize: 14 }}>•</span>
         <Link
           href="/privacy"
           style={{
