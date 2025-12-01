@@ -2,6 +2,7 @@
 import "../styles/globals.css";
 import "../styles/theme.css";
 import React from "react";
+import Footer from "../components/Footer";
 
 function ErrorFallback({ error, reset }) {
   return (
@@ -49,7 +50,10 @@ class AppErrorBoundary extends React.Component {
 export default function MyApp({ Component, pageProps }) {
   return (
     <AppErrorBoundary>
-      <Component {...pageProps} />
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+        <Component {...pageProps} />
+        <Footer />
+      </div>
     </AppErrorBoundary>
   );
 }

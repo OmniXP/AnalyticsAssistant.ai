@@ -2,6 +2,7 @@
 // pages/index.js
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import { trackEvent } from "../lib/analytics";
 
 /**
  * ============================================================================
@@ -764,6 +765,7 @@ export default function Home() {
 
   // Refs
   const topAnchorRef = useRef(null);
+  const gaConnectTrackedRef = useRef(false);
 
   /* ------------------------ Init from URL + preset ------------------------ */
   useEffect(() => {
@@ -807,6 +809,13 @@ export default function Home() {
       );
     } catch {}
   }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
+
+  useEffect(() => {
+    if (gaSessionConnected && !gaConnectTrackedRef.current) {
+      trackEvent("ga_connect_completed", { source: "dashboard" });
+      gaConnectTrackedRef.current = true;
+    }
+  }, [gaSessionConnected]);
 
   useEffect(() => {
     setHasProperty(!!(propertyId && String(propertyId).trim()));
@@ -875,6 +884,7 @@ export default function Home() {
   }, []);
 
   const connect = () => {
+    trackEvent("ga_connect_started", { source: "dashboard" });
     window.location.href = "/api/auth/google/start";
   };
   const applyFilters = () => {
@@ -886,6 +896,12 @@ export default function Home() {
   }
 
   const runReport = async () => {
+    trackEvent("report_run", {
+      has_ga4_connected: gaSessionConnected ? "true" : "false",
+      date_range: datePreset,
+      property_selected: propertyId ? "true" : "false",
+      compare_previous: comparePrev ? "true" : "false",
+    });
     setError("");
     setGaSessionConnected(true); // optimistic until backend says otherwise
     setResult(null);
@@ -1388,6 +1404,13 @@ export default function Home() {
                 boxShadow: "var(--aa-cta-shadow)",
                 textDecoration: "none",
               }}
+              onClick={() =>
+                trackEvent("upgrade_cta_clicked", {
+                  entry_point: "dashboard_plan_status",
+                  plan_type: "n/a",
+                  signed_in: premium ? "true" : "false",
+                })
+              }
             >
               Upgrade to Premium
             </a>
@@ -1833,6 +1856,10 @@ function AiBlock({
     setError("");
     setText("");
     setCopied(false);
+    trackEvent("ai_summary_requested", {
+      endpoint,
+      premium: premium ? "true" : "false",
+    });
     try {
       const requestPayload = payload ? { ...payload } : {};
       if (premium && qualNotes.trim()) {

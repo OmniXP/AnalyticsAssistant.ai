@@ -1,7 +1,7 @@
 // web/pages/start.js
 import Link from "next/link";
 import { signIn } from "next-auth/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../lib/authOptions";
@@ -9,6 +9,7 @@ import PlanCard from "../components/PlanCard";
 import { PLAN_OPTIONS } from "../lib/plans";
 import { PREMIUM_PROMISES } from "../lib/copy/premium";
 import { requestBillingPortalUrl } from "../lib/billing";
+import { trackEvent } from "../lib/analytics";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
 
@@ -100,6 +101,7 @@ export default function StartPage({ signedIn, userEmail }) {
   const [checkoutNotice, setCheckoutNotice] = useState("");
   const [billingError, setBillingError] = useState("");
   const [billingLoading, setBillingLoading] = useState(false);
+  const signupTrackedRef = useRef(false);
 
   const errorCode = router?.query?.error;
   const checkoutParam = router?.query?.checkout;
@@ -118,16 +120,29 @@ export default function StartPage({ signedIn, userEmail }) {
     }
   }, [router.isReady, checkoutParam]);
 
+  useEffect(() => {
+    if (signedIn && !signupTrackedRef.current) {
+      trackEvent("signup_completed", { entry_point: "start_page" });
+      signupTrackedRef.current = true;
+    }
+  }, [signedIn]);
+
   function dismissAuthError() {
     setAuthError("");
   }
 
   function handleSignIn() {
     const callbackUrl = resolveCallbackUrl("/start?upgrade=1");
+    trackEvent("signup_started", { entry_point: "start_page" });
     signIn("google", { callbackUrl });
   }
 
   async function handleUpgrade(plan) {
+    trackEvent("upgrade_cta_clicked", {
+      plan_type: plan,
+      entry_point: "start_plan_cards",
+      signed_in: signedIn ? "true" : "false",
+    });
     if (!signedIn) {
       handleSignIn();
       return;

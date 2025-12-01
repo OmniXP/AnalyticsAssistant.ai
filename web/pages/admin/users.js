@@ -3,16 +3,33 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../lib/authOptions";
 import { PrismaClient } from "@prisma/client";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
 const prisma = new PrismaClient();
+
+function parseAdminEmails() {
+  return (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
 
 export async function getServerSideProps(ctx) {
   const session = await getServerSession(ctx.req, ctx.res, authOptions);
   if (!session) return { redirect: { destination: "/start", permanent: false } };
 
-  const adminEmails = (process.env.ADMIN_EMAILS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  if (!adminEmails.includes(session.user.email.toLowerCase())) {
-    return { redirect: { destination: "/start", permanent: false } };
+  const adminEmails = parseAdminEmails();
+  const email = session.user?.email?.toLowerCase?.() || "";
+  const isAdmin = adminEmails.includes(email);
+
+  if (!isAdmin) {
+    return {
+      props: {
+        unauthorized: true,
+        configuredAdmins: adminEmails,
+        sessionEmail: session.user?.email || null,
+      },
+    };
   }
 
   const users = await prisma.user.findMany({
@@ -30,10 +47,10 @@ export async function getServerSideProps(ctx) {
     },
   });
 
-  return { props: { users: JSON.parse(JSON.stringify(users)) } };
+  return { props: { users: JSON.parse(JSON.stringify(users)), unauthorized: false } };
 }
 
-export default function AdminUsers({ users }) {
+export default function AdminUsers({ users = [], unauthorized = false, configuredAdmins = [], sessionEmail = null }) {
   const [query, setQuery] = useState("");
   const normalized = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -47,6 +64,37 @@ export default function AdminUsers({ users }) {
       return fields.some((value) => value.includes(normalized));
     });
   }, [normalized, users]);
+
+  if (unauthorized) {
+    return (
+      <main style={{ maxWidth: 720, margin: "48px auto", padding: 16 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 12 }}>Admin access required</h1>
+        <p style={{ color: "#4b5563", lineHeight: 1.5 }}>
+          You&apos;re signed in as <strong>{sessionEmail || "unknown user"}</strong>, but this page is limited to admin
+          accounts only.
+        </p>
+        <p style={{ color: "#4b5563", lineHeight: 1.5 }}>
+          To enable access, set the <code>ADMIN_EMAILS</code> environment variable (comma-separated list) in Vercel →
+          Project Settings → Environment Variables, then redeploy. Include the exact Google account email you sign in with.
+        </p>
+        <div style={{ margin: "16px 0", padding: 12, borderRadius: 12, background: "#f1f5f9", color: "#475569" }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Currently configured admins</div>
+          {configuredAdmins.length === 0 ? (
+            <div>No admin emails configured yet.</div>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {configuredAdmins.map((email) => (
+                <li key={email}>{email}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <Link href="/" style={{ color: "#2563EB", fontWeight: 600 }}>
+          ← Back to dashboard
+        </Link>
+      </main>
+    );
+  }
 
   return (
     <main style={{ maxWidth: 920, margin: "48px auto", padding: 16 }}>

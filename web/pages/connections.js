@@ -1,6 +1,7 @@
 // web/pages/connections.js
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../lib/authOptions";
+import { trackEvent } from "../lib/analytics";
 
 export async function getServerSideProps(ctx) {
   const session = await getServerSession(ctx.req, ctx.res, authOptions);
@@ -10,6 +11,7 @@ export async function getServerSideProps(ctx) {
 
 export default function Connections() {
   async function connectGA4() {
+    trackEvent("ga_connect_started", { source: "connections_page" });
     window.location.href = "/api/auth/google/start";
   }
 
@@ -40,6 +42,7 @@ export default function Connections() {
       }),
     });
     if (!r.ok) return alert("Failed to save selection");
+    trackEvent("ga_connect_completed", { source: "connections_page", property_selected: chosen?.property || "" });
     alert("Saved. You can now view insights.");
   }
 

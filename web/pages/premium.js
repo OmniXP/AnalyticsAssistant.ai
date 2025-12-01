@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import PlanCard from "../components/PlanCard";
 import { PLAN_OPTIONS } from "../lib/plans";
@@ -7,6 +7,7 @@ import { requestBillingPortalUrl } from "../lib/billing";
 import { PREMIUM_FEATURES, PREMIUM_PROMISES, PREMIUM_WHY } from "../lib/copy/premium";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../lib/authOptions";
+import { trackEvent } from "../lib/analytics";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
 
@@ -57,13 +58,20 @@ export default function PremiumPage({ signedIn, userEmail }) {
   const [error, setError] = useState("");
   const [billingError, setBillingError] = useState("");
   const [billingLoading, setBillingLoading] = useState(false);
+  const premiumViewTracked = useRef(false);
 
   function handleSignIn() {
     const callbackUrl = resolveCallbackUrl("/premium");
+    trackEvent("signup_started", { entry_point: "premium_page" });
     signIn("google", { callbackUrl });
   }
 
   async function handleUpgrade(plan = "monthly") {
+    trackEvent("upgrade_cta_clicked", {
+      entry_point: "premium_page",
+      plan_type: plan,
+      signed_in: signedIn ? "true" : "false",
+    });
     if (!signedIn) {
       handleSignIn();
       return;
@@ -86,6 +94,12 @@ export default function PremiumPage({ signedIn, userEmail }) {
       setLoadingPlan(null);
     }
   }
+
+  useEffect(() => {
+    if (premiumViewTracked.current) return;
+    premiumViewTracked.current = true;
+    trackEvent("premium_page_viewed", { signed_in: signedIn ? "true" : "false" });
+  }, [signedIn]);
 
   async function handleBillingPortal() {
     if (!signedIn) {
