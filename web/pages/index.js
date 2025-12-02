@@ -794,7 +794,13 @@ export default function Home() {
       if (saved?.propertyId) setPropertyId(saved.propertyId);
       if (saved?.startDate) setStartDate(saved.startDate);
       if (saved?.endDate) setEndDate(saved.endDate);
-      if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
+      if (saved?.appliedFilters) {
+        setAppliedFilters({
+          country: saved.appliedFilters.country || "All",
+          channelGroup: saved.appliedFilters.channelGroup || "All",
+          deviceType: saved.appliedFilters.deviceType || "Both",
+        });
+      }
       if (saved?.countrySel) setCountrySel(saved.countrySel);
       if (saved?.channelSel) setChannelSel(saved.channelSel);
       if (saved?.deviceTypeSel) setDeviceTypeSel(saved.deviceTypeSel);
@@ -1315,15 +1321,21 @@ export default function Home() {
           </div>
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Button onClick={applyFilters} title="Apply filters">Apply filters</Button>
-            {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All" || appliedFilters.deviceType !== "Both") && (
+            <Button 
+              onClick={applyFilters} 
+              title="Apply filters"
+              style={{ padding: "8px 16px", fontSize: 13 }}
+            >
+              Apply filters
+            </Button>
+            {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All" || (appliedFilters.deviceType && appliedFilters.deviceType !== "Both")) && (
               <Pill
                 color={COLORS.googleGreen}
                 bg="#E6F4EA"
                 text={`Filters: ${[
                   appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : "",
                   appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : "",
-                  appliedFilters.deviceType !== "Both" ? `Device=${appliedFilters.deviceType}` : "",
+                  appliedFilters.deviceType && appliedFilters.deviceType !== "Both" ? `Device=${appliedFilters.deviceType}` : "",
                 ]
                   .filter(Boolean)
                   .join(" · ")}`}
