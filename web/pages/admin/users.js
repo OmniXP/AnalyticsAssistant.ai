@@ -26,7 +26,6 @@ export async function getServerSideProps(ctx) {
     return {
       props: {
         unauthorized: true,
-        configuredAdmins: adminEmails,
         sessionEmail: session.user?.email || null,
       },
     };
@@ -50,7 +49,7 @@ export async function getServerSideProps(ctx) {
   return { props: { users: JSON.parse(JSON.stringify(users)), unauthorized: false } };
 }
 
-export default function AdminUsers({ users = [], unauthorized = false, configuredAdmins = [], sessionEmail = null }) {
+export default function AdminUsers({ users = [], unauthorized = false, sessionEmail = null }) {
   const [query, setQuery] = useState("");
   const normalized = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -77,18 +76,9 @@ export default function AdminUsers({ users = [], unauthorized = false, configure
           To enable access, set the <code>ADMIN_EMAILS</code> environment variable (comma-separated list) in Vercel →
           Project Settings → Environment Variables, then redeploy. Include the exact Google account email you sign in with.
         </p>
-        <div style={{ margin: "16px 0", padding: 12, borderRadius: 12, background: "#f1f5f9", color: "#475569" }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>Currently configured admins</div>
-          {configuredAdmins.length === 0 ? (
-            <div>No admin emails configured yet.</div>
-          ) : (
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
-              {configuredAdmins.map((email) => (
-                <li key={email}>{email}</li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <p style={{ color: "#6b7280", fontSize: 14, marginTop: 16, fontStyle: "italic" }}>
+          If you believe you should have access, contact your system administrator.
+        </p>
         <Link href="/" style={{ color: "#2563EB", fontWeight: 600 }}>
           ← Back to dashboard
         </Link>
