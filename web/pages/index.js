@@ -232,6 +232,9 @@ function encodeQuery(state) {
   if (state.appliedFilters?.channelGroup && state.appliedFilters.channelGroup !== "All") {
     p.set("channel", state.appliedFilters.channelGroup);
   }
+  if (state.appliedFilters?.deviceType && state.appliedFilters.deviceType !== "Both") {
+    p.set("deviceType", state.appliedFilters.deviceType);
+  }
   if (state.comparePrev) p.set("compare", "1");
   return p.toString();
 }
@@ -244,6 +247,7 @@ function decodeQuery() {
     endDate: q.end || null,
     country: q.country || "All",
     channelGroup: q.channel || "All",
+    deviceType: q.deviceType || "Both",
     comparePrev: q.compare === "1",
   };
 }
@@ -739,7 +743,8 @@ export default function Home() {
   // Filters
   const [countrySel, setCountrySel] = useState("All");
   const [channelSel, setChannelSel] = useState("All");
-  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All" });
+  const [deviceTypeSel, setDeviceTypeSel] = useState("Both");
+  const [appliedFilters, setAppliedFilters] = useState({ country: "All", channelGroup: "All", deviceType: "Both" });
 
   // Global signals
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -777,7 +782,8 @@ export default function Home() {
       if (q.endDate) setEndDate(q.endDate);
       setCountrySel(q.country || "All");
       setChannelSel(q.channelGroup || "All");
-      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All" });
+      setDeviceTypeSel(q.deviceType || "Both");
+      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All", deviceType: q.deviceType || "Both" });
       setComparePrev(!!q.comparePrev);
     } catch {}
   }, []);
@@ -791,6 +797,7 @@ export default function Home() {
       if (saved?.appliedFilters) setAppliedFilters(saved.appliedFilters);
       if (saved?.countrySel) setCountrySel(saved.countrySel);
       if (saved?.channelSel) setChannelSel(saved.channelSel);
+      if (saved?.deviceTypeSel) setDeviceTypeSel(saved.deviceTypeSel);
     } catch {}
   }, []);
 
@@ -805,10 +812,11 @@ export default function Home() {
           appliedFilters,
           countrySel,
           channelSel,
+          deviceTypeSel,
         })
       );
     } catch {}
-  }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel]);
+  }, [propertyId, startDate, endDate, appliedFilters, countrySel, channelSel, deviceTypeSel]);
 
   useEffect(() => {
     if (gaSessionConnected && !gaConnectTrackedRef.current) {
@@ -888,11 +896,16 @@ export default function Home() {
     window.location.href = "/api/auth/google/start";
   };
   const applyFilters = () => {
-    setAppliedFilters({ country: countrySel, channelGroup: channelSel });
+    setAppliedFilters({ country: countrySel, channelGroup: channelSel, deviceType: deviceTypeSel });
   };
 
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
-    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters });
+    // Ensure filters always has deviceType
+    const safeFilters = {
+      ...filters,
+      deviceType: filters?.deviceType || "Both",
+    };
+    return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters: safeFilters });
   }
 
   const runReport = async () => {
@@ -996,7 +1009,8 @@ export default function Home() {
     setPresetNotice("");
     setCountrySel("All");
     setChannelSel("All");
-    setAppliedFilters({ country: "All", channelGroup: "All" });
+    setDeviceTypeSel("Both");
+    setAppliedFilters({ country: "All", channelGroup: "All", deviceType: "Both" });
     setComparePrev(false);
     setResult(null);
     setPrevResult(null);
@@ -1284,13 +1298,35 @@ export default function Home() {
             </select>
           </div>
 
+          <div>
+            <label htmlFor="device-filter" style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
+              Device Type
+            </label>
+            <select
+              id="device-filter"
+              value={deviceTypeSel}
+              onChange={(e) => setDeviceTypeSel(e.target.value)}
+              style={controlFieldStyle}
+            >
+              <option value="Both">Both</option>
+              <option value="Desktop">Desktop</option>
+              <option value="Mobile">Mobile</option>
+            </select>
+          </div>
+
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <Button onClick={applyFilters} title="Apply filters">Apply filters</Button>
-            {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All") && (
+            {(appliedFilters.country !== "All" || appliedFilters.channelGroup !== "All" || appliedFilters.deviceType !== "Both") && (
               <Pill
                 color={COLORS.googleGreen}
                 bg="#E6F4EA"
-                text={`Filters: ${appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : ""}${appliedFilters.country !== "All" && appliedFilters.channelGroup !== "All" ? " · " : ""}${appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : ""}`}
+                text={`Filters: ${[
+                  appliedFilters.country !== "All" ? `Country=${appliedFilters.country}` : "",
+                  appliedFilters.channelGroup !== "All" ? `Channel=${appliedFilters.channelGroup}` : "",
+                  appliedFilters.deviceType !== "Both" ? `Device=${appliedFilters.deviceType}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}`}
                 title="Active filters"
               />
             )}
@@ -1434,16 +1470,19 @@ export default function Home() {
           endDate={endDate}
           countrySel={countrySel}
           channelSel={channelSel}
+          deviceTypeSel={deviceTypeSel}
           comparePrev={comparePrev}
           onApply={(view) => {
             setStartDate(view.startDate);
             setEndDate(view.endDate);
             setCountrySel(view.country || "All");
             setChannelSel(view.channelGroup || "All");
+            setDeviceTypeSel(view.deviceType || "Both");
             setComparePrev(!!view.comparePrev);
             setAppliedFilters({
               country: view.country || "All",
               channelGroup: view.channelGroup || "All",
+              deviceType: view.deviceType || "Both",
             });
           }}
           onRunReport={runReport}
@@ -3648,7 +3687,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal, premiu
 }
 
 /* ============================== Saved Views (Premium) ============================== */
-function SavedViews({ premium, startDate, endDate, countrySel, channelSel, comparePrev, onApply, onRunReport, onNotice }) {
+function SavedViews({ premium, startDate, endDate, countrySel, channelSel, deviceTypeSel, comparePrev, onApply, onRunReport, onNotice }) {
   const [presets, setPresets] = useState([]);
   const [name, setName] = useState("");
 
@@ -3682,6 +3721,7 @@ function SavedViews({ premium, startDate, endDate, countrySel, channelSel, compa
         endDate,
         country: countrySel,
         channelGroup: channelSel,
+        deviceType: deviceTypeSel,
         comparePrev: !!comparePrev,
         savedAt: new Date().toISOString(),
       },
@@ -3698,6 +3738,7 @@ function SavedViews({ premium, startDate, endDate, countrySel, channelSel, compa
       endDate: p.endDate,
       country: p.country,
       channelGroup: p.channelGroup,
+      deviceType: p.deviceType || "Both",
       comparePrev: !!p.comparePrev,
     });
     if (run) onRunReport();
@@ -3748,7 +3789,7 @@ function SavedViews({ premium, startDate, endDate, countrySel, channelSel, compa
               <div style={{ minWidth: 280 }}>
                 <b>{p.name}</b>{" "}
                 <span style={{ color: "#666", fontSize: 12 }}>
-                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup} {p.comparePrev ? "· compare" : ""}
+                  {p.startDate} → {p.endDate} · {p.country} · {p.channelGroup} {p.deviceType && p.deviceType !== "Both" ? ` · ${p.deviceType}` : ""} {p.comparePrev ? "· compare" : ""}
                 </span>
               </div>
               <Button onClick={() => apply(p, false)}>Apply</Button>

@@ -52,6 +52,11 @@ function buildDimensionFilter(filters) {
   if (channel && channel !== "All") {
     andGroup.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: channel, caseSensitive: false } } });
   }
+  const deviceType = (filters?.deviceType || "").trim();
+  if (deviceType && deviceType !== "Both") {
+    const deviceValue = deviceType === "Mobile" ? "mobile" : deviceType === "Desktop" ? "desktop" : deviceType.toLowerCase();
+    andGroup.push({ filter: { fieldName: "deviceCategory", stringFilter: { matchType: "EXACT", value: deviceValue, caseSensitive: false } } });
+  }
   if (!andGroup.length) return null;
   return { andGroup };
 }

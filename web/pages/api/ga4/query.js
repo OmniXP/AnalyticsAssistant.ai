@@ -54,14 +54,20 @@ async function handler(req, res) {
 export default withUsageGuard("ga4", handler);
 
 function buildDimensionFilter(filters) {
+  if (!filters || typeof filters !== "object") return null;
   const andGroup = [];
-  const country = (filters?.country || "").trim();
+  const country = String(filters?.country || "").trim();
   if (country && country !== "All") {
     andGroup.push({ filter: { fieldName: "country", stringFilter: { matchType: "EXACT", value: country, caseSensitive: false } } });
   }
-  const channel = (filters?.channelGroup || "").trim();
+  const channel = String(filters?.channelGroup || "").trim();
   if (channel && channel !== "All") {
     andGroup.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: channel, caseSensitive: false } } });
+  }
+  const deviceType = String(filters?.deviceType || "Both").trim();
+  if (deviceType && deviceType !== "Both") {
+    const deviceValue = deviceType === "Mobile" ? "mobile" : deviceType === "Desktop" ? "desktop" : deviceType.toLowerCase();
+    andGroup.push({ filter: { fieldName: "deviceCategory", stringFilter: { matchType: "EXACT", value: deviceValue, caseSensitive: false } } });
   }
   if (!andGroup.length) return null;
   return { andGroup };
