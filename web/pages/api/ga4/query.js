@@ -64,8 +64,8 @@ function buildDimensionFilter(filters) {
   if (channel && channel !== "All") {
     expressions.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: channel, caseSensitive: false } } });
   }
-  const deviceType = String(filters?.deviceType || "Both").trim();
-  if (deviceType && deviceType !== "Both") {
+  const deviceType = String(filters?.deviceType || "All").trim();
+  if (deviceType && deviceType !== "All") {
     const deviceValue = deviceType === "Mobile" ? "mobile" : deviceType === "Desktop" ? "desktop" : deviceType.toLowerCase();
     expressions.push({ filter: { fieldName: "deviceCategory", stringFilter: { matchType: "EXACT", value: deviceValue, caseSensitive: false } } });
   }

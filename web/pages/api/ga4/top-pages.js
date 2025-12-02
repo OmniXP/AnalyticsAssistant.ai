@@ -53,7 +53,7 @@ function buildDimensionFilter(filters) {
     expressions.push({ filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT", value: channel, caseSensitive: false } } });
   }
   const deviceType = (filters?.deviceType || "").trim();
-  if (deviceType && deviceType !== "Both") {
+  if (deviceType && deviceType !== "All") {
     const deviceValue = deviceType === "Mobile" ? "mobile" : deviceType === "Desktop" ? "desktop" : deviceType.toLowerCase();
     expressions.push({ filter: { fieldName: "deviceCategory", stringFilter: { matchType: "EXACT", value: deviceValue, caseSensitive: false } } });
   }
