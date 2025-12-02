@@ -833,6 +833,17 @@
   font-size: 13px;
 }
 
+.aa-apply-filters-btn {
+  align-self: flex-end;
+}
+
+@media (max-width: 768px) {
+  .aa-apply-filters-btn {
+    padding: 12px 20px !important;
+    font-size: 14px !important;
+  }
+}
+
 .aa-start-card__cta {
   margin-top: auto;
   justify-content: center;

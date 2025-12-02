@@ -1320,10 +1320,11 @@ export default function Home() {
             </select>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", alignSelf: "flex-end" }}>
             <Button 
               onClick={applyFilters} 
               title="Apply filters"
+              className="aa-apply-filters-btn"
               style={{ padding: "8px 16px", fontSize: 13 }}
             >
               Apply filters
