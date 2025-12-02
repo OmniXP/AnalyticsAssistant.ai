@@ -31,6 +31,7 @@ Write:
 Return plain text only.
 `.trim();
 
+    const model = "gpt-4o-mini";
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -38,7 +39,7 @@ Return plain text only.
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model,
         messages: [
           { role: "system", content: "You turn GA4 data into concise, actionable insights." },
           { role: "user", content: prompt },
@@ -51,6 +52,14 @@ Return plain text only.
     if (!response.ok) {
       const message = data?.error?.message || data?.message || "OpenAI error";
       return res.status(response.status).json({ error: message });
+    }
+
+    // Track usage and costs
+    try {
+      const { trackOpenAIUsage } = await import("../../../lib/server/ai-tracking.js");
+      await trackOpenAIUsage(model, data?.usage);
+    } catch (e) {
+      console.error("[summarise-top-pages] Failed to track AI usage:", e.message);
     }
 
     const summary = data?.choices?.[0]?.message?.content?.trim() || "No summary";

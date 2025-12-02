@@ -88,7 +88,23 @@ export default function AdminUsers({ users = [], unauthorized = false, sessionEm
 
   return (
     <main style={{ maxWidth: 920, margin: "48px auto", padding: 16 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 600 }}>Users</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Users</h1>
+        <Link
+          href="/admin/costs"
+          style={{
+            padding: "8px 16px",
+            borderRadius: 8,
+            background: "#3b82f6",
+            color: "white",
+            textDecoration: "none",
+            fontWeight: 600,
+            fontSize: 14,
+          }}
+        >
+          Cost Dashboard →
+        </Link>
+      </div>
 
       <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <input

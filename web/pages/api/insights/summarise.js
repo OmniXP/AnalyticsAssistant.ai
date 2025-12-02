@@ -17,6 +17,7 @@ async function callOpenAI({ system, user }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return { ok: false, text: "Missing OPENAI_API_KEY" };
 
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -24,7 +25,7 @@ async function callOpenAI({ system, user }) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      model,
       temperature: 0.5,
       messages: [
         { role: "system", content: system },
@@ -39,6 +40,14 @@ async function callOpenAI({ system, user }) {
   if (!res.ok) {
     const msg = data?.error?.message || text || `HTTP ${res.status}`;
     return { ok: false, text: msg };
+  }
+
+  // Track usage and costs
+  try {
+    const { trackOpenAIUsage } = await import("../../../lib/server/ai-tracking.js");
+    await trackOpenAIUsage(model, data?.usage);
+  } catch (e) {
+    console.error("[summarise] Failed to track AI usage:", e.message);
   }
 
   const content = data?.choices?.[0]?.message?.content?.trim?.() || "";
