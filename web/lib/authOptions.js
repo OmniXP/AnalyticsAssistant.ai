@@ -63,6 +63,15 @@ export const authOptions = {
     }),
   ],
   pages: { signIn: "/start" },
+  callbacks: {
+    async session({ session, user }) {
+      // Include user.id in session for analytics tracking (opaque identifier, not PII)
+      if (session?.user && user?.id) {
+        session.user.id = user.id;
+      }
+      return session;
+    },
+  },
 };
 
 export default authOptions;
