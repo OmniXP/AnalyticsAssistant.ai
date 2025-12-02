@@ -2,9 +2,8 @@
 import "../styles/globals.css";
 import "../styles/theme.css";
 import React from "react";
-import { SessionProvider, useSession } from "next-auth/react";
+import { SessionProvider } from "next-auth/react";
 import Footer from "../components/Footer";
-import { setAnalyticsUser } from "../lib/analytics";
 
 function ErrorFallback({ error, reset }) {
   return (
@@ -49,26 +48,10 @@ class AppErrorBoundary extends React.Component {
   }
 }
 
-function AnalyticsUserSetter() {
-  const { data: session } = React.useSession();
-  const userIdSetRef = React.useRef(false);
-
-  React.useEffect(() => {
-    if (session?.user?.id && !userIdSetRef.current) {
-      // Use the database user ID (opaque identifier, not PII)
-      setAnalyticsUser(session.user.id);
-      userIdSetRef.current = true;
-    }
-  }, [session]);
-
-  return null;
-}
-
 export default function MyApp({ Component, pageProps }) {
   return (
     <SessionProvider session={pageProps.session}>
       <AppErrorBoundary>
-        <AnalyticsUserSetter />
         <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
           <Component {...pageProps} />
           <Footer />
