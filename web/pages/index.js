@@ -957,6 +957,29 @@ export default function Home() {
       } catch {}
 
       setResult(curr);
+      
+      // Check if we got empty results but API call succeeded
+      // Note: curr is the raw API response, parseGa4Channels will transform it
+      if (curr && curr.ok && (!curr.rows || curr.rows.length === 0)) {
+        const dateRange = `${startForFetch} to ${endForFetch}`;
+        const filterInfo = [];
+        if (appliedFilters.country && appliedFilters.country !== "All") filterInfo.push(`Country: ${appliedFilters.country}`);
+        if (appliedFilters.channelGroup && appliedFilters.channelGroup !== "All") filterInfo.push(`Channel: ${appliedFilters.channelGroup}`);
+        if (appliedFilters.deviceType && appliedFilters.deviceType !== "All") filterInfo.push(`Device: ${appliedFilters.deviceType}`);
+        
+        const filterText = filterInfo.length > 0 ? `\n\nApplied filters: ${filterInfo.join(", ")}` : "";
+        setError(
+          `No data found for ${dateRange}${filterText}\n\n` +
+          `Possible causes:\n` +
+          `• No data exists in GA4 for this date range\n` +
+          `• Property ID may be incorrect\n` +
+          `• Filters may be too restrictive\n\n` +
+          `Try: Removing filters, expanding the date range, or verifying your Property ID`
+        );
+      } else if (curr && curr.ok && curr.rows && curr.rows.length > 0) {
+        // Clear error if we have data
+        setError("");
+      }
       setPendingScroll(true);
 
       // Update URL to reflect the view we just ran

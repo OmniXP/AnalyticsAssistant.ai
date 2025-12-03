@@ -30,6 +30,17 @@ async function handler(req, res) {
     };
 
     const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`;
+    
+    // Log request details for debugging (without sensitive data)
+    console.log("[query] Request:", {
+      propertyId,
+      startDate,
+      endDate,
+      filters,
+      hasDimensionFilter: !!buildDimensionFilter(filters),
+      limit,
+    });
+    
     const r = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
@@ -37,6 +48,14 @@ async function handler(req, res) {
     });
     const data = await r.json();
     if (!r.ok) return res.status(r.status).json({ ok: false, error: data?.error?.message || "GA4 error" });
+
+    // Log response for debugging
+    console.log("[query] Response:", {
+      rowCount: data?.rows?.length || 0,
+      hasRows: !!(data?.rows && data.rows.length > 0),
+      dimensionHeaders: data?.dimensionHeaders?.map(h => h.name) || [],
+      metricHeaders: data?.metricHeaders?.map(h => h.name) || [],
+    });
 
     return res.status(200).json({ ok: true, rows: data?.rows ?? [], raw: data });
   } catch (e) {
