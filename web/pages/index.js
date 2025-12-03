@@ -782,8 +782,10 @@ export default function Home() {
       if (q.endDate) setEndDate(q.endDate);
       setCountrySel(q.country || "All");
       setChannelSel(q.channelGroup || "All");
-      setDeviceTypeSel(q.deviceType || "All");
-      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All", deviceType: q.deviceType || "All" });
+      // Normalize "Both" to "All" for backward compatibility
+      const deviceType = q.deviceType === "Both" ? "All" : (q.deviceType || "All");
+      setDeviceTypeSel(deviceType);
+      setAppliedFilters({ country: q.country || "All", channelGroup: q.channelGroup || "All", deviceType });
       setComparePrev(!!q.comparePrev);
     } catch {}
   }, []);
@@ -795,15 +797,21 @@ export default function Home() {
       if (saved?.startDate) setStartDate(saved.startDate);
       if (saved?.endDate) setEndDate(saved.endDate);
       if (saved?.appliedFilters) {
+        // Normalize "Both" to "All" for backward compatibility
+        const deviceType = saved.appliedFilters.deviceType === "Both" ? "All" : (saved.appliedFilters.deviceType || "All");
         setAppliedFilters({
           country: saved.appliedFilters.country || "All",
           channelGroup: saved.appliedFilters.channelGroup || "All",
-          deviceType: saved.appliedFilters.deviceType || "All",
+          deviceType,
         });
       }
       if (saved?.countrySel) setCountrySel(saved.countrySel);
       if (saved?.channelSel) setChannelSel(saved.channelSel);
-      if (saved?.deviceTypeSel) setDeviceTypeSel(saved.deviceTypeSel);
+      if (saved?.deviceTypeSel) {
+        // Normalize "Both" to "All" for backward compatibility
+        const deviceType = saved.deviceTypeSel === "Both" ? "All" : saved.deviceTypeSel;
+        setDeviceTypeSel(deviceType);
+      }
     } catch {}
   }, []);
 
@@ -906,10 +914,11 @@ export default function Home() {
   };
 
   async function fetchGa4Channels({ propertyId, startDate, endDate, filters }) {
-    // Ensure filters always has deviceType
+    // Ensure filters always has deviceType, and normalize "Both" to "All" for backward compatibility
+    const deviceType = filters?.deviceType === "Both" ? "All" : (filters?.deviceType || "All");
     const safeFilters = {
       ...filters,
-      deviceType: filters?.deviceType || "All",
+      deviceType,
     };
     return fetchJson("/api/ga4/query", { propertyId, startDate, endDate, filters: safeFilters });
   }
@@ -958,24 +967,27 @@ export default function Home() {
 
       setResult(curr);
       
-      // Check if we got empty results but API call succeeded
-      // Note: curr is the raw API response, parseGa4Channels will transform it
-      if (curr && curr.ok && (!curr.rows || curr.rows.length === 0)) {
-        const dateRange = `${startForFetch} to ${endForFetch}`;
-        const filterInfo = [];
-        if (appliedFilters.country && appliedFilters.country !== "All") filterInfo.push(`Country: ${appliedFilters.country}`);
-        if (appliedFilters.channelGroup && appliedFilters.channelGroup !== "All") filterInfo.push(`Channel: ${appliedFilters.channelGroup}`);
-        if (appliedFilters.deviceType && appliedFilters.deviceType !== "All") filterInfo.push(`Device: ${appliedFilters.deviceType}`);
-        
-        const filterText = filterInfo.length > 0 ? `\n\nApplied filters: ${filterInfo.join(", ")}` : "";
-        setError(
-          `No data found for ${dateRange}${filterText}\n\n` +
-          `Possible causes:\n` +
-          `• No data exists in GA4 for this date range\n` +
-          `• Property ID may be incorrect\n` +
-          `• Filters may be too restrictive\n\n` +
-          `Try: Removing filters, expanding the date range, or verifying your Property ID`
-        );
+      // Only show error for empty results if we're confident there should be data
+      // Don't show error on initial load or if result is null/undefined
+      if (curr && curr.ok && Array.isArray(curr.rows) && curr.rows.length === 0) {
+        // Only show error if we have a property ID and valid dates (not initial state)
+        if (propertyId && startForFetch && endForFetch) {
+          const dateRange = `${startForFetch} to ${endForFetch}`;
+          const filterInfo = [];
+          if (appliedFilters.country && appliedFilters.country !== "All") filterInfo.push(`Country: ${appliedFilters.country}`);
+          if (appliedFilters.channelGroup && appliedFilters.channelGroup !== "All") filterInfo.push(`Channel: ${appliedFilters.channelGroup}`);
+          if (appliedFilters.deviceType && appliedFilters.deviceType !== "All") filterInfo.push(`Device: ${appliedFilters.deviceType}`);
+          
+          const filterText = filterInfo.length > 0 ? `\n\nApplied filters: ${filterInfo.join(", ")}` : "";
+          setError(
+            `No data found for ${dateRange}${filterText}\n\n` +
+            `Possible causes:\n` +
+            `• No data exists in GA4 for this date range\n` +
+            `• Property ID may be incorrect\n` +
+            `• Filters may be too restrictive\n\n` +
+            `Try: Removing filters, expanding the date range, or verifying your Property ID`
+          );
+        }
       } else if (curr && curr.ok && curr.rows && curr.rows.length > 0) {
         // Clear error if we have data
         setError("");
@@ -1513,12 +1525,14 @@ export default function Home() {
             setEndDate(view.endDate);
             setCountrySel(view.country || "All");
             setChannelSel(view.channelGroup || "All");
-            setDeviceTypeSel(view.deviceType || "All");
+            // Normalize "Both" to "All" for backward compatibility
+            const viewDeviceType = view.deviceType === "Both" ? "All" : (view.deviceType || "All");
+            setDeviceTypeSel(viewDeviceType);
             setComparePrev(!!view.comparePrev);
             setAppliedFilters({
               country: view.country || "All",
               channelGroup: view.channelGroup || "All",
-              deviceType: view.deviceType || "All",
+              deviceType: view.deviceType === "Both" ? "All" : (view.deviceType || "All"),
             });
           }}
           onRunReport={runReport}
@@ -3774,7 +3788,7 @@ function SavedViews({ premium, startDate, endDate, countrySel, channelSel, devic
       endDate: p.endDate,
       country: p.country,
       channelGroup: p.channelGroup,
-      deviceType: p.deviceType || "All",
+      deviceType: p.deviceType === "Both" ? "All" : (p.deviceType || "All"),
       comparePrev: !!p.comparePrev,
     });
     if (run) onRunReport();

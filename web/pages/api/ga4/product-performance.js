@@ -14,7 +14,9 @@ const sessionOptions = {
 
 // Build a GA4 filterExpression from the UI's "appliedFilters"
 function buildDimensionFilter(filters) {
-  if (!filters || (filters.country === "All" && filters.channelGroup === "All" && filters.deviceType === "All")) return null;
+  // Normalize "Both" to "All" for backward compatibility
+  const normalizedDeviceType = filters?.deviceType === "Both" ? "All" : (filters?.deviceType || "All");
+  if (!filters || (filters.country === "All" && filters.channelGroup === "All" && normalizedDeviceType === "All")) return null;
 
   const andGroup = { andGroup: { expressions: [] } };
 
@@ -36,8 +38,10 @@ function buildDimensionFilter(filters) {
     });
   }
 
-  if (filters.deviceType && filters.deviceType !== "All") {
-    const deviceValue = filters.deviceType === "Mobile" ? "mobile" : filters.deviceType === "Desktop" ? "desktop" : filters.deviceType.toLowerCase();
+  // Use normalized deviceType
+  const deviceType = normalizedDeviceType;
+  if (deviceType && deviceType !== "All") {
+    const deviceValue = deviceType === "Mobile" ? "mobile" : deviceType === "Desktop" ? "desktop" : deviceType.toLowerCase();
     andGroup.andGroup.expressions.push({
       filter: {
         fieldName: "deviceCategory",
