@@ -31,6 +31,10 @@ model User {
   // --- GA4 selection ---
   ga4PropertyId    String?  // e.g. "properties/123456789"
   ga4PropertyName  String?  // display label
+
+  // --- ChatGPT integration ---
+  chatgptUserId     String?  @unique
+  chatgptConnectedAt DateTime?
 }
 
 model Account {
