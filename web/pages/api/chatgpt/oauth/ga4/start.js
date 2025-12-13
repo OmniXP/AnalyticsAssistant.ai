@@ -1,8 +1,8 @@
 // web/pages/api/chatgpt/oauth/ga4/start.js
 // Initiate GA4 OAuth flow for ChatGPT users.
 
-import { buildGoogleAuthUrl } from "../../../../lib/server/google-oauth.js";
-import { getChatGPTUserFromRequest } from "../../../../lib/server/chatgpt-auth.js";
+import { buildGoogleAuthUrl } from "../../../../../lib/server/google-oauth.js";
+import { getChatGPTUserFromRequest } from "../../../../../lib/server/chatgpt-auth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
