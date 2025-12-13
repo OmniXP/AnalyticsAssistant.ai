@@ -5,8 +5,9 @@ import crypto from "crypto";
 import { kvGetJson, kvSetJson } from "../../../../lib/server/ga4-session.js";
 import { storeChatGPTToken, getOrCreateChatGPTUser } from "../../../../lib/server/chatgpt-auth.js";
 
-const CHATGPT_CLIENT_ID = process.env.CHATGPT_CLIENT_ID || "";
-const CHATGPT_CLIENT_SECRET = process.env.CHATGPT_CLIENT_SECRET || "";
+// Support both naming conventions
+const CHATGPT_CLIENT_ID = process.env.CHATGPT_CLIENT_ID || process.env.CHATGPT_OAUTH_CLIENT_ID || "";
+const CHATGPT_CLIENT_SECRET = process.env.CHATGPT_CLIENT_SECRET || process.env.CHATGPT_OAUTH_CLIENT_SECRET || "";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -37,25 +38,44 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "invalid_grant", error_description: "Redirect URI mismatch" });
   }
 
-  const accessToken = crypto.randomBytes(32).toString("hex");
-  const expiresIn = 3600; // 1 hour
+  // ChatGPT OAuth requires user identification for token exchange
+  // chatgpt_user_id should be provided by ChatGPT in the token request
   const tokenPayloadUserId = chatgpt_user_id || codeData.chatgpt_user_id || null;
   const tokenPayloadEmail = email || codeData.email || null;
 
+  if (!tokenPayloadUserId) {
+    return res.status(400).json({ 
+      error: "invalid_request", 
+      error_description: "chatgpt_user_id is required for token exchange" 
+    });
+  }
+
+  const accessToken = crypto.randomBytes(32).toString("hex");
+  const expiresIn = 3600; // 1 hour
+
   // Ensure user exists in database (create/link if needed)
   let userId = null;
-  if (tokenPayloadUserId) {
-    try {
-      const user = await getOrCreateChatGPTUser(tokenPayloadUserId, tokenPayloadEmail);
-      userId = user.id;
-    } catch (e) {
-      console.error("[chatgpt/oauth/token] Failed to create/link user:", e);
-      // Continue anyway - user.js endpoint will handle it
-    }
+  try {
+    const user = await getOrCreateChatGPTUser(tokenPayloadUserId, tokenPayloadEmail);
+    userId = user.id;
+  } catch (e) {
+    console.error("[chatgpt/oauth/token] Failed to create/link user:", e);
+    return res.status(500).json({ 
+      error: "server_error", 
+      error_description: "Failed to create user record" 
+    });
   }
 
   // Persist token mapping for subsequent API calls
-  await storeChatGPTToken(accessToken, tokenPayloadUserId, tokenPayloadEmail, userId, expiresIn);
+  try {
+    await storeChatGPTToken(accessToken, tokenPayloadUserId, tokenPayloadEmail, userId, expiresIn);
+  } catch (e) {
+    console.error("[chatgpt/oauth/token] Failed to store token:", e);
+    return res.status(500).json({ 
+      error: "server_error", 
+      error_description: "Failed to store access token" 
+    });
+  }
 
   // Expire the code immediately
   await kvSetJson(`chatgpt_oauth_code:${code}`, null, 1);

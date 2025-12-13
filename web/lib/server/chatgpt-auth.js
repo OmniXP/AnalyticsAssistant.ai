@@ -77,16 +77,42 @@ export async function getOrCreateChatGPTUser(chatgptUserId, email = null) {
 
 /**
  * Store ChatGPT OAuth access token -> user mapping.
+ * chatgptUserId can be null initially (will be set when userinfo is called).
  */
 export async function storeChatGPTToken(token, chatgptUserId, email, userId, expiresIn = 3600) {
-  if (!token || !chatgptUserId) throw new Error("Missing token or chatgptUserId");
+  if (!token) throw new Error("Missing token");
   const expiresMs = Date.now() + expiresIn * 1000;
   await kvSetJson(
     `chatgpt_token:${token}`,
     {
-      chatgptUserId,
+      chatgptUserId: chatgptUserId || null,
       email: email || null,
       userId: userId || null,
+      expires: expiresMs,
+    },
+    expiresIn
+  );
+}
+
+/**
+ * Update existing ChatGPT token with user ID (called when userinfo provides it).
+ */
+export async function updateChatGPTTokenWithUserId(token, chatgptUserId, email, userId) {
+  if (!token) throw new Error("Missing token");
+  if (!chatgptUserId) throw new Error("Missing chatgptUserId");
+  
+  const tokenData = await validateChatGPTToken(token);
+  if (!tokenData) throw new Error("Token not found or expired");
+  
+  const expiresMs = tokenData.expires || Date.now() + 3600 * 1000;
+  const expiresIn = Math.max(1, Math.floor((expiresMs - Date.now()) / 1000));
+  
+  await kvSetJson(
+    `chatgpt_token:${token}`,
+    {
+      chatgptUserId,
+      email: email || tokenData.email || null,
+      userId: userId || tokenData.userId || null,
       expires: expiresMs,
     },
     expiresIn
