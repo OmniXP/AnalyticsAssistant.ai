@@ -1,7 +1,7 @@
 // web/pages/api/chatgpt/v1/properties.js
 // List GA4 properties for ChatGPT users with plan-aware limits.
 
-import { getGA4BearerForChatGPTUser, getChatGPTUserFromRequest } from "../../../../lib/server/chatgpt-auth.js";
+import { getGA4BearerForConnection, getChatGPTConnectionIdFromRequest, getChatGPTUserFromRequest } from "../../../../lib/server/chatgpt-auth.js";
 import { withChatGPTUsageGuard, getUpgradeMessage } from "../../../../lib/server/chatgpt-usage.js";
 
 const PROPERTY_LIMITS = {
@@ -15,15 +15,17 @@ async function handler(req, res) {
   }
 
   try {
-    const user = await getChatGPTUserFromRequest(req);
-    if (!user) {
+    const connectionId = await getChatGPTConnectionIdFromRequest(req);
+    if (!connectionId) {
       return res.status(401).json({ ok: false, error: "ChatGPT authentication required", code: "AUTH_REQUIRED" });
     }
 
-    const planKey = user.premium ? "premium" : "free";
+    // Try to get user for premium checks (optional)
+    const user = await getChatGPTUserFromRequest(req);
+    const planKey = user?.premium ? "premium" : "free";
     const limit = PROPERTY_LIMITS[planKey] ?? PROPERTY_LIMITS.free;
 
-    const bearer = await getGA4BearerForChatGPTUser(user.chatgptUserId);
+    const bearer = await getGA4BearerForConnection(connectionId);
 
     // Get userinfo for email (best-effort)
     let email = user.email || null;

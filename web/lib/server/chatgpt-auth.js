@@ -120,23 +120,78 @@ export async function updateChatGPTTokenWithUserId(token, chatgptUserId, email, 
 }
 
 /**
+ * Get connectionId from request Authorization header.
+ */
+export async function getChatGPTConnectionIdFromRequest(req) {
+  const token = getChatGPTTokenFromRequest(req);
+  if (!token) return null;
+  const tokenData = await validateChatGPTToken(token);
+  return tokenData?.connectionId || null;
+}
+
+/**
  * Resolve ChatGPT user from request Authorization header.
+ * Falls back to connectionId-based lookup if chatgptUserId not available.
  */
 export async function getChatGPTUserFromRequest(req) {
   const token = getChatGPTTokenFromRequest(req);
   if (!token) return null;
   const tokenData = await validateChatGPTToken(token);
-  if (!tokenData?.chatgptUserId) return null;
+  if (!tokenData) return null;
 
-  const user = await prisma.user.findUnique({
-    where: { chatgptUserId: tokenData.chatgptUserId },
-    select: { id: true, email: true, premium: true, plan: true, chatgptUserId: true },
-  });
-  return user;
+  // If we have chatgptUserId, use it
+  if (tokenData.chatgptUserId) {
+    const user = await prisma.user.findUnique({
+      where: { chatgptUserId: tokenData.chatgptUserId },
+      select: { id: true, email: true, premium: true, plan: true, chatgptUserId: true },
+    });
+    if (user) return user;
+  }
+
+  // Fallback: try to find user by connectionId mapping
+  if (tokenData.connectionId) {
+    const connectionData = await kvGetJson(`chatgpt_connection:${tokenData.connectionId}`);
+    if (connectionData?.userId) {
+      const user = await prisma.user.findUnique({
+        where: { id: connectionData.userId },
+        select: { id: true, email: true, premium: true, plan: true, chatgptUserId: true },
+      });
+      if (user) return user;
+    }
+  }
+
+  return null;
 }
 
 /**
- * GA4 token helpers (stored separately under chatgpt_ga4_tokens:<chatgptUserId>)
+ * GA4 token helpers (stored by connectionId: chatgpt_ga4_tokens:<connectionId>)
+ */
+export async function saveGA4TokensForConnection(connectionId, { access_token, refresh_token, expires_in }) {
+  if (!connectionId) throw new Error("Missing connectionId");
+  if (!access_token) throw new Error("Missing access_token");
+
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = now + Math.max(30, Number(expires_in || 0) - 30);
+
+  const prev = (await getGA4TokensForConnection(connectionId)) || {};
+  const tokenData = {
+    access_token,
+    refresh_token: refresh_token || prev.refresh_token || "",
+    expiry,
+  };
+
+  // 30-day TTL to keep storage tidy
+  await kvSetJson(`chatgpt_ga4_tokens:${connectionId}`, tokenData, 60 * 60 * 24 * 30);
+  return { ok: true };
+}
+
+export async function getGA4TokensForConnection(connectionId) {
+  if (!connectionId) return null;
+  return await kvGetJson(`chatgpt_ga4_tokens:${connectionId}`);
+}
+
+/**
+ * Legacy: Save GA4 tokens for chatgptUserId (for backwards compatibility).
  */
 export async function saveGA4TokensForChatGPTUser(chatgptUserId, { access_token, refresh_token, expires_in }) {
   if (!chatgptUserId) throw new Error("Missing chatgptUserId");
@@ -168,6 +223,55 @@ export function isGA4TokenExpired(record) {
   return !record.expiry || record.expiry <= now;
 }
 
+async function refreshGA4TokenForConnection(connectionId) {
+  const rec = await getGA4TokensForConnection(connectionId);
+  if (!rec || !rec.refresh_token) {
+    throw new Error("Google Analytics not connected. Please connect your GA4 account first.");
+  }
+
+  const body = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    client_secret: GOOGLE_CLIENT_SECRET,
+    refresh_token: rec.refresh_token,
+    grant_type: "refresh_token",
+  });
+
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const json = await r.json();
+  if (!r.ok) {
+    throw new Error(json?.error_description || json?.error || "Failed to refresh token");
+  }
+
+  await saveGA4TokensForConnection(connectionId, {
+    access_token: json.access_token,
+    refresh_token: rec.refresh_token, // Google may not resend
+    expires_in: json.expires_in,
+  });
+
+  const latest = await getGA4TokensForConnection(connectionId);
+  return latest?.access_token || json.access_token;
+}
+
+/**
+ * Get GA4 bearer token for connectionId with auto-refresh.
+ */
+export async function getGA4BearerForConnection(connectionId) {
+  if (!connectionId) throw new Error("Missing connectionId");
+  const rec = await getGA4TokensForConnection(connectionId);
+  if (!rec) {
+    throw new Error("Google Analytics not connected. Please connect your GA4 account first.");
+  }
+  if (!isGA4TokenExpired(rec)) return rec.access_token;
+  return await refreshGA4TokenForConnection(connectionId);
+}
+
+/**
+ * Legacy: Get GA4 bearer token for chatgptUserId (for backwards compatibility).
+ */
 async function refreshGA4TokenForChatGPTUser(chatgptUserId) {
   const rec = await getGA4TokensForChatGPTUser(chatgptUserId);
   if (!rec || !rec.refresh_token) {
@@ -193,7 +297,7 @@ async function refreshGA4TokenForChatGPTUser(chatgptUserId) {
 
   await saveGA4TokensForChatGPTUser(chatgptUserId, {
     access_token: json.access_token,
-    refresh_token: rec.refresh_token, // Google may not resend
+    refresh_token: rec.refresh_token,
     expires_in: json.expires_in,
   });
 
@@ -201,9 +305,6 @@ async function refreshGA4TokenForChatGPTUser(chatgptUserId) {
   return latest?.access_token || json.access_token;
 }
 
-/**
- * Get GA4 bearer token for ChatGPT user with auto-refresh.
- */
 export async function getGA4BearerForChatGPTUser(chatgptUserId) {
   if (!chatgptUserId) throw new Error("Missing chatgptUserId");
   const rec = await getGA4TokensForChatGPTUser(chatgptUserId);

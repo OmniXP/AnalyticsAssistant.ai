@@ -1,12 +1,13 @@
 // web/pages/api/chatgpt/oauth/ga4/callback.js
-// GA4 OAuth callback for ChatGPT users.
+// GA4 OAuth callback for ChatGPT users using connect_code -> connectionId.
 
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../../lib/server/google-oauth.js";
-import { saveGA4TokensForChatGPTUser, getOrCreateChatGPTUser } from "../../../../../lib/server/chatgpt-auth.js";
+import { saveGA4TokensForConnection } from "../../../../../lib/server/chatgpt-auth.js";
+import { kvGetJson, kvSetJson } from "../../../../../lib/server/ga4-session.js";
 
 export default async function handler(req, res) {
   try {
-    const { code, state, error, chatgpt_user_id } = req.query || {};
+    const { code, state, error, connect_code } = req.query || {};
 
     if (error) {
       return res.status(400).send(`OAuth error: ${error}`);
@@ -16,8 +17,19 @@ export default async function handler(req, res) {
       return res.status(400).send("Missing code or state parameter.");
     }
 
-    if (!chatgpt_user_id) {
-      return res.status(400).send("Missing ChatGPT user ID.");
+    if (!connect_code) {
+      return res.status(400).send("Missing connect_code parameter.");
+    }
+
+    // Resolve connectionId from connect_code
+    const connectData = await kvGetJson(`chatgpt_ga4_connect:${connect_code}`);
+    if (!connectData || (connectData.expires && connectData.expires < Date.now())) {
+      return res.status(400).send("Invalid or expired connect_code.");
+    }
+
+    const connectionId = connectData.connectionId;
+    if (!connectionId) {
+      return res.status(400).send("Invalid connect_code data.");
     }
 
     const authState = await readAuthState(state, true);
@@ -31,22 +43,30 @@ export default async function handler(req, res) {
     const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
     const tokens = await exchangeCodeForTokens(String(code), code_verifier, redirectUri);
 
-    await saveGA4TokensForChatGPTUser(chatgpt_user_id, {
+    // Store GA4 tokens against connectionId
+    await saveGA4TokensForConnection(connectionId, {
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
       expires_in: tokens.expires_in,
     });
 
-    // Try to capture email and ensure user linkage
+    // Optionally try to link connectionId to a user via email (for premium checks)
     try {
       const uiResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
       });
       const ui = await uiResp.json();
-      await getOrCreateChatGPTUser(chatgpt_user_id, ui?.email || null);
+      if (ui?.email) {
+        // Store email with connection for future user linking
+        await kvSetJson(
+          `chatgpt_connection:${connectionId}`,
+          { email: ui.email, linkedAt: Date.now() },
+          60 * 60 * 24 * 30 // 30 days
+        );
+      }
     } catch (e) {
-      console.error("[chatgpt/ga4/callback] Failed to update user email:", e?.message || e);
-      await getOrCreateChatGPTUser(chatgpt_user_id, null);
+      console.error("[chatgpt/ga4/callback] Failed to capture email:", e?.message || e);
+      // Continue - email capture is optional
     }
 
     res.send(`

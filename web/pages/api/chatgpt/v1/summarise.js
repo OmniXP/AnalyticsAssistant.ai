@@ -1,7 +1,7 @@
 // web/pages/api/chatgpt/v1/summarise.js
 // AI summary endpoint for ChatGPT users (usage-guarded, premium-aware).
 
-import { getChatGPTUserFromRequest, getGA4TokensForChatGPTUser, isGA4TokenExpired } from "../../../../lib/server/chatgpt-auth.js";
+import { getChatGPTUserFromRequest, getChatGPTConnectionIdFromRequest, getGA4TokensForConnection, isGA4TokenExpired } from "../../../../lib/server/chatgpt-auth.js";
 import { withChatGPTUsageGuard } from "../../../../lib/server/chatgpt-usage.js";
 
 async function callOpenAI({ system, user }) {
@@ -46,12 +46,15 @@ async function handler(req, res) {
   }
 
   try {
-    const user = await getChatGPTUserFromRequest(req);
-    if (!user) {
+    const connectionId = await getChatGPTConnectionIdFromRequest(req);
+    if (!connectionId) {
       return res.status(401).json({ ok: false, error: "ChatGPT authentication required", code: "AUTH_REQUIRED" });
     }
 
-    const tokens = await getGA4TokensForChatGPTUser(user.chatgptUserId);
+    // Try to get user for premium checks (optional)
+    const user = await getChatGPTUserFromRequest(req);
+
+    const tokens = await getGA4TokensForConnection(connectionId);
     if (!tokens || isGA4TokenExpired(tokens)) {
       return res.status(401).json({
         ok: false,

@@ -1,7 +1,7 @@
 // web/pages/api/chatgpt/v1/query.js
 // GA4 query endpoint for ChatGPT users (plan-aware limits).
 
-import { getChatGPTUserFromRequest, getGA4BearerForChatGPTUser } from "../../../../lib/server/chatgpt-auth.js";
+import { getChatGPTUserFromRequest, getChatGPTConnectionIdFromRequest, getGA4BearerForConnection } from "../../../../lib/server/chatgpt-auth.js";
 import { withChatGPTUsageGuard, getUpgradeMessage } from "../../../../lib/server/chatgpt-usage.js";
 
 const FREE_DATE_WINDOW_DAYS = 90;
@@ -65,11 +65,14 @@ async function handler(req, res) {
   }
 
   try {
-    const user = await getChatGPTUserFromRequest(req);
-    if (!user) {
+    const connectionId = await getChatGPTConnectionIdFromRequest(req);
+    if (!connectionId) {
       return res.status(401).json({ ok: false, error: "ChatGPT authentication required", code: "AUTH_REQUIRED" });
     }
-    const planKey = user.premium ? "premium" : "free";
+
+    // Try to get user for premium checks (optional)
+    const user = await getChatGPTUserFromRequest(req);
+    const planKey = user?.premium ? "premium" : "free";
 
     const { propertyId, startDate, endDate, filters = {}, limit = 50 } = req.body || {};
     if (!propertyId || !startDate || !endDate) {
@@ -78,7 +81,7 @@ async function handler(req, res) {
 
     enforceDateRangeLimit(planKey, startDate);
 
-    const bearer = await getGA4BearerForChatGPTUser(user.chatgptUserId);
+    const bearer = await getGA4BearerForConnection(connectionId);
 
     const body = {
       dateRanges: [{ startDate, endDate }],

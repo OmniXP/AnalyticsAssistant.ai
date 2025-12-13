@@ -1,7 +1,7 @@
 // web/pages/api/chatgpt/v1/status.js
 // Connection and plan status for ChatGPT users.
 
-import { getChatGPTUserFromRequest, getGA4TokensForChatGPTUser, isGA4TokenExpired } from "../../../../lib/server/chatgpt-auth.js";
+import { getChatGPTUserFromRequest, getChatGPTConnectionIdFromRequest, getGA4TokensForConnection, isGA4TokenExpired } from "../../../../lib/server/chatgpt-auth.js";
 
 const PREMIUM_URL = process.env.PREMIUM_URL || process.env.NEXT_PUBLIC_PREMIUM_URL || "https://analyticsassistant.ai/premium";
 
@@ -11,12 +11,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    const user = await getChatGPTUserFromRequest(req);
-    if (!user) {
+    const connectionId = await getChatGPTConnectionIdFromRequest(req);
+    if (!connectionId) {
       return res.status(401).json({ ok: false, error: "ChatGPT authentication required", code: "AUTH_REQUIRED" });
     }
 
-    const tokens = await getGA4TokensForChatGPTUser(user.chatgptUserId);
+    // Try to get user for premium checks (optional)
+    const user = await getChatGPTUserFromRequest(req);
+
+    const tokens = await getGA4TokensForConnection(connectionId);
     const ga4Connected = !!tokens && !isGA4TokenExpired(tokens);
 
     return res.status(200).json({
