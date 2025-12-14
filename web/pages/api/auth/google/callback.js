@@ -50,9 +50,9 @@ export default async function handler(req, res) {
     
     console.log("[OAuth Callback] Saved tokens for session:", sid);
 
-    // Redirect back to the app (use desiredRedirect from state, or default to /)
+    // Redirect back to the app (use desiredRedirect from state, or default to /onboard?connected=true)
     // Note: Cookie is already set by ensureSid() above
-    const redirectTo = desiredRedirect || "/";
+    const redirectTo = desiredRedirect || "/onboard?connected=true";
     res.writeHead(302, { Location: redirectTo });
     res.end();
   } catch (e) {

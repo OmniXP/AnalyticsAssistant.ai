@@ -82,15 +82,9 @@ async function handler(req, res) {
     }));
     const { sessions = 0, users: totalUsers = 0 } = totals || {};
 
-    const system = `
-You are an expert growth analyst. Produce a concise, high-signal readout for a founder/marketing lead.
-Rules:
-- Use ONLY provided numbers; do not invent metrics.
-- Be specific & numeric. Short, scannable bullets.
-- Always include >=2 hypotheses & A/B test ideas with metrics to watch.
-- If data is sparse, say so and recommend validation steps.
-- Keep it under ~220 words.
-`;
+    // Use the new system prompt from config
+    const { SYSTEM_PROMPT } = await import("../../../../lib/server/chatgpt-config.js");
+    const system = SYSTEM_PROMPT;
 
     const userPrompt = `
 Date range: ${dateRange.start} → ${dateRange.end}

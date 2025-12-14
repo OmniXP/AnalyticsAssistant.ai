@@ -4,6 +4,7 @@
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../../lib/server/google-oauth.js";
 import { saveGA4TokensForConnection } from "../../../../../lib/server/chatgpt-auth.js";
 import { kvGetJson, kvSetJson } from "../../../../../lib/server/ga4-session.js";
+import { prefetchGA4Summary } from "../../../../../lib/server/chatgpt-ga4-helpers.js";
 
 export default async function handler(req, res) {
   try {
@@ -51,6 +52,7 @@ export default async function handler(req, res) {
     });
 
     // Optionally try to link connectionId to a user via email (for premium checks)
+    let propertyId = null;
     try {
       const uiResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -64,9 +66,25 @@ export default async function handler(req, res) {
           60 * 60 * 24 * 30 // 30 days
         );
       }
+
+      // Get first property for prefetching
+      const propsResp = await fetch("https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=1", {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      });
+      const propsData = await propsResp.json();
+      if (propsData?.accountSummaries?.[0]?.propertySummaries?.[0]?.property) {
+        propertyId = propsData.accountSummaries[0].propertySummaries[0].property;
+      }
     } catch (e) {
-      console.error("[chatgpt/ga4/callback] Failed to capture email:", e?.message || e);
+      console.error("[chatgpt/ga4/callback] Failed to capture email/property:", e?.message || e);
       // Continue - email capture is optional
+    }
+
+    // Prefetch GA4 summary in background (best-effort, don't block)
+    if (propertyId) {
+      prefetchGA4Summary(connectionId, propertyId).catch(e => {
+        console.error("[chatgpt/ga4/callback] Prefetch failed:", e?.message || e);
+      });
     }
 
     res.send(`

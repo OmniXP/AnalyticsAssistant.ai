@@ -215,6 +215,71 @@
           }
         }
       }
+    },
+    "/api/chatgpt/v1/insight": {
+      "post": {
+        "summary": "Auto-fetch and summarise GA4 insights (28-day comparison, cached)",
+        "description": "Automatically fetches default 28-day GA4 report and returns AI-generated insights. Uses cached data when available for instant responses.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "propertyId": {
+                    "type": "string",
+                    "example": "properties/123456789",
+                    "description": "GA4 property ID. If not provided, will use first available property."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AI insight with GA4 data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "insight": { "type": "string", "description": "AI-generated insight summary" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "cached": { "type": "boolean" },
+                        "dateRange": { "type": "object" },
+                        "totals": { "type": "object" },
+                        "topChannels": { "type": "array" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "GA4 not connected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "error": { "type": "string" },
+                    "code": { "type": "string" },
+                    "connectUrl": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
