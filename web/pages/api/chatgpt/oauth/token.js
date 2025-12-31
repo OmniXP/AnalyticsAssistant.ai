@@ -58,8 +58,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "invalid_grant" });
   }
 
-  // mark as used (cheap one-time redemption)
-  await kvSetJson(codeKey, { used: true }, 5);
+  // mark as used with a nonce to avoid parallel redemptions succeeding
+  const redeemNonce = crypto.randomUUID();
+  await kvSetJson(
+    codeKey,
+    { ...codeData, used: true, redeemNonce },
+    5
+  );
+  const postSet = await kvGetJson(codeKey);
+  if (!postSet?.used || postSet.redeemNonce !== redeemNonce) {
+    return res.status(400).json({ error: "invalid_grant" });
+  }
 
   const access_token = crypto.randomBytes(32).toString("hex");
   await kvSetJson(
