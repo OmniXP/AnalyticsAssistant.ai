@@ -227,6 +227,33 @@ export async function clearGoogleTokens(sid) {
   await kvDel(`ga4_tokens:${sid}`);
 }
 
+// Store GA4 tokens keyed by userId for server-initiated flows (e.g., ChatGPT Actions)
+export async function saveGoogleTokensForUser({ userId, access_token, refresh_token, expires_in }) {
+  if (!userId) throw new Error("saveGoogleTokensForUser: missing userId");
+  if (!access_token) throw new Error("saveGoogleTokensForUser: missing access_token");
+
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = now + Math.max(30, Number(expires_in || 0) - 30);
+  const prev = (await getGoogleTokensForUser(userId)) || {};
+  const tokenData = {
+    access_token,
+    refresh_token: refresh_token || prev.refresh_token || "",
+    expiry,
+  };
+  await kvSet(`ga4_user_tokens:${userId}`, tokenData, 60 * 60 * 24 * 30);
+  return { ok: true };
+}
+
+export async function getGoogleTokensForUser(userId) {
+  if (!userId) return null;
+  return await kvGet(`ga4_user_tokens:${userId}`);
+}
+
+export async function clearGoogleTokensForUser(userId) {
+  if (!userId) return;
+  await kvDel(`ga4_user_tokens:${userId}`);
+}
+
 export function isExpired(record) {
   if (!record) return true;
   const now = Math.floor(Date.now() / 1000);
@@ -316,6 +343,33 @@ export async function getBearerForRequest(req) {
   const latest = await getGoogleTokens(sid);
   console.log("[getBearerForRequest] Token refreshed, returning access token");
   return latest.access_token ? latest.access_token : refreshed.access_token;
+}
+
+// Get GA4 bearer token keyed by userId (used for ChatGPT Actions / server calls).
+export async function getBearerForUser(userId) {
+  if (!userId) throw new Error("Missing userId");
+  console.log("[getBearerForUser] Fetching tokens for user:", userId);
+  const rec = await getGoogleTokensForUser(userId);
+  if (!rec) {
+    console.error("[getBearerForUser] No tokens found for user:", userId);
+    throw new Error("Google session expired or missing. Click \"Connect Google Analytics\" to re-authorise, then run again.");
+  }
+  if (!isExpired(rec)) {
+    return rec.access_token;
+  }
+  console.log("[getBearerForUser] Token expired, attempting refresh");
+  if (!rec.refresh_token) {
+    throw new Error("No refresh token");
+  }
+  const refreshed = await refreshAccessToken(rec.refresh_token);
+  await saveGoogleTokensForUser({
+    userId,
+    access_token: refreshed.access_token,
+    refresh_token: rec.refresh_token,
+    expires_in: refreshed.expires_in,
+  });
+  const latest = await getGoogleTokensForUser(userId);
+  return latest?.access_token || refreshed.access_token;
 }
 
 // ---- Public: used by auth endpoints ----

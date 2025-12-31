@@ -1,0 +1,103 @@
+openapi: 3.1.0
+info:
+  title: AnalyticsAssistant.ai – ChatGPT Actions
+  version: "1.0.0"
+  description: >
+    OAuth2-protected Actions for running GA4 summaries directly from ChatGPT.
+servers:
+  - url: https://analyticsassistant.ai
+paths:
+  /api/actions/me:
+    get:
+      summary: Get authenticated user defaults
+      security:
+        - ChatGPTAuth: ["ga4"]
+      responses:
+        "200":
+          description: User defaults
+          content:
+            application/json:
+              example:
+                ok: true
+                userId: "usr_123"
+                email: "founder@example.com"
+                defaultPropertyId: "properties/123456789"
+                defaultPropertyName: "Main Property"
+                siteType: "leadgen"
+                timezone: null
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              example:
+                ok: false
+                error: Unauthorized
+                code: AUTH_REQUIRED
+  /api/actions/reports/compare-28-days:
+    post:
+      summary: Compare last 28 days vs previous 28 days
+      security:
+        - ChatGPTAuth: ["ga4"]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                propertyId:
+                  type: string
+                  description: GA4 property ID (defaults to user’s saved property)
+            example:
+              propertyId: "properties/123456789"
+      responses:
+        "200":
+          description: Structured comparison report
+          content:
+            application/json:
+              example:
+                ok: true
+                range:
+                  current: { start: "2025-11-24", end: "2025-12-21" }
+                  previous: { start: "2025-10-27", end: "2025-11-23" }
+                headline: "Sessions up 12%, conversions down 5% vs previous 28 days."
+                metrics:
+                  - { name: "Sessions", current: 1234, previous: 1100, delta: 134, deltaPct: 0.122 }
+                  - { name: "Conversions", current: 45, previous: 50, delta: -5, deltaPct: -0.1 }
+                biggestChange: { metric: "Conversions", deltaPct: -0.1, direction: "down" }
+                drivers:
+                  channels:
+                    - { name: "Organic Search", current: { sessions: 400, conversions: 20 }, previous: { sessions: 320, conversions: 18 }, delta: 80, deltaPct: 0.25, conversionsDelta: 2, conversionsDeltaPct: 0.11 }
+                  landingPages:
+                    - { name: "/pricing", current: { sessions: 200, conversions: 12 }, previous: { sessions: 260, conversions: 15 }, delta: -60, deltaPct: -0.23, conversionsDelta: -3, conversionsDeltaPct: -0.2 }
+                  devices:
+                    - { name: "mobile", current: { sessions: 500, conversions: 18 }, previous: { sessions: 420, conversions: 15 }, delta: 80, deltaPct: 0.19, conversionsDelta: 3, conversionsDeltaPct: 0.2 }
+                recommendedActions:
+                  - { priority: 1, title: "Stabilise conversion drop", why: "Conversions dipped the most vs last period.", how: "Check top landing pages and forms; QA funnel on top channel." }
+        "400":
+          description: Missing GA4 property
+          content:
+            application/json:
+              example:
+                ok: false
+                error: "No GA4 property is linked to this account. Choose a property in the web app first."
+                code: PROPERTY_NOT_SET
+        "401":
+          description: GA4 not connected
+          content:
+            application/json:
+              example:
+                ok: false
+                error: "Google Analytics not connected. Reconnect GA4 in AnalyticsAssistant.ai."
+                code: GA4_NOT_CONNECTED
+components:
+  securitySchemes:
+    ChatGPTAuth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://analyticsassistant.ai/api/chatgpt/oauth/authorize
+          tokenUrl: https://analyticsassistant.ai/api/chatgpt/oauth/token
+          scopes:
+            ga4: "Read GA4 performance data"
+
