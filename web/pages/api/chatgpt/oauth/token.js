@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { kvGetJson, kvSetJson } from "../../../lib/server/ga4-session";
+import { kvGetJson, kvSetJson } from "../../../../lib/server/ga4-session";
 
 const CHATGPT_CLIENT_ID =
   process.env.CHATGPT_CLIENT_ID || process.env.CHATGPT_OAUTH_CLIENT_ID || "";
