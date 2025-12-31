@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import crypto from "crypto";
-import { authOptions } from "../../../lib/authOptions";
-import { kvSetJson } from "../../../lib/server/ga4-session";
+import { authOptions } from "../../../../lib/authOptions";
+import { kvSetJson } from "../../../../lib/server/ga4-session";
 
 const CHATGPT_CLIENT_ID =
   process.env.CHATGPT_CLIENT_ID || process.env.CHATGPT_OAUTH_CLIENT_ID || "";
