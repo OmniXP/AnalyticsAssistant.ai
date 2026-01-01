@@ -132,7 +132,16 @@ export default function StartPage({ signedIn, userEmail }) {
   }
 
   function handleSignIn() {
-    const callbackUrl = resolveCallbackUrl("/start?upgrade=1");
+    const incomingCallback =
+      typeof router?.query?.callbackUrl === "string"
+        ? router.query.callbackUrl
+        : Array.isArray(router?.query?.callbackUrl)
+        ? router.query.callbackUrl[0]
+        : "";
+    const callbackUrl =
+      incomingCallback && incomingCallback.includes("/api/chatgpt/oauth/")
+        ? incomingCallback
+        : resolveCallbackUrl("/start?upgrade=1");
     trackEvent("signup_started", { entry_point: "start_page" });
     signIn("google", { callbackUrl });
   }
