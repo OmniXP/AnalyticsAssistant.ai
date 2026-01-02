@@ -1,3 +1,4 @@
+import prisma from "../../../lib/prisma.js";
 import { getBearerForRequest } from "../../../server/ga4-session.js";
 import { enforceDataLimits, withUsageGuard } from "../../../server/usage-limits.js";
 
@@ -13,7 +14,27 @@ async function handler(req, res) {
     const bearer = await getBearerForRequest(req);
     if (!bearer) return res.status(401).json({ ok: false, error: "No bearer" });
 
-    const { propertyId, startDate, endDate, filters = {}, limit = 50 } = req.body || {};
+    const { propertyId: rawPropertyId, startDate, endDate, filters = {}, limit = 50 } = req.body || {};
+    let propertyId = rawPropertyId;
+
+    // ChatGPT OAuth: fall back to user's default GA4 property if none provided
+    if (!propertyId && req._chatgptEmail) {
+      const user = await prisma.user.findUnique({
+        where: { email: req._chatgptEmail },
+        select: { ga4PropertyId: true },
+      });
+      if (user?.ga4PropertyId) {
+        propertyId = user.ga4PropertyId;
+        console.log("[ga4] using_default_property", { email: req._chatgptEmail, propertyId });
+      } else {
+        return res.status(400).json({
+          ok: false,
+          error: "No GA4 property is linked to this account. Connect GA4 and set a default property.",
+          code: "PROPERTY_NOT_SET",
+        });
+      }
+    }
+
     if (!propertyId || !startDate || !endDate) {
       return res.status(400).json({ ok: false, error: "propertyId, startDate, endDate are required" });
     }

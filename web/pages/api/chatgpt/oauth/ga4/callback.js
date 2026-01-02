@@ -3,6 +3,7 @@
 
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../../lib/server/google-oauth.js";
 import { saveGA4TokensForConnection } from "../../../../../lib/server/chatgpt-auth.js";
+import { saveGoogleTokensForEmail } from "../../../../../lib/server/ga4-session.js";
 import { kvGetJson, kvSetJson } from "../../../../../lib/server/ga4-session.js";
 import { prefetchGA4Summary } from "../../../../../lib/server/chatgpt-ga4-helpers.js";
 
@@ -65,6 +66,17 @@ export default async function handler(req, res) {
           { email: ui.email, linkedAt: Date.now() },
           60 * 60 * 24 * 30 // 30 days
         );
+        // Store GA4 tokens by email for ChatGPT server-to-server calls
+        try {
+          await saveGoogleTokensForEmail({
+            email: ui.email,
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_in: tokens.expires_in,
+          });
+        } catch (e) {
+          console.error("[chatgpt/ga4/callback] Failed to save tokens by email:", e?.message || e);
+        }
       }
 
       // Get first property for prefetching

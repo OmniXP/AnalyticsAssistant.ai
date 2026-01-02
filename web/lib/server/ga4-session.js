@@ -217,6 +217,30 @@ export async function saveGoogleTokens({ sid, access_token, refresh_token, expir
   return { ok: true };
 }
 
+// ---- Store GA4 tokens keyed by email (ChatGPT server-to-server)
+export async function saveGoogleTokensForEmail({ email, access_token, refresh_token, expires_in }) {
+  if (!email) throw new Error("saveGoogleTokensForEmail: missing email");
+  if (!access_token) throw new Error("saveGoogleTokensForEmail: missing access_token");
+
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = now + Math.max(30, Number(expires_in || 0) - 30);
+  const normalizedEmail = String(email).toLowerCase();
+  const prev = (await getGoogleTokensForEmail(normalizedEmail)) || {};
+  const tokenData = {
+    access_token,
+    refresh_token: refresh_token || prev.refresh_token || "",
+    expiry,
+  };
+  await kvSet(`ga4:user:${normalizedEmail}`, tokenData, 60 * 60 * 24 * 30);
+  return { ok: true };
+}
+
+export async function getGoogleTokensForEmail(email) {
+  if (!email) return null;
+  const normalizedEmail = String(email).toLowerCase();
+  return await kvGet(`ga4:user:${normalizedEmail}`);
+}
+
 export async function getGoogleTokens(sid) {
   if (!sid) return null;
   return await kvGet(`ga4_tokens:${sid}`);
@@ -307,6 +331,26 @@ async function refreshAccessToken(refresh_token) {
 // ---- Public: used by API routes ----
 export async function getBearerForRequest(req) {
   console.log("[getBearerForRequest] Starting, cookie header:", req.headers?.cookie?.substring(0, 100) || "none");
+
+  // ChatGPT OAuth bearer (server-to-server)
+  const authHeader = req.headers?.authorization || "";
+  if (authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7).trim();
+    const tokenData = await kvGetJson(`chatgpt:oauth:token:${token}`);
+    if (tokenData?.email) {
+      const email = String(tokenData.email).toLowerCase();
+      console.log("[ga4] auth=chatgpt", { email });
+      const bearer = await getBearerForEmail(email);
+      if (!bearer) {
+        console.log("[ga4] missing_user_ga4_tokens", { email });
+        throw new Error("Google Analytics not connected. Connect GA4 in the app and try again.");
+      }
+      req._chatgptEmail = email;
+      req._chatgptScope = tokenData.scope || "";
+      return bearer;
+    }
+  }
+
   const sid = readSidFromCookie(req);
   console.log("[getBearerForRequest] Extracted SID:", sid ? sid.substring(0, 20) + "..." : "null");
   if (!sid) {
@@ -369,6 +413,24 @@ export async function getBearerForUser(userId) {
     expires_in: refreshed.expires_in,
   });
   const latest = await getGoogleTokensForUser(userId);
+  return latest?.access_token || refreshed.access_token;
+}
+
+// ---- GA4 bearer by email (ChatGPT server-to-server)
+export async function getBearerForEmail(email) {
+  if (!email) throw new Error("Missing email");
+  const rec = await getGoogleTokensForEmail(email);
+  if (!rec) return null;
+  if (!isExpired(rec)) return rec.access_token;
+  if (!rec.refresh_token) throw new Error("No refresh token");
+  const refreshed = await refreshAccessToken(rec.refresh_token);
+  await saveGoogleTokensForEmail({
+    email,
+    access_token: refreshed.access_token,
+    refresh_token: rec.refresh_token,
+    expires_in: refreshed.expires_in,
+  });
+  const latest = await getGoogleTokensForEmail(email);
   return latest?.access_token || refreshed.access_token;
 }
 

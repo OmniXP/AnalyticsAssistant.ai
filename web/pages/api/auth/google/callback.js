@@ -1,7 +1,9 @@
 // web/pages/api/auth/google/callback.js
 import crypto from "crypto";
+import { getServerSession } from "next-auth/next";
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../server/google-oauth.js";
-import { saveGoogleTokens, ensureSid, readSidFromCookie } from "../../../../server/ga4-session.js";
+import { saveGoogleTokens, saveGoogleTokensForEmail, saveGoogleTokensForUser, ensureSid, readSidFromCookie } from "../../../../server/ga4-session.js";
+import { authOptions } from "../../../lib/authOptions.js";
 
 export default async function handler(req, res) {
   try {
@@ -49,6 +51,29 @@ export default async function handler(req, res) {
     });
     
     console.log("[OAuth Callback] Saved tokens for session:", sid);
+
+    // Also persist tokens by authenticated user (for ChatGPT server-to-server)
+    try {
+      const session = await getServerSession(req, res, authOptions);
+      if (session?.user?.email) {
+        await saveGoogleTokensForEmail({
+          email: session.user.email,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_in: tokens.expires_in,
+        });
+      }
+      if (session?.user?.id) {
+        await saveGoogleTokensForUser({
+          userId: session.user.id,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_in: tokens.expires_in,
+        });
+      }
+    } catch (e) {
+      console.error("[OAuth Callback] Failed to persist tokens by user/email:", e?.message || e);
+    }
 
     // Redirect back to the app (use desiredRedirect from state, or default to /onboard?connected=true)
     // Note: Cookie is already set by ensureSid() above
