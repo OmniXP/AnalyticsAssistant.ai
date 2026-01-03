@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { getServerSession } from "next-auth/next";
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../server/google-oauth.js";
 import { saveGoogleTokens, saveGoogleTokensForEmail, saveGoogleTokensForUser, ensureSid, readSidFromCookie } from "../../../../server/ga4-session.js";
-import { authOptions } from "../../../../../lib/authOptions";
+import { authOptions } from "../../../../lib/authOptions";
 
 export default async function handler(req, res) {
   try {
