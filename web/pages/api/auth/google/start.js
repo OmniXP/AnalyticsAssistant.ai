@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import crypto from "crypto";
 import { buildGoogleAuthUrl } from "../../../../server/google-oauth.js";
 import { kvSetJson } from "../../../../server/ga4-session.js";
-import { authOptions } from "../../../lib/authOptions.js";
+import { authOptions } from "../../../../lib/authOptions";
 
 export default async function handler(req, res) {
   try {
