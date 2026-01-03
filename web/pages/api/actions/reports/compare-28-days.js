@@ -1,5 +1,5 @@
 import prisma from "../../../../lib/prisma.js";
-import { getBearerForUser, kvGetJson, kvSetJson } from "../../../../lib/server/ga4-session.js";
+import { getBearerForUser, getBearerForEmail, kvGetJson, kvSetJson } from "../../../../lib/server/ga4-session.js";
 import { USAGE_LIMITS } from "../../../../lib/server/usage-limits.js";
 import { getBearerFromAuthHeader, validateAccessToken } from "../../../../lib/server/chatgpt-oauth.js";
 
@@ -212,12 +212,32 @@ export default async function handler(req, res) {
   }
 
   try {
-    const bearerHeader = getBearerFromAuthHeader(req);
-    const tokenData = await validateAccessToken(bearerHeader);
-    if (!tokenData?.userId) return unauthorized(res);
+    const authHeader = req.headers?.authorization || "";
+    console.log("[actions] auth_header_present", { hasAuthHeader: !!authHeader });
+
+    let mode = "web";
+    let email = null;
+    let tokenData = null;
+
+    if (authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1] || "";
+      const chatgptToken = await kvGetJson(`chatgpt:oauth:token:${token}`);
+      if (!chatgptToken?.email) {
+        return res.status(401).json({ ok: false, error: "AUTH_REQUIRED" });
+      }
+      mode = "chatgpt";
+      email = chatgptToken.email;
+      console.log("[actions] auth", { mode, emailPresent: !!email });
+    } else {
+      const bearerHeader = getBearerFromAuthHeader(req);
+      tokenData = await validateAccessToken(bearerHeader);
+      if (!tokenData?.userId) return unauthorized(res);
+      mode = "web";
+      console.log("[actions] auth", { mode, emailPresent: false });
+    }
 
     const user = await prisma.user.findUnique({
-      where: { id: tokenData.userId },
+      where: mode === "chatgpt" ? { email: email?.toLowerCase?.() || email } : { id: tokenData.userId },
       select: {
         id: true,
         email: true,
@@ -242,7 +262,17 @@ export default async function handler(req, res) {
     await enforceUsage(user);
 
     const range = buildRanges();
-    const bearer = await getBearerForUser(user.id);
+    const bearer =
+      mode === "chatgpt"
+        ? await getBearerForEmail(user.email)
+        : await getBearerForUser(user.id);
+    if (!bearer) {
+      return res.status(401).json({
+        ok: false,
+        error: "AUTH_REQUIRED",
+        hint: "CONNECT_GA4_IN_APP",
+      });
+    }
 
     const [currentTotals, previousTotals, channels, landingPages, devices] = await Promise.all([
       fetchTotals(propertyId, bearer, range.current),
