@@ -251,26 +251,58 @@ export default async function handler(req, res) {
 
     const { propertyId: bodyPropertyId } = req.body || {};
     const propertyId = bodyPropertyId || user.ga4PropertyId;
+    const hasDefaultProperty = !!propertyId;
     if (!propertyId) {
-      return res.status(400).json({
+      console.log("[actions] auth_required", {
+        email: user.email || email || null,
+        hasUserGa4Tokens: false,
+        hasDefaultProperty,
+      });
+      return res.status(401).json({
         ok: false,
-        error: "No GA4 property is linked to this account. Choose a property in the web app first.",
-        code: "PROPERTY_NOT_SET",
+        error: "AUTH_REQUIRED",
+        hint: "MISSING_DEFAULT_PROPERTY",
       });
     }
 
     await enforceUsage(user);
 
     const range = buildRanges();
-    const bearer =
-      mode === "chatgpt"
-        ? await getBearerForEmail(user.email)
-        : await getBearerForUser(user.id);
+    let bearer = null;
+    try {
+      if (mode === "chatgpt") {
+        const ga4Tokens = await kvGetJson(`ga4:user:${(user.email || email || "").toLowerCase()}`);
+        const hasUserGa4Tokens = !!ga4Tokens;
+        if (!ga4Tokens) {
+          console.log("[actions] auth_required", {
+            email: user.email || email || null,
+            hasUserGa4Tokens,
+            hasDefaultProperty,
+          });
+          return res.status(401).json({
+            ok: false,
+            error: "AUTH_REQUIRED",
+            hint: "MISSING_GA4_USER_TOKENS",
+          });
+        }
+        // Mint GA4 bearer via existing refresh logic (email-based)
+        bearer = await getBearerForEmail(user.email);
+      } else {
+        bearer = await getBearerForUser(user.id);
+      }
+    } catch (e) {
+      bearer = null;
+    }
     if (!bearer) {
+      console.log("[actions] auth_required", {
+        email: user.email || email || null,
+        hasUserGa4Tokens: false,
+        hasDefaultProperty,
+      });
       return res.status(401).json({
         ok: false,
         error: "AUTH_REQUIRED",
-        hint: "CONNECT_GA4_IN_APP",
+        hint: "MISSING_GA4_USER_TOKENS",
       });
     }
 

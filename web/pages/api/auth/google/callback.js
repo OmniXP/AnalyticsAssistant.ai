@@ -62,6 +62,9 @@ export default async function handler(req, res) {
           refresh_token: tokens.refresh_token,
           expires_in: tokens.expires_in,
         });
+        console.log("[OAuth Callback] Saved tokens for user:", session.user.email);
+      } else {
+        console.log("[OAuth Callback] No NextAuth session email; user tokens not saved");
       }
       if (session?.user?.id) {
         await saveGoogleTokensForUser({
