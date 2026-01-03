@@ -33,6 +33,7 @@ paths:
                 ok: false
                 error: Unauthorized
                 code: AUTH_REQUIRED
+                connectUrl: https://app.analyticsassistant.ai/start?source=chatgpt
   /api/actions/reports/compare-28-days:
     post:
       summary: Compare last 28 days vs previous 28 days
@@ -90,6 +91,7 @@ paths:
                 ok: false
                 error: "Google Analytics not connected. Reconnect GA4 in AnalyticsAssistant.ai."
                 code: GA4_NOT_CONNECTED
+                connectUrl: https://app.analyticsassistant.ai/start?source=chatgpt
 components:
   securitySchemes:
     ChatGPTAuth:
@@ -100,4 +102,17 @@ components:
           tokenUrl: https://analyticsassistant.ai/api/chatgpt/oauth/token
           scopes:
             ga4: "Read GA4 performance data"
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        error:
+          type: string
+        code:
+          type: string
+        connectUrl:
+          type: string
+          nullable: true
 

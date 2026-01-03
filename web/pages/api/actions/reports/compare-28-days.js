@@ -257,11 +257,13 @@ export default async function handler(req, res) {
         email: user.email || email || null,
         hasUserGa4Tokens: false,
         hasDefaultProperty,
+        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
       });
       return res.status(401).json({
         ok: false,
         error: "AUTH_REQUIRED",
         hint: "MISSING_DEFAULT_PROPERTY",
+        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
       });
     }
 
@@ -278,11 +280,13 @@ export default async function handler(req, res) {
             email: user.email || email || null,
             hasUserGa4Tokens,
             hasDefaultProperty,
+            connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
           });
           return res.status(401).json({
             ok: false,
             error: "AUTH_REQUIRED",
             hint: "MISSING_GA4_USER_TOKENS",
+            connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
           });
         }
         // Mint GA4 bearer via existing refresh logic (email-based)
@@ -298,11 +302,13 @@ export default async function handler(req, res) {
         email: user.email || email || null,
         hasUserGa4Tokens: false,
         hasDefaultProperty,
+        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
       });
       return res.status(401).json({
         ok: false,
         error: "AUTH_REQUIRED",
         hint: "MISSING_GA4_USER_TOKENS",
+        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
       });
     }
 

@@ -2,7 +2,7 @@
 import crypto from "crypto";
 import { getServerSession } from "next-auth/next";
 import { readAuthState, exchangeCodeForTokens, inferOrigin } from "../../../../server/google-oauth.js";
-import { saveGoogleTokens, saveGoogleTokensForEmail, saveGoogleTokensForUser, ensureSid, readSidFromCookie } from "../../../../server/ga4-session.js";
+import { saveGoogleTokens, saveGoogleTokensForEmail, saveGoogleTokensForUser, ensureSid, readSidFromCookie, kvGetJson } from "../../../../server/ga4-session.js";
 import { authOptions } from "../../../../lib/authOptions";
 
 export default async function handler(req, res) {
@@ -55,14 +55,22 @@ export default async function handler(req, res) {
     // Also persist tokens by authenticated user (for ChatGPT server-to-server)
     try {
       const session = await getServerSession(req, res, authOptions);
-      if (session?.user?.email) {
+      let emailFromState = null;
+      if (state) {
+        try {
+          const stateData = await kvGetJson(`ga4:connect_state:${state}`);
+          if (stateData?.email) emailFromState = stateData.email;
+        } catch {}
+      }
+      const email = session?.user?.email || emailFromState || null;
+      if (email) {
         await saveGoogleTokensForEmail({
-          email: session.user.email,
+          email,
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           expires_in: tokens.expires_in,
         });
-        console.log("[OAuth Callback] Saved tokens for user:", session.user.email);
+        console.log("[OAuth Callback] Saved GA4 tokens for user:", email);
       } else {
         console.log("[OAuth Callback] No NextAuth session email; user tokens not saved");
       }
