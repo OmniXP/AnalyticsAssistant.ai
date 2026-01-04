@@ -58,7 +58,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "invalid_grant" });
   }
 
-  // mark as used with a nonce to avoid parallel redemptions succeeding
+  // Re-check used just before marking to reduce race window
+  const latest = await kvGetJson(codeKey);
+  if (latest?.used) {
+    return res.status(400).json({ error: "invalid_grant" });
+  }
+
+  // mark as used with a nonce to reduce parallel redemptions
   const redeemNonce = crypto.randomUUID();
   await kvSetJson(
     codeKey,

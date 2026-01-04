@@ -3,6 +3,18 @@ import { getBearerForUser, getBearerForEmail, kvGetJson, kvSetJson } from "../..
 import { USAGE_LIMITS } from "../../../../lib/server/usage-limits.js";
 import { getBearerFromAuthHeader, validateAccessToken } from "../../../../lib/server/chatgpt-oauth.js";
 
+function normalisePropertyId(input) {
+  if (!input || typeof input !== "string") return null;
+  let s = input.trim();
+  try {
+    s = decodeURIComponent(s);
+  } catch {}
+  s = s.trim();
+  if (s.startsWith("properties/")) s = s.slice("properties/".length);
+  if (!/^\d+$/.test(s)) return null;
+  return s;
+}
+
 const USAGE_PERIOD_TTL_SECONDS = 60 * 60 * 24 * 45;
 
 function currentPeriodKey() {
@@ -250,15 +262,19 @@ export default async function handler(req, res) {
     if (!user) return unauthorized(res);
 
     const { propertyId: bodyPropertyId } = req.body || {};
-    const propertyId = bodyPropertyId || user.ga4PropertyId;
-    const hasDefaultProperty = !!propertyId;
+    const rawPropertyId = bodyPropertyId || user.ga4PropertyId;
+    const numericPropertyId = normalisePropertyId(rawPropertyId);
+    if (mode === "chatgpt") {
+      console.log("[actions] property normalised", { raw: rawPropertyId, numeric: numericPropertyId });
+    }
+    const hasDefaultProperty = !!numericPropertyId;
     if (mode === "chatgpt") {
       console.log("[actions] default property", {
         email: user.email || email || null,
         ga4PropertyId: !!user.ga4PropertyId,
       });
     }
-    if (!propertyId) {
+    if (!numericPropertyId) {
       console.log("[actions] auth_required", {
         email: user.email || email || null,
         hasUserGa4Tokens: false,
@@ -326,12 +342,13 @@ export default async function handler(req, res) {
       });
     }
 
+    const ga4Property = `properties/${numericPropertyId}`;
     const [currentTotals, previousTotals, channels, landingPages, devices] = await Promise.all([
-      fetchTotals(propertyId, bearer, range.current),
-      fetchTotals(propertyId, bearer, range.previous),
-      fetchDimensionDelta(propertyId, bearer, range.current, range.previous, "sessionDefaultChannelGroup", 5),
-      fetchDimensionDelta(propertyId, bearer, range.current, range.previous, "landingPagePlusQueryString", 5),
-      fetchDimensionDelta(propertyId, bearer, range.current, range.previous, "deviceCategory", 3),
+      fetchTotals(ga4Property, bearer, range.current),
+      fetchTotals(ga4Property, bearer, range.previous),
+      fetchDimensionDelta(ga4Property, bearer, range.current, range.previous, "sessionDefaultChannelGroup", 5),
+      fetchDimensionDelta(ga4Property, bearer, range.current, range.previous, "landingPagePlusQueryString", 5),
+      fetchDimensionDelta(ga4Property, bearer, range.current, range.previous, "deviceCategory", 3),
     ]);
 
     const metrics = [
