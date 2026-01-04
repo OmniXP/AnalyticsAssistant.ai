@@ -64,11 +64,26 @@ export default async function handler(req, res) {
       }
       const email = session?.user?.email || emailFromState || null;
       if (email) {
+        const existing = await kvGetJson(`ga4:user:${email}`);
+        const merged = {
+          ...(existing || {}),
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token || existing?.refresh_token || null,
+          expiry: existing?.expiry,
+          expires_in: tokens.expires_in,
+        };
         await saveGoogleTokensForEmail({
           email,
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          expires_in: tokens.expires_in,
+          access_token: merged.access_token,
+          refresh_token: merged.refresh_token,
+          expires_in: merged.expires_in,
+        });
+        const stored = await kvGetJson(`ga4:user:${email}`);
+        console.log("[OAuth Callback] User token stored?", {
+          email,
+          hasAccess: !!stored?.access_token,
+          hasRefresh: !!stored?.refresh_token,
+          keys: stored ? Object.keys(stored) : null,
         });
         console.log("[OAuth Callback] Saved GA4 tokens for user:", email);
       } else {

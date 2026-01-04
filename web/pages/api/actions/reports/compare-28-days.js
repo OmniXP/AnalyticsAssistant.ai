@@ -263,7 +263,7 @@ export default async function handler(req, res) {
         ok: false,
         error: "AUTH_REQUIRED",
         hint: "MISSING_DEFAULT_PROPERTY",
-        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
+        connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
       });
     }
 
@@ -275,18 +275,26 @@ export default async function handler(req, res) {
       if (mode === "chatgpt") {
         const ga4Tokens = await kvGetJson(`ga4:user:${(user.email || email || "").toLowerCase()}`);
         const hasUserGa4Tokens = !!ga4Tokens;
+        console.log("[actions] user token lookup", {
+          email: user.email || email || null,
+          key: `ga4:user:${(user.email || email || "").toLowerCase()}`,
+          found: !!ga4Tokens,
+          hasAccess: !!ga4Tokens?.access_token,
+          hasRefresh: !!ga4Tokens?.refresh_token,
+          keys: ga4Tokens ? Object.keys(ga4Tokens) : null,
+        });
         if (!ga4Tokens) {
           console.log("[actions] auth_required", {
             email: user.email || email || null,
             hasUserGa4Tokens,
             hasDefaultProperty,
-            connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
+            connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
           });
           return res.status(401).json({
             ok: false,
             error: "AUTH_REQUIRED",
             hint: "MISSING_GA4_USER_TOKENS",
-            connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
+            connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
           });
         }
         // Mint GA4 bearer via existing refresh logic (email-based)
@@ -302,13 +310,13 @@ export default async function handler(req, res) {
         email: user.email || email || null,
         hasUserGa4Tokens: false,
         hasDefaultProperty,
-        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
+        connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
       });
       return res.status(401).json({
         ok: false,
         error: "AUTH_REQUIRED",
         hint: "MISSING_GA4_USER_TOKENS",
-        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
+        connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
       });
     }
 
