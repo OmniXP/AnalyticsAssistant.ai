@@ -252,6 +252,12 @@ export default async function handler(req, res) {
     const { propertyId: bodyPropertyId } = req.body || {};
     const propertyId = bodyPropertyId || user.ga4PropertyId;
     const hasDefaultProperty = !!propertyId;
+    if (mode === "chatgpt") {
+      console.log("[actions] default property", {
+        email: user.email || email || null,
+        ga4PropertyId: !!user.ga4PropertyId,
+      });
+    }
     if (!propertyId) {
       console.log("[actions] auth_required", {
         email: user.email || email || null,

@@ -228,6 +228,7 @@ export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
   params.set("code_challenge_method", "S256");
   params.set("access_type", "offline");
   params.set("prompt", "consent"); // to ensure refresh_token on first grant
+  params.set("include_granted_scopes", "true");
   params.set("state", stateId);
 
   return {
