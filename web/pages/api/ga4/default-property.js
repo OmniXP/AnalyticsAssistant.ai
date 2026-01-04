@@ -3,6 +3,7 @@ import prisma from "../../../lib/prisma.js";
 import { authOptions } from "../../../lib/authOptions.js";
 
 export default async function handler(req, res) {
+  console.log("[ga4/default-property] HIT", { method: req.method, url: req.url });
   if (req.method !== "POST") return res.status(405).end("Method Not Allowed");
 
   try {

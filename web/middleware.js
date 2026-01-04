@@ -18,6 +18,9 @@ function uuid() {
 }
 
 export function middleware(req) {
+  if (req.nextUrl.pathname === "/api/ga4/default-property") {
+    return NextResponse.next();
+  }
   const res = NextResponse.next();
   const url = req.nextUrl;
 
