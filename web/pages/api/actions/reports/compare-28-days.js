@@ -9,6 +9,12 @@ function normalisePropertyId(input) {
   try {
     s = decodeURIComponent(s);
   } catch {}
+  // In case it was double-encoded (e.g., properties%252F123), decode one more time if a % remains.
+  if (/%2F/i.test(s)) {
+    try {
+      s = decodeURIComponent(s);
+    } catch {}
+  }
   s = s.trim();
   if (s.startsWith("properties/")) s = s.slice("properties/".length);
   if (!/^\d+$/.test(s)) return null;
@@ -88,7 +94,7 @@ function buildRanges() {
 }
 
 async function runReport(propertyId, bearer, body) {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`;
+  const url = `https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`;
   const r = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
