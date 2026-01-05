@@ -1,14 +1,15 @@
 // web/pages/onboard.js
 // Simple onboarding page with one-click GA4 connection
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
-import ConnectGA4Button from '../components/ConnectGA4Button';
+import { useEffect, useState } from "react";
+import { useRouter } from "next/router";
+import ConnectGA4Button from "../components/ConnectGA4Button";
 
 export default function OnboardPage() {
   const router = useRouter();
   const [connected, setConnected] = useState(false);
   const [checking, setChecking] = useState(true);
+  const isChatGPTSource = router.query.source === "chatgpt";
 
   // Check if GA4 is already connected
   useEffect(() => {
@@ -33,7 +34,7 @@ export default function OnboardPage() {
 
   // Handle connected query param (from OAuth callback)
   useEffect(() => {
-    if (router.query.connected === 'true') {
+    if (router.query.connected === "true") {
       setConnected(true);
       // Redirect to dashboard after showing success message
       setTimeout(() => {
@@ -55,8 +56,14 @@ export default function OnboardPage() {
     return (
       <main className="min-h-screen flex flex-col items-center justify-center text-center px-4">
         <div className="text-green-600 text-4xl mb-4">✅</div>
-        <h1 className="text-2xl font-bold mb-2">GA4 Connected Successfully</h1>
-        <p className="text-gray-600 mb-4">Fetching your latest insights...</p>
+        <h1 className="text-2xl font-bold mb-2">
+          {isChatGPTSource ? "GA4 connected for ChatGPT" : "GA4 Connected Successfully"}
+        </h1>
+        <p className="text-gray-600 mb-4">
+          {isChatGPTSource
+            ? "Nice — I’ll use this connection to pull fresh GA4 insights when you ask from ChatGPT."
+            : "Fetching your latest insights..."}
+        </p>
         <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
       </main>
     );
@@ -64,9 +71,13 @@ export default function OnboardPage() {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center text-center px-4">
-      <h1 className="text-3xl font-bold mb-2">AnalyticsAssistant.ai</h1>
+      <h1 className="text-3xl font-bold mb-2">
+        {isChatGPTSource ? "Connect GA4 for ChatGPT" : "AnalyticsAssistant.ai"}
+      </h1>
       <p className="text-gray-600 max-w-md mb-8">
-        Connect your Google Analytics 4 once below — I'll automatically pull your latest insights and show you what changed, why, and what to do next.
+        {isChatGPTSource
+          ? "Connect your Google Analytics 4 once below — then I’ll use it in ChatGPT to pull fresh insights and explain what changed, why, and what to do next."
+          : "Connect your Google Analytics 4 once below — I'll automatically pull your latest insights and show you what changed, why, and what to do next."}
       </p>
 
       <ConnectGA4Button />

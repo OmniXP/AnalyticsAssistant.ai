@@ -306,29 +306,10 @@ export default async function handler(req, res) {
     const range = buildRanges();
     let bearer = null;
     try {
-      if (mode === "chatgpt") {
-        const ga4Tokens = await kvGetJson(`ga4:user:${(user.email || email || "").toLowerCase()}`);
-        const hasUserGa4Tokens = !!ga4Tokens;
-        if (!ga4Tokens) {
-          const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
-          console.log("[actions] auth_required", {
-            email: user.email || email || null,
-            hasUserGa4Tokens,
-            hasDefaultProperty,
-            connectUrl,
-          });
-          return res.status(401).json({
-            ok: false,
-            code: "AUTH_REQUIRED",
-            message: "Connect Google Analytics 4 in AnalyticsAssistant.ai to run this report.",
-            connectUrl,
-          });
-        }
-        // Mint GA4 bearer via existing refresh logic (email-based)
-        bearer = await getBearerForEmail(user.email);
-      } else {
-        bearer = await getBearerForUser(user.id);
-      }
+      // Prefer GA4 tokens keyed by userId for both ChatGPT and web flows.
+      // This avoids any email case/alias mismatch and relies on the
+      // canonical userId-based storage populated during GA4 connect.
+      bearer = await getBearerForUser(user.id);
     } catch (e) {
       bearer = null;
     }
@@ -336,14 +317,13 @@ export default async function handler(req, res) {
       const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
       console.log("[actions] auth_required", {
         email: user.email || email || null,
-        hasUserGa4Tokens: false,
         hasDefaultProperty,
         connectUrl,
       });
       return res.status(401).json({
         ok: false,
         code: "AUTH_REQUIRED",
-        message: "Connect Google Analytics 4 in AnalyticsAssistant.ai to run this report.",
+        message: "Your Google Analytics 4 connection could not be authenticated. Reconnect GA4 in AnalyticsAssistant.ai, then retry.",
         connectUrl,
       });
     }

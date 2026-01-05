@@ -225,14 +225,28 @@ export default function StartPage({ signedIn, userEmail }) {
     <div className="aa-start">
       <div className="aa-shell">
         <section className="aa-hero aa-start__hero">
-          <p className="aa-hero__eyebrow">Upgrade in two quick steps</p>
+          <p className="aa-hero__eyebrow">
+            {isChatGPTSource ? "Connect GA4 for ChatGPT in two quick steps" : "Upgrade in two quick steps"}
+          </p>
           <h1 className="aa-hero__title aa-hero__title--tight">
-            Unlock Premium GA4 insights with the same Google account you use for Analytics.
+            {isChatGPTSource
+              ? "Connect Google Analytics 4 so I can summarise your performance inside ChatGPT."
+              : "Unlock Premium GA4 insights with the same Google account you use for Analytics."}
           </h1>
           <p className="aa-hero__subtitle">
-            We link subscriptions to{" "}
-            <strong>{userEmail || "the Google account you sign in with"}</strong> so your billing,
-            GA4 permissions, and AI summaries stay in sync.
+            {isChatGPTSource ? (
+              <>
+                Use{" "}
+                <strong>{userEmail || "the same Google account you use in Google Analytics"}</strong>{" "}
+                so your GA4 data and ChatGPT summaries stay in sync.
+              </>
+            ) : (
+              <>
+                We link subscriptions to{" "}
+                <strong>{userEmail || "the Google account you sign in with"}</strong> so your billing,
+                GA4 permissions, and AI summaries stay in sync.
+              </>
+            )}
           </p>
 
           {isChatGPTSource && (
@@ -245,7 +259,10 @@ export default function StartPage({ signedIn, userEmail }) {
                 <li>Connect Google Analytics 4 and choose a default property.</li>
                 <li>Return to ChatGPT and rerun your report.</li>
               </ol>
-              <div className="aa-start__chatgpt-actions" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div
+                className="aa-start__chatgpt-actions"
+                style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", alignItems: "center" }}
+              >
                 <Link
                   href="/connections?source=chatgpt"
                   className="aa-button aa-button--primary"
@@ -274,24 +291,26 @@ export default function StartPage({ signedIn, userEmail }) {
               </Link>
             </div>
           ) : (
-            <>
-              <div className="aa-start__plans">
-                {PLAN_OPTIONS.map((option) => (
-                  <PlanCard
-                    key={option.plan}
-                    option={option}
-                    loadingPlan={loadingPlan}
-                    onSelect={handleUpgrade}
-                    priceSuffix="/ seat"
-                  />
-                ))}
-              </div>
-              <p className="aa-start__note">
-                We’ll open Stripe in a new tab and link this plan to{" "}
-                <strong>{userEmail || "your Google login"}</strong>. You can manage or cancel anytime
-                via the billing portal.
-              </p>
-            </>
+            !isChatGPTSource && (
+              <>
+                <div className="aa-start__plans">
+                  {PLAN_OPTIONS.map((option) => (
+                    <PlanCard
+                      key={option.plan}
+                      option={option}
+                      loadingPlan={loadingPlan}
+                      onSelect={handleUpgrade}
+                      priceSuffix="/ seat"
+                    />
+                  ))}
+                </div>
+                <p className="aa-start__note">
+                  We’ll open Stripe in a new tab and link this plan to{" "}
+                  <strong>{userEmail || "your Google login"}</strong>. You can manage or cancel anytime
+                  via the billing portal.
+                </p>
+              </>
+            )
           )}
 
           {checkoutError && <p className="aa-start__error">{checkoutError}</p>}
@@ -307,28 +326,32 @@ export default function StartPage({ signedIn, userEmail }) {
 
           {checkoutNotice && <div className="aa-alert aa-alert--ghost">{checkoutNotice}</div>}
 
-          <div className="aa-billing-hint">
-            <span>
-              {signedIn
-                ? "Already upgraded? Open your Stripe billing portal in one click."
-                : "Already upgraded? Sign in so we can open your Stripe billing portal."}
-            </span>
-            <button
-              type="button"
-              className="aa-button aa-button--ghost"
-              onClick={handleBillingPortal}
-              disabled={billingLoading}
-            >
-              {billingLoading ? "Opening billing portal…" : "Manage billing"}
-            </button>
-            {billingError && <p className="aa-billing-hint__error">{billingError}</p>}
-          </div>
+          {!isChatGPTSource && (
+            <>
+              <div className="aa-billing-hint">
+                <span>
+                  {signedIn
+                    ? "Already upgraded? Open your Stripe billing portal in one click."
+                    : "Already upgraded? Sign in so we can open your Stripe billing portal."}
+                </span>
+                <button
+                  type="button"
+                  className="aa-button aa-button--ghost"
+                  onClick={handleBillingPortal}
+                  disabled={billingLoading}
+                >
+                  {billingLoading ? "Opening billing portal…" : "Manage billing"}
+                </button>
+                {billingError && <p className="aa-billing-hint__error">{billingError}</p>}
+              </div>
 
-          <div className="aa-feature-callouts">
-            {PREMIUM_PROMISES.map((promise) => (
-              <span key={promise}>{promise}</span>
-            ))}
-          </div>
+              <div className="aa-feature-callouts">
+                {PREMIUM_PROMISES.map((promise) => (
+                  <span key={promise}>{promise}</span>
+                ))}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="aa-start__grid">
