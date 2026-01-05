@@ -441,11 +441,18 @@ export default async function handler(req, res) {
     if (e?.code === "RATE_LIMITED") {
       return res.status(e.status || 429).json({ ok: false, error: msg, code: e.code, limit: e.meta });
     }
-    if (msg.includes("Google session expired") || msg.includes("No refresh token") || msg.includes("Google Analytics not connected")) {
+    if (
+      msg.includes("Google session expired") ||
+      msg.includes("No refresh token") ||
+      msg.includes("Google Analytics not connected") ||
+      e?.status === 401
+    ) {
+      const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
       return res.status(401).json({
         ok: false,
-        error: "Google Analytics not connected. Reconnect GA4 in AnalyticsAssistant.ai.",
-        code: "GA4_NOT_CONNECTED",
+        code: "AUTH_REQUIRED",
+        message: "Your Google Analytics 4 connection could not be authenticated. Reconnect GA4 in AnalyticsAssistant.ai, then retry.",
+        connectUrl,
       });
     }
     console.error("[actions/compare-28-days] Error:", e);
