@@ -79,13 +79,6 @@ export default async function handler(req, res) {
           refresh_token: merged.refresh_token,
           expires_in: merged.expires_in,
         });
-        const stored = await kvGetJson(`ga4:user:${normalizedEmail}`);
-        console.log("[OAuth Callback] User token stored?", {
-          email: normalizedEmail,
-          hasAccess: !!stored?.access_token,
-          hasRefresh: !!stored?.refresh_token,
-          keys: stored ? Object.keys(stored) : null,
-        });
         console.log("[OAuth Callback] Saved GA4 tokens for user:", normalizedEmail);
       } else {
         console.log("[OAuth Callback] No NextAuth session email; user tokens not saved");

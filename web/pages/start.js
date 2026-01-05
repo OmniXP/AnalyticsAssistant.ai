@@ -138,10 +138,33 @@ export default function StartPage({ signedIn, userEmail }) {
         : Array.isArray(router?.query?.callbackUrl)
         ? router.query.callbackUrl[0]
         : "";
-    const callbackUrl =
-      incomingCallback && incomingCallback.includes("/api/chatgpt/oauth/")
-        ? incomingCallback
-        : resolveCallbackUrl("/start?upgrade=1");
+
+    let callbackUrl = resolveCallbackUrl("/start?upgrade=1");
+
+    if (incomingCallback) {
+      let decoded = incomingCallback;
+      try {
+        decoded = decodeURIComponent(incomingCallback);
+      } catch {
+        decoded = incomingCallback;
+      }
+
+      try {
+        // Treat decoded as absolute or relative URL against current origin
+        const url = new URL(decoded, typeof window !== "undefined" ? window.location.origin : undefined);
+        const sameOrigin =
+          typeof window !== "undefined" && url.origin === window.location.origin;
+        if (sameOrigin && url.pathname.startsWith("/api/chatgpt/oauth/")) {
+          callbackUrl = url.toString();
+        }
+      } catch {
+        // Fallback: only accept relative paths that start with the ChatGPT OAuth prefix
+        if (decoded.startsWith("/api/chatgpt/oauth/")) {
+          callbackUrl = resolveCallbackUrl(decoded);
+        }
+      }
+    }
+
     trackEvent("signup_started", { entry_point: "start_page" });
     signIn("google", { callbackUrl });
   }

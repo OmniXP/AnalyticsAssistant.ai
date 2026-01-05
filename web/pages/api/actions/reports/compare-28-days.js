@@ -3,6 +3,19 @@ import { getBearerForUser, getBearerForEmail, kvGetJson, kvSetJson } from "../..
 import { USAGE_LIMITS } from "../../../../lib/server/usage-limits.js";
 import { getBearerFromAuthHeader, validateAccessToken } from "../../../../lib/server/chatgpt-oauth.js";
 
+const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_URL || "https://app.analyticsassistant.ai";
+
+function buildConnectUrl(nextPath = "") {
+  try {
+    const url = new URL("/start", APP_ORIGIN);
+    url.searchParams.set("source", "chatgpt");
+    if (nextPath) url.searchParams.set("next", nextPath);
+    return url.toString();
+  } catch {
+    return "https://app.analyticsassistant.ai/start?source=chatgpt";
+  }
+}
+
 function normalisePropertyId(input) {
   if (!input || typeof input !== "string") return null;
   let s = input.trim();
@@ -231,8 +244,6 @@ export default async function handler(req, res) {
 
   try {
     const authHeader = req.headers?.authorization || "";
-    console.log("[actions] auth_header_present", { hasAuthHeader: !!authHeader });
-
     let mode = "web";
     let email = null;
     let tokenData = null;
@@ -241,17 +252,20 @@ export default async function handler(req, res) {
       const token = authHeader.split(" ")[1] || "";
       const chatgptToken = await kvGetJson(`chatgpt:oauth:token:${token}`);
       if (!chatgptToken?.email) {
-        return res.status(401).json({ ok: false, error: "AUTH_REQUIRED" });
+        return res.status(401).json({
+          ok: false,
+          code: "AUTH_REQUIRED",
+          message: "Missing or invalid ChatGPT bearer token.",
+          connectUrl: buildConnectUrl("/api/actions/reports/compare-28-days"),
+        });
       }
       mode = "chatgpt";
       email = chatgptToken.email;
-      console.log("[actions] auth", { mode, emailPresent: !!email });
     } else {
       const bearerHeader = getBearerFromAuthHeader(req);
       tokenData = await validateAccessToken(bearerHeader);
       if (!tokenData?.userId) return unauthorized(res);
       mode = "web";
-      console.log("[actions] auth", { mode, emailPresent: false });
     }
 
     const user = await prisma.user.findUnique({
@@ -270,28 +284,20 @@ export default async function handler(req, res) {
     const { propertyId: bodyPropertyId } = req.body || {};
     const rawPropertyId = bodyPropertyId || user.ga4PropertyId;
     const numericPropertyId = normalisePropertyId(rawPropertyId);
-    if (mode === "chatgpt") {
-      console.log("[actions] property normalised", { raw: rawPropertyId, numeric: numericPropertyId });
-    }
     const hasDefaultProperty = !!numericPropertyId;
-    if (mode === "chatgpt") {
-      console.log("[actions] default property", {
-        email: user.email || email || null,
-        ga4PropertyId: !!user.ga4PropertyId,
-      });
-    }
     if (!numericPropertyId) {
+      const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
       console.log("[actions] auth_required", {
         email: user.email || email || null,
         hasUserGa4Tokens: false,
         hasDefaultProperty,
-        connectUrl: "https://app.analyticsassistant.ai/start?source=chatgpt",
+        connectUrl,
       });
       return res.status(401).json({
         ok: false,
-        error: "AUTH_REQUIRED",
-        hint: "MISSING_DEFAULT_PROPERTY",
-        connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
+        code: "DEFAULT_PROPERTY_REQUIRED",
+        message: "Select a default GA4 property in AnalyticsAssistant.ai, then retry this report.",
+        connectUrl,
       });
     }
 
@@ -303,26 +309,19 @@ export default async function handler(req, res) {
       if (mode === "chatgpt") {
         const ga4Tokens = await kvGetJson(`ga4:user:${(user.email || email || "").toLowerCase()}`);
         const hasUserGa4Tokens = !!ga4Tokens;
-        console.log("[actions] user token lookup", {
-          email: user.email || email || null,
-          key: `ga4:user:${(user.email || email || "").toLowerCase()}`,
-          found: !!ga4Tokens,
-          hasAccess: !!ga4Tokens?.access_token,
-          hasRefresh: !!ga4Tokens?.refresh_token,
-          keys: ga4Tokens ? Object.keys(ga4Tokens) : null,
-        });
         if (!ga4Tokens) {
+          const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
           console.log("[actions] auth_required", {
             email: user.email || email || null,
             hasUserGa4Tokens,
             hasDefaultProperty,
-            connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
+            connectUrl,
           });
           return res.status(401).json({
             ok: false,
-            error: "AUTH_REQUIRED",
-            hint: "MISSING_GA4_USER_TOKENS",
-            connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
+            code: "AUTH_REQUIRED",
+            message: "Connect Google Analytics 4 in AnalyticsAssistant.ai to run this report.",
+            connectUrl,
           });
         }
         // Mint GA4 bearer via existing refresh logic (email-based)
@@ -334,17 +333,18 @@ export default async function handler(req, res) {
       bearer = null;
     }
     if (!bearer) {
+      const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
       console.log("[actions] auth_required", {
         email: user.email || email || null,
         hasUserGa4Tokens: false,
         hasDefaultProperty,
-        connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
+        connectUrl,
       });
       return res.status(401).json({
         ok: false,
-        error: "AUTH_REQUIRED",
-        hint: "MISSING_GA4_USER_TOKENS",
-        connectUrl: "https://app.analyticsassistant.ai/connections?source=chatgpt",
+        code: "AUTH_REQUIRED",
+        message: "Connect Google Analytics 4 in AnalyticsAssistant.ai to run this report.",
+        connectUrl,
       });
     }
 
