@@ -12,6 +12,7 @@ import { requestBillingPortalUrl } from "../lib/billing";
 import { trackEvent } from "../lib/analytics";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
+const CHATGPT_GPT_URL = process.env.NEXT_PUBLIC_CHATGPT_GPT_URL || "https://chat.openai.com";
 
 function resolveCallbackUrl(pathname) {
   if (typeof window !== "undefined") {
@@ -105,6 +106,8 @@ export default function StartPage({ signedIn, userEmail }) {
 
   const errorCode = router?.query?.error;
   const checkoutParam = router?.query?.checkout;
+  const sourceParam = router?.query?.source;
+  const isChatGPTSource = sourceParam === "chatgpt";
 
   useEffect(() => {
     if (!router.isReady || signedIn) return;
@@ -231,6 +234,35 @@ export default function StartPage({ signedIn, userEmail }) {
             <strong>{userEmail || "the Google account you sign in with"}</strong> so your billing,
             GA4 permissions, and AI summaries stay in sync.
           </p>
+
+          {isChatGPTSource && (
+            <div className="aa-start__chatgpt-onboarding" style={{ marginTop: 24 }}>
+              <p className="aa-start__note" style={{ fontWeight: 500 }}>
+                Using AnalyticsAssistant from ChatGPT?
+              </p>
+              <ol style={{ margin: "8px 0 16px 20px", color: "#4b5563", fontSize: 14 }}>
+                <li>Sign in with the same Google account you use in Google Analytics.</li>
+                <li>Connect Google Analytics 4 and choose a default property.</li>
+                <li>Return to ChatGPT and rerun your report.</li>
+              </ol>
+              <div className="aa-start__chatgpt-actions" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Link
+                  href="/connections?source=chatgpt"
+                  className="aa-button aa-button--primary"
+                >
+                  Connect GA4
+                </Link>
+                <a
+                  href={CHATGPT_GPT_URL}
+                  className="aa-button aa-button--ghost"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Return to ChatGPT
+                </a>
+              </div>
+            </div>
+          )}
 
           {!signedIn ? (
             <div className="aa-hero__actions">
