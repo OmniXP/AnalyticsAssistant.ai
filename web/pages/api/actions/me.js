@@ -6,12 +6,12 @@ const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_URL || "https://app.analyticsassi
 
 function buildConnectUrl(nextPath = "") {
   try {
-    const url = new URL("/start", APP_ORIGIN);
+    const url = new URL("/onboard", APP_ORIGIN);
     url.searchParams.set("source", "chatgpt");
     if (nextPath) url.searchParams.set("next", nextPath);
     return url.toString();
   } catch {
-    return "https://app.analyticsassistant.ai/start?source=chatgpt";
+    return "https://app.analyticsassistant.ai/onboard?source=chatgpt";
   }
 }
 
