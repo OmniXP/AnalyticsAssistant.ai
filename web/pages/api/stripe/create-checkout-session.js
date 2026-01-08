@@ -6,6 +6,10 @@ import prisma from "../../../lib/prisma";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 function resolveBaseUrl(req) {
+  // Prefer the same public app URL used elsewhere (e.g. https://app.analyticsassistant.ai)
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  }
   if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/$/, "");
   if (process.env.NEXTAUTH_URL) return process.env.NEXTAUTH_URL.replace(/\/$/, "");
   const proto = (req.headers["x-forwarded-proto"] || "http").toString();
