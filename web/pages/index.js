@@ -1180,14 +1180,14 @@ export default function Home() {
 
   const quickTabs = [
     { id: "qt-channels", label: "Channels overview", targetId: "hero-channels" },
-    { id: "qt-top-pages", label: "Top pages (views)", targetId: "section-pages-funnel" },
-    { id: "qt-source-medium", label: "Source / Medium", targetId: "section-pages-funnel" },
-    { id: "qt-ecommerce", label: "E-commerce KPIs", targetId: "section-pages-funnel" },
-    { id: "qt-checkout", label: "Checkout funnel", targetId: "section-pages-funnel" },
+    { id: "qt-top-pages", label: "Top pages (views)", targetId: "kpi-top-pages" },
+    { id: "qt-source-medium", label: "Source / Medium", targetId: "kpi-source-medium" },
+    { id: "qt-ecommerce", label: "E-commerce KPIs", targetId: "kpi-ecommerce" },
+    { id: "qt-checkout", label: "Checkout funnel", targetId: "kpi-checkout" },
     { id: "qt-trends", label: "Trends over time", targetId: "section-trends" },
-    { id: "qt-campaigns", label: "Campaigns", targetId: "section-campaigns" },
-    { id: "qt-campaign-drilldown", label: "Campaign drill-down", targetId: "section-campaigns" },
-    { id: "qt-campaign-metrics", label: "Campaigns (KPI metrics)", targetId: "section-campaigns" },
+    { id: "qt-campaigns", label: "Campaigns", targetId: "kpi-campaigns" },
+    { id: "qt-campaign-drilldown", label: "Campaign drill-down", targetId: "kpi-campaign-drilldown" },
+    { id: "qt-campaign-metrics", label: "Campaigns (KPI metrics)", targetId: "kpi-campaign-metrics" },
     { id: "qt-landing", label: "Landing Pages × Attribution", targetId: "section-landing-pages" },
     { id: "qt-kpi-alerts", label: "KPI Targets & Alerts / Digest", targetId: "section-kpi-alerts" },
   ];
