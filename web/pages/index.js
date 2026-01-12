@@ -767,6 +767,8 @@ export default function Home() {
 
   // Saved views notice
   const [saveNotice, setSaveNotice] = useState("");
+  // UI helpers
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   // Refs
   const topAnchorRef = useRef(null);
@@ -902,6 +904,20 @@ export default function Home() {
       if (pollId) clearInterval(pollId);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  // Back-to-top visibility
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onScroll = () => {
+      const y = window.scrollY || document.documentElement.scrollTop || 0;
+      setShowBackToTop(y > 400);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => {
+      window.removeEventListener("scroll", onScroll);
     };
   }, []);
 
@@ -1161,6 +1177,25 @@ export default function Home() {
       setPendingScroll(false);
     }
   }, [pendingScroll, loading, rows.length]);
+
+  const quickTabs = [
+    { id: "qt-channels", label: "Channels overview", targetId: "hero-channels" },
+    { id: "qt-pages-funnel", label: "Top pages & funnel", targetId: "section-pages-funnel" },
+    { id: "qt-campaigns", label: "Campaigns", targetId: "section-campaigns" },
+    { id: "qt-landing", label: "Landing pages", targetId: "section-landing-pages" },
+    { id: "qt-kpi-alerts", label: "KPI alerts", targetId: "section-kpi-alerts" },
+  ];
+
+  const scrollToSection = (targetId) => {
+    try {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    } catch {
+      // no-op
+    }
+  };
 
   const runDisabled = loading || !hasProperty; // report only blocked by property presence
   const controlFieldStyle = {
@@ -1510,6 +1545,46 @@ export default function Home() {
         )}
       </div>
 
+      {/* Quick KPI navigation */}
+      <div
+        className="aa-dashboard-quick-tabs"
+        style={{
+          marginTop: 16,
+          overflowX: "auto",
+          paddingBottom: 4,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            minWidth: "max-content",
+          }}
+        >
+          {quickTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => scrollToSection(tab.targetId)}
+              style={{
+                borderRadius: 999,
+                border: `1px solid ${COLORS.border}`,
+                background: "var(--aa-color-surface)",
+                color: COLORS.subtext,
+                padding: "8px 14px",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+                boxShadow: "0 10px 20px rgba(15,23,42,0.08)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Saved Views (Premium) */}
       <div style={{ marginTop: 12 }}>
         <SavedViews
@@ -1682,97 +1757,100 @@ export default function Home() {
         </FrostCard>
       )}
 
-      {/* MOBILE-ONLY ACCORDION FOR KEY KPIs */}
-      <div className="mobile-accordion" style={{ marginTop: 12 }}>
-        <MobileAccordionSection title="Top pages (views)">
-          <TopPages
-            key={`tp-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-        </MobileAccordionSection>
+      {/* KEY KPIs: Top pages, source/medium, e‑commerce, funnel */}
+      <div id="section-pages-funnel" style={{ marginTop: 12 }}>
+        {/* MOBILE-ONLY ACCORDION FOR KEY KPIs */}
+        <div className="mobile-accordion">
+          <MobileAccordionSection title="Top pages (views)">
+            <TopPages
+              key={`tp-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+          </MobileAccordionSection>
 
-        <MobileAccordionSection title="Source / Medium">
-          <SourceMedium
-            key={`sm-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-        </MobileAccordionSection>
+          <MobileAccordionSection title="Source / Medium">
+            <SourceMedium
+              key={`sm-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+          </MobileAccordionSection>
 
-        <MobileAccordionSection title="E-commerce KPIs">
-          <EcommerceKPIs
-            key={`ekpi-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-        </MobileAccordionSection>
+          <MobileAccordionSection title="E-commerce KPIs">
+            <EcommerceKPIs
+              key={`ekpi-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+          </MobileAccordionSection>
 
-        <MobileAccordionSection title="Checkout funnel (event counts)">
-          <CheckoutFunnel
-            key={`cf-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-        </MobileAccordionSection>
-      </div>
+          <MobileAccordionSection title="Checkout funnel (event counts)">
+            <CheckoutFunnel
+              key={`cf-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+          </MobileAccordionSection>
+        </div>
 
-      {/* DESKTOP/VISIBLE SECTIONS (non-accordion) */}
-      <div style={{ display: "grid", gap: 8 }}>
-        <HideOnMobile>
-          <TopPages
-            key={`tp2-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-          <SourceMedium
-            key={`sm2-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-          <EcommerceKPIs
-            key={`ekpi2-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-          <CheckoutFunnel
-            key={`cf2-${dashKey}`}
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            resetSignal={refreshSignal}
-            premium={premium}
-          />
-        </HideOnMobile>
+        {/* DESKTOP/VISIBLE SECTIONS (non-accordion) */}
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          <HideOnMobile>
+            <TopPages
+              key={`tp2-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+            <SourceMedium
+              key={`sm2-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+            <EcommerceKPIs
+              key={`ekpi2-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+            <CheckoutFunnel
+              key={`cf2-${dashKey}`}
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              resetSignal={refreshSignal}
+              premium={premium}
+            />
+          </HideOnMobile>
+        </div>
       </div>
 
       {/* PREMIUM SECTIONS */}
@@ -1786,45 +1864,49 @@ export default function Home() {
         />
       </PremiumGate>
 
-      <PremiumGate label="Campaigns" premium={premium}>
-        <Campaigns
-          propertyId={propertyId}
-          startDate={startDate}
-          endDate={endDate}
-          filters={appliedFilters}
-          premium={premium}
-        />
-      </PremiumGate>
+      <div id="section-campaigns">
+        <PremiumGate label="Campaigns" premium={premium}>
+          <Campaigns
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            premium={premium}
+          />
+        </PremiumGate>
 
-      <PremiumGate label="Campaign drill-down" premium={premium}>
-        <CampaignDrilldown
-          propertyId={propertyId}
-          startDate={startDate}
-          endDate={endDate}
-          filters={appliedFilters}
-          premium={premium}
-        />
-      </PremiumGate>
+        <PremiumGate label="Campaign drill-down" premium={premium}>
+          <CampaignDrilldown
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            premium={premium}
+          />
+        </PremiumGate>
 
-      <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
-        <CampaignsOverview
-          propertyId={propertyId}
-          startDate={startDate}
-          endDate={endDate}
-          filters={appliedFilters}
-          premium={premium}
-        />
-      </PremiumGate>
+        <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
+          <CampaignsOverview
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            premium={premium}
+          />
+        </PremiumGate>
+      </div>
 
-      <PremiumGate label="Landing Pages × Attribution" premium={premium}>
-        <LandingPages
-          propertyId={propertyId}
-          startDate={startDate}
-          endDate={endDate}
-          filters={appliedFilters}
-          premium={premium}
-        />
-      </PremiumGate>
+      <div id="section-landing-pages">
+        <PremiumGate label="Landing Pages × Attribution" premium={premium}>
+          <LandingPages
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            premium={premium}
+          />
+        </PremiumGate>
+      </div>
 
       {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
         <Products
@@ -1838,9 +1920,11 @@ export default function Home() {
       )}
 
       {/* KPI Targets & Alerts / Digest (Premium) */}
-      <PremiumGate label="KPI Targets & Alerts / Digest" premium={premium}>
-        <KpiAndAlerts />
-      </PremiumGate>
+      <div id="section-kpi-alerts">
+        <PremiumGate label="KPI Targets & Alerts / Digest" premium={premium}>
+          <KpiAndAlerts />
+        </PremiumGate>
+      </div>
 
       {/* Raw JSON (debug) */}
       {result ? (
@@ -1859,6 +1943,36 @@ export default function Home() {
           </pre>
         </details>
       ) : null}
+
+      {showBackToTop && (
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }
+          }}
+          className="aa-back-to-top"
+          style={{
+            position: "fixed",
+            right: 16,
+            bottom: 16,
+            zIndex: 50,
+            borderRadius: 999,
+            border: "none",
+            padding: "10px 12px",
+            background: "var(--aa-color-surface)",
+            boxShadow: "0 10px 25px rgba(15,23,42,0.25)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+          }}
+          aria-label="Back to top"
+        >
+          <span style={{ fontSize: 18, lineHeight: 1 }}>↑</span>
+        </button>
+      )}
 
       </main>
     </>
