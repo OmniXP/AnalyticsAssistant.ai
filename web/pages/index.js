@@ -1819,6 +1819,7 @@ export default function Home() {
         {/* DESKTOP/VISIBLE SECTIONS (non-accordion) */}
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           <HideOnMobile>
+            <div id="kpi-top-pages" />
             <TopPages
               key={`tp2-${dashKey}`}
               propertyId={propertyId}
@@ -1828,6 +1829,7 @@ export default function Home() {
               resetSignal={refreshSignal}
               premium={premium}
             />
+            <div id="kpi-source-medium" />
             <SourceMedium
               key={`sm2-${dashKey}`}
               propertyId={propertyId}
@@ -1837,6 +1839,7 @@ export default function Home() {
               resetSignal={refreshSignal}
               premium={premium}
             />
+            <div id="kpi-ecommerce" />
             <EcommerceKPIs
               key={`ekpi2-${dashKey}`}
               propertyId={propertyId}
@@ -1846,6 +1849,7 @@ export default function Home() {
               resetSignal={refreshSignal}
               premium={premium}
             />
+            <div id="kpi-checkout" />
             <CheckoutFunnel
               key={`cf2-${dashKey}`}
               propertyId={propertyId}
@@ -1873,35 +1877,41 @@ export default function Home() {
       </div>
 
       <div id="section-campaigns">
-        <PremiumGate label="Campaigns" premium={premium}>
-          <Campaigns
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            premium={premium}
-          />
-        </PremiumGate>
+        <div id="kpi-campaigns">
+          <PremiumGate label="Campaigns" premium={premium}>
+            <Campaigns
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              premium={premium}
+            />
+          </PremiumGate>
+        </div>
 
-        <PremiumGate label="Campaign drill-down" premium={premium}>
-          <CampaignDrilldown
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            premium={premium}
-          />
-        </PremiumGate>
+        <div id="kpi-campaign-drilldown">
+          <PremiumGate label="Campaign drill-down" premium={premium}>
+            <CampaignDrilldown
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              premium={premium}
+            />
+          </PremiumGate>
+        </div>
 
-        <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
-          <CampaignsOverview
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            premium={premium}
-          />
-        </PremiumGate>
+        <div id="kpi-campaign-metrics">
+          <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
+            <CampaignsOverview
+              propertyId={propertyId}
+              startDate={startDate}
+              endDate={endDate}
+              filters={appliedFilters}
+              premium={premium}
+            />
+          </PremiumGate>
+        </div>
       </div>
 
       <div id="section-landing-pages">
