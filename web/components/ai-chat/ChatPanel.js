@@ -101,6 +101,11 @@ export default function ChatPanel({
               Set GA4 property
             </a>
           ) : null}
+          {errorCode === "AUTH_REQUIRED" && error.fixUrl ? (
+            <a className="aa-chat-cta" href={error.fixUrl} target="_blank" rel="noreferrer">
+              Sign in to continue
+            </a>
+          ) : null}
           {errorCode === "DATE_RANGE_LIMIT" ? (
             <button type="button" className="aa-chat-cta" onClick={onRetryDefaultRange}>
               Use last 28 days

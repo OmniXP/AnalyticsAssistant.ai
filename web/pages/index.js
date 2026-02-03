@@ -2231,8 +2231,14 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, pr
       title="Source / Medium"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load"}
+          {/* Per-panel load: fetch GA4 data for this section */}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           {rows.length > 0 && (
             <TargetBadge
@@ -2271,7 +2277,7 @@ function SourceMedium({ propertyId, startDate, endDate, filters, resetSignal, pr
       }
     >
       {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>}
       {loading && (
         <div style={{ display: "grid", gap: 10 }}>
           <Skeleton height={16} width="50%" />
@@ -2359,8 +2365,13 @@ function Campaigns({ propertyId, startDate, endDate, filters, premium }) {
       title="Campaigns"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           {rows.length > 0 && (
             <TargetBadge
@@ -2397,7 +2408,7 @@ function Campaigns({ propertyId, startDate, endDate, filters, premium }) {
       }
     >
       {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>}
       {loading && (
         <div style={{ display: "grid", gap: 10 }}>
           <Skeleton height={16} width="50%" />
@@ -2576,8 +2587,19 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters, premium })
               💡 Tip: Use the exact campaign name from the "Campaigns" section above. Case-insensitive matching.
             </small>
           </div>
-          <Button onClick={load} disabled={loading || !propertyId || !campaign}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId || !campaign}
+            kind="subtle"
+            title={
+              !propertyId
+                ? "Enter a GA4 property ID first"
+                : !campaign
+                  ? "Enter a campaign name first"
+                  : "Load data for this section"
+            }
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <AiBlock
             asButton
@@ -2617,7 +2639,7 @@ function CampaignDrilldown({ propertyId, startDate, endDate, filters, premium })
       {!loading && !totals && !error && (
         <div style={{ marginTop: 8, color: COLORS.subtext }}>
           <p style={{ margin: 0, marginBottom: 8 }}>
-            Enter a campaign name and click &ldquo;Load&rdquo;.
+            Enter a campaign name and click &ldquo;Load data&rdquo;.
           </p>
           <p style={{ margin: 0, fontSize: 13, color: COLORS.subtext }}>
             <strong>How to find campaign names:</strong> Load the &ldquo;Campaigns&rdquo; section above to see all available campaign names. Copy the exact name (e.g., &ldquo;summer_sale&rdquo; or &ldquo;Summer Sale 2024&rdquo;) and paste it here.
@@ -2752,8 +2774,13 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, premium })
       title="Campaigns (KPI metrics)"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <input
             value={q}
@@ -2818,7 +2845,7 @@ function CampaignsOverview({ propertyId, startDate, endDate, filters, premium })
       }
     >
       {error && <p style={{ color: COLORS.googleRed, marginTop: 12, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {!error && !visible.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {!error && !visible.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>}
       {loading && (
         <div style={{ display: "grid", gap: 10 }}>
           <Skeleton height={16} width="50%" />
@@ -2915,8 +2942,13 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal, premiu
       title="Top pages (views)"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <AiBlock
             asButton
@@ -2948,7 +2980,7 @@ function TopPages({ propertyId, startDate, endDate, filters, resetSignal, premiu
       }
     >
       {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
-      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>}
       {loading && (
         <div style={{ display: "grid", gap: 10 }}>
           <Skeleton height={18} width="40%" />
@@ -3061,8 +3093,13 @@ function LandingPages({ propertyId, startDate, endDate, filters, premium }) {
       title="Landing Pages × Attribution"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <AiBlock
             asButton
@@ -3112,7 +3149,7 @@ function LandingPages({ propertyId, startDate, endDate, filters, premium }) {
 
       {!loading && !rows.length && !error && (
         <p style={{ marginTop: 8, color: COLORS.subtext }}>
-          No rows loaded yet.
+          No rows loaded yet. Click Load data above.
         </p>
       )}
 
@@ -3231,8 +3268,13 @@ function EcommerceKPIs({ propertyId, startDate, endDate, filters, resetSignal, p
       title="E-commerce KPIs"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           {totals && (
             <div style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -3344,8 +3386,13 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal, 
       title="Checkout funnel (event counts)"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <AiBlock
             asButton
@@ -3361,7 +3408,7 @@ function CheckoutFunnel({ propertyId, startDate, endDate, filters, resetSignal, 
     >
       {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
-      {!loading && !steps && !error && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {!loading && !steps && !error && <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>}
 
       {loading && (
         <div style={{ display: "grid", gap: 10 }}>
@@ -3505,8 +3552,13 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters, premium }) {
               <option value="weekly">Weekly</option>
             </select>
           </label>
-          <Button onClick={load} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <AiBlock
             asButton
@@ -3604,7 +3656,7 @@ function TrendsOverTime({ propertyId, startDate, endDate, filters, premium }) {
           </div>
         </>
       ) : !error && !loading ? (
-        <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>
+        <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>
       ) : null}
     </FrostCard>
   );
@@ -3751,8 +3803,13 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal, premiu
       title="Product Performance"
       actions={
         <>
-          <Button onClick={load} disabled={loading || !propertyId} title={!propertyId ? "Enter a GA4 property ID first" : ""}>
-            {loading ? "Loading…" : "Load"}
+          <Button
+            onClick={load}
+            disabled={loading || !propertyId}
+            kind="subtle"
+            title={!propertyId ? "Enter a GA4 property ID first" : "Load data for this section"}
+          >
+            {loading ? "Loading…" : "Load data"}
           </Button>
           <AiBlock
             asButton
@@ -3807,7 +3864,7 @@ function Products({ propertyId, startDate, endDate, filters, resetSignal, premiu
     >
       {error && <p style={{ color: COLORS.googleRed, whiteSpace: "pre-wrap" }}>Error: {error}</p>}
 
-      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet.</p>}
+      {!error && !rows.length && !loading && <p style={{ color: COLORS.subtext }}>No rows loaded yet. Click Load data above.</p>}
 
       {loading && (
         <div style={{ display: "grid", gap: 10 }}>

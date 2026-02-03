@@ -10,6 +10,38 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const CONTEXT_TTL_SECONDS = 60 * 10;
 const MAX_HISTORY_MESSAGES = 12;
+const AUTH_FIX_URL = "/start";
+
+function readCookieValue(raw, name) {
+  if (!raw || !name) return null;
+  const cookies = raw.split(/;\s*/);
+  const match = cookies.find((c) => c.startsWith(`${name}=`));
+  if (!match) return null;
+  const value = match.slice(name.length + 1);
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+async function resolveUserFromSessionToken(req) {
+  const raw = req.headers?.cookie || "";
+  const token =
+    readCookieValue(raw, "__Secure-next-auth.session-token") ||
+    readCookieValue(raw, "next-auth.session-token");
+  if (!token) return null;
+  const session = await prisma.session.findUnique({
+    where: { sessionToken: token },
+    select: {
+      expires: true,
+      user: { select: { id: true, email: true, ga4PropertyId: true } },
+    },
+  });
+  if (!session?.user || !session.expires) return null;
+  if (new Date(session.expires) <= new Date()) return null;
+  return session.user;
+}
 
 function toNumber(value) {
   const n = Number(value);
@@ -322,16 +354,26 @@ async function handler(req, res) {
 
   try {
     const session = await getServerSession(req, res, authOptions);
-    if (!session?.user?.email) {
-      return res.status(401).json({ ok: false, error: "Unauthorized", code: "AUTH_REQUIRED" });
+    let user = null;
+    if (session?.user?.email) {
+      user = await prisma.user.findUnique({
+        where: { email: session.user.email.toLowerCase() },
+        select: { id: true, email: true, ga4PropertyId: true },
+      });
     }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email.toLowerCase() },
-      select: { id: true, email: true, ga4PropertyId: true },
-    });
     if (!user) {
-      return res.status(401).json({ ok: false, error: "Unauthorized", code: "AUTH_REQUIRED" });
+      // Fallback when NextAuth session isn't resolved, but a session token cookie exists.
+      // This prevents post-OAuth cookie edge cases from hard-blocking chat requests.
+      user = await resolveUserFromSessionToken(req);
+    }
+    if (!user) {
+      return res.status(401).json({
+        ok: false,
+        error: "Unauthorized",
+        code: "AUTH_REQUIRED",
+        fixUrl: AUTH_FIX_URL,
+        message: "Please sign in to use Analytics Chat.",
+      });
     }
 
     const { threadId, message, dateRange, filters, intent } = req.body || {};
