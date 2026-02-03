@@ -35,6 +35,9 @@ model User {
   // --- ChatGPT integration ---
   chatgptUserId     String?  @unique
   chatgptConnectedAt DateTime?
+
+  // --- AI analytics chat ---
+  chatThreads ChatThread[]
 }
 
 model Account {
@@ -80,4 +83,35 @@ model Profile {
   goal        String? // e.g., "Improve conversion"
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ChatMessageRole {
+  user
+  assistant
+}
+
+model ChatThread {
+  id            String   @id @default(cuid())
+  userId        String
+  ga4PropertyId String
+  title         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId, ga4PropertyId, updatedAt])
+}
+
+model ChatMessage {
+  id        String          @id @default(cuid())
+  threadId  String
+  role      ChatMessageRole
+  content   String          @db.Text
+  createdAt DateTime        @default(now())
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
 }

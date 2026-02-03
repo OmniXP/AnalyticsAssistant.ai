@@ -2,6 +2,7 @@
 // pages/index.js
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import ChatWidget from "../components/ai-chat/ChatWidget";
 import { trackEvent } from "../lib/analytics";
 
 /**
@@ -1765,165 +1766,165 @@ export default function Home() {
 
       {/* KEY KPIs: Top pages, source/medium, e‑commerce, funnel */}
       <div id="section-pages-funnel" style={{ marginTop: 12 }}>
-        {/* MOBILE-ONLY ACCORDION FOR KEY KPIs */}
+      {/* MOBILE-ONLY ACCORDION FOR KEY KPIs */}
         <div className="mobile-accordion">
-          <MobileAccordionSection title="Top pages (views)">
-            <TopPages
-              key={`tp-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
-          </MobileAccordionSection>
+        <MobileAccordionSection title="Top pages (views)">
+          <TopPages
+            key={`tp-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
+        </MobileAccordionSection>
 
-          <MobileAccordionSection title="Source / Medium">
-            <SourceMedium
-              key={`sm-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
-          </MobileAccordionSection>
+        <MobileAccordionSection title="Source / Medium">
+          <SourceMedium
+            key={`sm-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
+        </MobileAccordionSection>
 
-          <MobileAccordionSection title="E-commerce KPIs">
-            <EcommerceKPIs
-              key={`ekpi-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
-          </MobileAccordionSection>
+        <MobileAccordionSection title="E-commerce KPIs">
+          <EcommerceKPIs
+            key={`ekpi-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
+        </MobileAccordionSection>
 
-          <MobileAccordionSection title="Checkout funnel (event counts)">
-            <CheckoutFunnel
-              key={`cf-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
-          </MobileAccordionSection>
-        </div>
+        <MobileAccordionSection title="Checkout funnel (event counts)">
+          <CheckoutFunnel
+            key={`cf-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
+        </MobileAccordionSection>
+      </div>
 
-        {/* DESKTOP/VISIBLE SECTIONS (non-accordion) */}
+      {/* DESKTOP/VISIBLE SECTIONS (non-accordion) */}
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-          <HideOnMobile>
+        <HideOnMobile>
             <div id="kpi-top-pages" />
-            <TopPages
-              key={`tp2-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
+          <TopPages
+            key={`tp2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
             <div id="kpi-source-medium" />
-            <SourceMedium
-              key={`sm2-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
+          <SourceMedium
+            key={`sm2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
             <div id="kpi-ecommerce" />
-            <EcommerceKPIs
-              key={`ekpi2-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
+          <EcommerceKPIs
+            key={`ekpi2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
             <div id="kpi-checkout" />
-            <CheckoutFunnel
-              key={`cf2-${dashKey}`}
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              resetSignal={refreshSignal}
-              premium={premium}
-            />
-          </HideOnMobile>
+          <CheckoutFunnel
+            key={`cf2-${dashKey}`}
+            propertyId={propertyId}
+            startDate={startDate}
+            endDate={endDate}
+            filters={appliedFilters}
+            resetSignal={refreshSignal}
+            premium={premium}
+          />
+        </HideOnMobile>
         </div>
       </div>
 
       {/* PREMIUM SECTIONS */}
       <div id="section-trends">
-        <PremiumGate label="Trends over time" premium={premium}>
-          <TrendsOverTime
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            premium={premium}
-          />
-        </PremiumGate>
+      <PremiumGate label="Trends over time" premium={premium}>
+        <TrendsOverTime
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          premium={premium}
+        />
+      </PremiumGate>
       </div>
 
       <div id="section-campaigns">
         <div id="kpi-campaigns">
-          <PremiumGate label="Campaigns" premium={premium}>
-            <Campaigns
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              premium={premium}
-            />
-          </PremiumGate>
+      <PremiumGate label="Campaigns" premium={premium}>
+        <Campaigns
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          premium={premium}
+        />
+      </PremiumGate>
         </div>
 
         <div id="kpi-campaign-drilldown">
-          <PremiumGate label="Campaign drill-down" premium={premium}>
-            <CampaignDrilldown
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              premium={premium}
-            />
-          </PremiumGate>
+      <PremiumGate label="Campaign drill-down" premium={premium}>
+        <CampaignDrilldown
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          premium={premium}
+        />
+      </PremiumGate>
         </div>
 
         <div id="kpi-campaign-metrics">
-          <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
-            <CampaignsOverview
-              propertyId={propertyId}
-              startDate={startDate}
-              endDate={endDate}
-              filters={appliedFilters}
-              premium={premium}
-            />
-          </PremiumGate>
+      <PremiumGate label="Campaigns (KPI metrics)" premium={premium}>
+        <CampaignsOverview
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          premium={premium}
+        />
+      </PremiumGate>
         </div>
       </div>
 
       <div id="section-landing-pages">
-        <PremiumGate label="Landing Pages × Attribution" premium={premium}>
-          <LandingPages
-            propertyId={propertyId}
-            startDate={startDate}
-            endDate={endDate}
-            filters={appliedFilters}
-            premium={premium}
-          />
-        </PremiumGate>
+      <PremiumGate label="Landing Pages × Attribution" premium={premium}>
+        <LandingPages
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+          premium={premium}
+        />
+      </PremiumGate>
       </div>
 
       {process.env.NEXT_PUBLIC_ENABLE_PRODUCTS === "true" && (
@@ -1939,9 +1940,9 @@ export default function Home() {
 
       {/* KPI Targets & Alerts / Digest (Premium) */}
       <div id="section-kpi-alerts">
-        <PremiumGate label="KPI Targets & Alerts / Digest" premium={premium}>
-          <KpiAndAlerts />
-        </PremiumGate>
+      <PremiumGate label="KPI Targets & Alerts / Digest" premium={premium}>
+        <KpiAndAlerts />
+      </PremiumGate>
       </div>
 
       {/* Raw JSON (debug) */}
@@ -1991,6 +1992,12 @@ export default function Home() {
           <span style={{ fontSize: 18, lineHeight: 1 }}>↑</span>
         </button>
       )}
+
+      <ChatWidget
+        startDate={startDate}
+        endDate={endDate}
+        filters={appliedFilters}
+      />
 
       </main>
     </>

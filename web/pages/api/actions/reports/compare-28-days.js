@@ -262,9 +262,9 @@ export default async function handler(req, res) {
       mode = "chatgpt";
       email = chatgptToken.email;
     } else {
-      const bearerHeader = getBearerFromAuthHeader(req);
+    const bearerHeader = getBearerFromAuthHeader(req);
       tokenData = await validateAccessToken(bearerHeader);
-      if (!tokenData?.userId) return unauthorized(res);
+    if (!tokenData?.userId) return unauthorized(res);
       mode = "web";
     }
 

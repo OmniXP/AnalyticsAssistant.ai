@@ -242,9 +242,9 @@ export default function StartPage({ signedIn, userEmail }) {
               </>
             ) : (
               <>
-                We link subscriptions to{" "}
-                <strong>{userEmail || "the Google account you sign in with"}</strong> so your billing,
-                GA4 permissions, and AI summaries stay in sync.
+            We link subscriptions to{" "}
+            <strong>{userEmail || "the Google account you sign in with"}</strong> so your billing,
+            GA4 permissions, and AI summaries stay in sync.
               </>
             )}
           </p>
@@ -292,24 +292,24 @@ export default function StartPage({ signedIn, userEmail }) {
             </div>
           ) : (
             !isChatGPTSource && (
-              <>
-                <div className="aa-start__plans">
-                  {PLAN_OPTIONS.map((option) => (
-                    <PlanCard
-                      key={option.plan}
-                      option={option}
-                      loadingPlan={loadingPlan}
-                      onSelect={handleUpgrade}
-                      priceSuffix="/ seat"
-                    />
-                  ))}
-                </div>
-                <p className="aa-start__note">
-                  We’ll open Stripe in a new tab and link this plan to{" "}
-                  <strong>{userEmail || "your Google login"}</strong>. You can manage or cancel anytime
-                  via the billing portal.
-                </p>
-              </>
+            <>
+              <div className="aa-start__plans">
+                {PLAN_OPTIONS.map((option) => (
+                  <PlanCard
+                    key={option.plan}
+                    option={option}
+                    loadingPlan={loadingPlan}
+                    onSelect={handleUpgrade}
+                    priceSuffix="/ seat"
+                  />
+                ))}
+              </div>
+              <p className="aa-start__note">
+                We’ll open Stripe in a new tab and link this plan to{" "}
+                <strong>{userEmail || "your Google login"}</strong>. You can manage or cancel anytime
+                via the billing portal.
+              </p>
+            </>
             )
           )}
 
@@ -328,28 +328,28 @@ export default function StartPage({ signedIn, userEmail }) {
 
           {!isChatGPTSource && (
             <>
-              <div className="aa-billing-hint">
-                <span>
-                  {signedIn
-                    ? "Already upgraded? Open your Stripe billing portal in one click."
-                    : "Already upgraded? Sign in so we can open your Stripe billing portal."}
-                </span>
-                <button
-                  type="button"
-                  className="aa-button aa-button--ghost"
-                  onClick={handleBillingPortal}
-                  disabled={billingLoading}
-                >
-                  {billingLoading ? "Opening billing portal…" : "Manage billing"}
-                </button>
-                {billingError && <p className="aa-billing-hint__error">{billingError}</p>}
-              </div>
+          <div className="aa-billing-hint">
+            <span>
+              {signedIn
+                ? "Already upgraded? Open your Stripe billing portal in one click."
+                : "Already upgraded? Sign in so we can open your Stripe billing portal."}
+            </span>
+            <button
+              type="button"
+              className="aa-button aa-button--ghost"
+              onClick={handleBillingPortal}
+              disabled={billingLoading}
+            >
+              {billingLoading ? "Opening billing portal…" : "Manage billing"}
+            </button>
+            {billingError && <p className="aa-billing-hint__error">{billingError}</p>}
+          </div>
 
-              <div className="aa-feature-callouts">
-                {PREMIUM_PROMISES.map((promise) => (
-                  <span key={promise}>{promise}</span>
-                ))}
-              </div>
+          <div className="aa-feature-callouts">
+            {PREMIUM_PROMISES.map((promise) => (
+              <span key={promise}>{promise}</span>
+            ))}
+          </div>
             </>
           )}
         </section>

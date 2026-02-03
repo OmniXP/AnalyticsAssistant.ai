@@ -9,15 +9,19 @@ import { kvGetJson, kvSetJson, readSidFromCookie } from "./ga4-session.js";
 const QA_PREMIUM_HEADER = "x-aa-premium-override";
 const ALLOW_QA_PREMIUM_OVERRIDE =
   process.env.ALLOW_QA_PREMIUM_OVERRIDE === "true" || process.env.NODE_ENV !== "production";
+const PREMIUM_URL =
+  process.env.PREMIUM_URL || process.env.NEXT_PUBLIC_PREMIUM_URL || "https://analyticsassistant.ai/premium";
 
 export const USAGE_LIMITS = {
   free: {
     ga4ReportsPerMonth: 25,
     aiSummariesPerMonth: 10,
+    chatQuestionsPerMonth: 5,
   },
   premium: {
     ga4ReportsPerMonth: 3000, // effectively “unlimited” with fair use
     aiSummariesPerMonth: 100,
+    chatQuestionsPerMonth: 10000,
   },
 };
 
@@ -112,8 +116,14 @@ export async function checkAndIncrementUsage(req, res, kind) {
   const period = currentPeriodKey();
   const kvKey = `usage:${ident.key}:${period}`;
 
-  const field = kind === "ai" ? "ai_summaries_run" : "ga4_reports_run";
-  const max = kind === "ai" ? limits.aiSummariesPerMonth : limits.ga4ReportsPerMonth;
+  const field =
+    kind === "ai" ? "ai_summaries_run" : kind === "chat" ? "chat_questions_run" : "ga4_reports_run";
+  const max =
+    kind === "ai"
+      ? limits.aiSummariesPerMonth
+      : kind === "chat"
+        ? limits.chatQuestionsPerMonth
+        : limits.ga4ReportsPerMonth;
 
   let rec = (await kvGetJson(kvKey)) || {
     period,
@@ -122,6 +132,7 @@ export async function checkAndIncrementUsage(req, res, kind) {
     source: ident.source,
     ga4_reports_run: 0,
     ai_summaries_run: 0,
+    chat_questions_run: 0,
   };
 
   if (rec[field] >= max) {
@@ -130,11 +141,21 @@ export async function checkAndIncrementUsage(req, res, kind) {
         ? planKey === "premium"
           ? "Summarise with AI PRO"
           : "Summarise with AI"
-        : "GA4 reports";
-    const err = new Error(`Monthly limit reached for ${label} on your ${planKey} plan.`);
-    err.code = "RATE_LIMITED";
-    err.status = 429;
-    err.meta = { kind, plan: planKey, limit: max, period };
+        : kind === "chat"
+          ? "AI Analytics Chat"
+          : "GA4 reports";
+    const upgradeMessage =
+      "You’ve hit your monthly AI chat limit. Upgrade to Premium for more conversations.";
+    const err = new Error(kind === "chat" && planKey === "free" ? upgradeMessage : `Monthly limit reached for ${label} on your ${planKey} plan.`);
+    err.code = kind === "chat" && planKey === "free" ? "PREMIUM_REQUIRED" : "RATE_LIMITED";
+    err.status = kind === "chat" && planKey === "free" ? 402 : 429;
+    err.meta = {
+      kind,
+      plan: planKey,
+      limit: max,
+      period,
+      remaining: 0,
+    };
     err.identityKey = ident.key;
     throw err;
   }
@@ -144,7 +165,42 @@ export async function checkAndIncrementUsage(req, res, kind) {
   rec.period = period;
   await kvSetJson(kvKey, rec, USAGE_PERIOD_TTL_SECONDS);
 
-  return { identity: ident, record: rec, limits: { plan: planKey, max, period } };
+  return {
+    identity: ident,
+    record: rec,
+    limits: { plan: planKey, max, period, remaining: Math.max(0, max - rec[field]) },
+  };
+}
+
+export async function getUsageRemaining(req, res, kind) {
+  const ident = await resolveIdentity(req, res);
+  const planKey = planKeyFromIdentity(ident);
+  const limits = USAGE_LIMITS[planKey];
+  const period = currentPeriodKey();
+  const kvKey = `usage:${ident.key}:${period}`;
+
+  const field =
+    kind === "ai" ? "ai_summaries_run" : kind === "chat" ? "chat_questions_run" : "ga4_reports_run";
+  const max =
+    kind === "ai"
+      ? limits.aiSummariesPerMonth
+      : kind === "chat"
+        ? limits.chatQuestionsPerMonth
+        : limits.ga4ReportsPerMonth;
+
+  const rec = (await kvGetJson(kvKey)) || {
+    ga4_reports_run: 0,
+    ai_summaries_run: 0,
+    chat_questions_run: 0,
+  };
+  const used = rec[field] || 0;
+  return {
+    plan: planKey,
+    period,
+    limit: max,
+    used,
+    remaining: Math.max(0, max - used),
+  };
 }
 
 function planKeyFromIdentity(ident) {
@@ -347,6 +403,9 @@ function sendGuardError(res, err) {
   if (err?.code) payload.code = err.code;
   if (err?.meta) payload.limit = err.meta;
   if (err?.details) payload.details = err.details;
+  if (err?.code === "PREMIUM_REQUIRED") {
+    payload.upgradeUrl = err?.meta?.upgradeUrl || PREMIUM_URL;
+  }
   if (err?.code === "RATE_LIMITED" || err?.code === "PREMIUM_REQUIRED" || err?.code === "AUTH_REQUIRED") {
     const ident = err.identityKey ? ` identity=${err.identityKey}` : "";
     console.warn(`[usage-limits] ${err.code} -> ${payload.error}.${ident}`);

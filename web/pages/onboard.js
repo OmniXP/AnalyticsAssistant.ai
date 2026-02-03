@@ -23,9 +23,9 @@ export default function OnboardPage() {
           setConnected(true);
           // For non-ChatGPT flows, redirect to dashboard after a short delay
           if (!isChatGPTSource) {
-            setTimeout(() => {
+          setTimeout(() => {
               router.push("/?connected=true");
-            }, 1500);
+          }, 1500);
           }
         }
       } catch (e) {
@@ -42,9 +42,9 @@ export default function OnboardPage() {
       setConnected(true);
       // For non-ChatGPT flows, redirect to dashboard after showing success message
       if (!isChatGPTSource) {
-        setTimeout(() => {
+      setTimeout(() => {
           router.push("/?connected=true");
-        }, 2000);
+      }, 2000);
       }
     }
   }, [router.query.connected, router, isChatGPTSource]);
@@ -80,7 +80,7 @@ export default function OnboardPage() {
             Return to ChatGPT
           </a>
         ) : (
-          <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
+        <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
         )}
       </main>
     );
