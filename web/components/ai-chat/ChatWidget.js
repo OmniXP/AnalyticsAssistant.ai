@@ -27,7 +27,7 @@ function buildFilterChips(filters) {
   return chips;
 }
 
-export default function ChatWidget({ startDate, endDate, filters }) {
+export default function ChatWidget({ propertyId, startDate, endDate, filters }) {
   const [open, setOpen] = useState(false);
   const [threadId, setThreadId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -67,6 +67,7 @@ export default function ChatWidget({ startDate, endDate, filters }) {
     const payload = {
       threadId,
       message: trimmed,
+      propertyId,
       dateRange: !forceDefaultRange && hasRange ? { startDate, endDate } : null,
       filters: safeFilters,
       intent: intent || "default",
@@ -136,6 +137,12 @@ export default function ChatWidget({ startDate, endDate, filters }) {
     window.open(target, "_blank", "noopener,noreferrer");
   };
 
+  const handleReload = () => {
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
+  };
+
   return (
     <>
       <SwirlLauncher
@@ -163,6 +170,7 @@ export default function ChatWidget({ startDate, endDate, filters }) {
         onStarter={handleStarter}
         onRetryDefaultRange={handleRetryDefaultRange}
         onUpgradeClick={handleUpgradeClick}
+        onReload={handleReload}
         loading={loading}
         error={error}
         remainingQuota={remainingQuota}

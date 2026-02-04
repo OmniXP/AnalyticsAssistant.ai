@@ -11,6 +11,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const CONTEXT_TTL_SECONDS = 60 * 10;
 const MAX_HISTORY_MESSAGES = 12;
 const AUTH_FIX_URL = "/start";
+const PROPERTY_FIX_URL = "/?property=select";
 
 function readCookieValue(raw, name) {
   if (!raw || !name) return null;
@@ -53,6 +54,13 @@ function parseYmd(value) {
   const [y, m, d] = value.split("-").map((v) => Number(v));
   if (!y || !m || !d) return null;
   return new Date(Date.UTC(y, m - 1, d));
+}
+
+function canonicalizePropertyId(input) {
+  if (!input || typeof input !== "string") return null;
+  const numeric = normalizePropertyId(input);
+  if (!numeric) return null;
+  return `properties/${numeric}`;
 }
 
 function formatYmd(date) {
@@ -376,13 +384,14 @@ async function handler(req, res) {
       });
     }
 
-    const { threadId, message, dateRange, filters, intent } = req.body || {};
+    const { threadId, message, dateRange, filters, intent, propertyId: bodyPropertyId } = req.body || {};
     if (!message || typeof message !== "string" || !message.trim()) {
       return res.status(400).json({ ok: false, error: "Missing message" });
     }
 
     let thread = null;
     let threadPropertyId = user.ga4PropertyId || null;
+    const bodyPropertyCanonical = canonicalizePropertyId(bodyPropertyId);
     let history = [];
     if (threadId) {
       thread = await prisma.chatThread.findFirst({
@@ -402,7 +411,8 @@ async function handler(req, res) {
       history = history.reverse();
     }
 
-    if (!threadPropertyId) {
+    const effectivePropertyId = bodyPropertyCanonical || threadPropertyId;
+    if (!effectivePropertyId) {
       return res.status(400).json({
         ok: false,
         code: "PROPERTY_REQUIRED",
@@ -415,12 +425,12 @@ async function handler(req, res) {
     const safeFilters = filters || { country: "All", channelGroup: "All", deviceType: "All" };
 
     await enforceDataLimits(req, res, {
-      propertyId: threadPropertyId,
+      propertyId: effectivePropertyId,
       startDate: range.startDate,
       endDate: range.endDate,
     });
 
-    const propertyIdNumeric = normalizePropertyId(threadPropertyId);
+    const propertyIdNumeric = normalizePropertyId(effectivePropertyId);
     if (!propertyIdNumeric) {
       return res.status(400).json({ ok: false, error: "Invalid GA4 property ID", code: "PROPERTY_REQUIRED" });
     }
@@ -451,7 +461,7 @@ async function handler(req, res) {
         const created = await tx.chatThread.create({
           data: {
             userId: user.id,
-            ga4PropertyId: threadPropertyId,
+            ga4PropertyId: effectivePropertyId,
             title: message.trim().slice(0, 80) || null,
           },
           select: { id: true },
@@ -460,7 +470,7 @@ async function handler(req, res) {
       } else {
         await tx.chatThread.update({
           where: { id: resolvedThreadId },
-          data: { updatedAt: now },
+          data: { updatedAt: now, ga4PropertyId: effectivePropertyId },
         });
       }
 
@@ -481,6 +491,14 @@ async function handler(req, res) {
       ...(remainingQuota != null ? { remainingQuota } : {}),
     });
   } catch (e) {
+    if (e?.code === "PROPERTY_NOT_LINKED") {
+      return res.status(400).json({
+        ok: false,
+        code: "PROPERTY_NOT_LINKED",
+        message: e.message,
+        fixUrl: PROPERTY_FIX_URL,
+      });
+    }
     if (e?.code === "DATE_RANGE_LIMIT") {
       return res.status(402).json({ ok: false, code: "DATE_RANGE_LIMIT", message: e.message });
     }

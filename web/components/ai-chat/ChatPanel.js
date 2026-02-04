@@ -33,6 +33,7 @@ export default function ChatPanel({
   onStarter,
   onRetryDefaultRange,
   onUpgradeClick,
+  onReload,
   loading,
   error,
   remainingQuota,
@@ -101,10 +102,10 @@ export default function ChatPanel({
               Set GA4 property
             </a>
           ) : null}
-          {errorCode === "AUTH_REQUIRED" && error.fixUrl ? (
-            <a className="aa-chat-cta" href={error.fixUrl} target="_blank" rel="noreferrer">
-              Sign in to continue
-            </a>
+          {errorCode === "AUTH_REQUIRED" ? (
+            <button type="button" className="aa-chat-cta" onClick={onReload}>
+              Reload page
+            </button>
           ) : null}
           {errorCode === "DATE_RANGE_LIMIT" ? (
             <button type="button" className="aa-chat-cta" onClick={onRetryDefaultRange}>

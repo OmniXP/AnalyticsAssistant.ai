@@ -1994,6 +1994,7 @@ export default function Home() {
       )}
 
       <ChatWidget
+        propertyId={propertyId}
         startDate={startDate}
         endDate={endDate}
         filters={appliedFilters}
