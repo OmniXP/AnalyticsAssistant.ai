@@ -102,6 +102,11 @@ export default function ChatPanel({
               Set GA4 property
             </a>
           ) : null}
+          {errorCode === "PROPERTY_NOT_LINKED" && error.fixUrl ? (
+            <a className="aa-chat-cta" href={error.fixUrl} target="_blank" rel="noreferrer">
+              Select property in app
+            </a>
+          ) : null}
           {errorCode === "AUTH_REQUIRED" ? (
             <button type="button" className="aa-chat-cta" onClick={onReload}>
               Reload page

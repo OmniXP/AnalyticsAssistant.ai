@@ -207,6 +207,28 @@ function planKeyFromIdentity(ident) {
   return ident.premium ? "premium" : "free";
 }
 
+function normalizePropertyId(input) {
+  if (!input || typeof input !== "string") return null;
+  let s = input.trim();
+  try {
+    s = decodeURIComponent(s);
+  } catch {}
+  if (/%2F/i.test(s)) {
+    try {
+      s = decodeURIComponent(s);
+    } catch {}
+  }
+  if (s.startsWith("properties/")) s = s.slice("properties/".length);
+  if (!/^\d+$/.test(s)) return null;
+  return s;
+}
+
+function canonicalizePropertyId(input) {
+  const numeric = normalizePropertyId(input);
+  if (!numeric) return null;
+  return `properties/${numeric}`;
+}
+
 async function resolveIdentity(req, res) {
   if (req?.usageMeta?.identity) return req.usageMeta.identity;
   const ident = await getUsageIdentity(req, res);
@@ -250,6 +272,8 @@ async function bootstrapPropertyRecord(ident, record) {
 
 export async function recordPropertySelection(req, res, propertyId, metadata = {}) {
   if (!propertyId) return null;
+  const canonical = canonicalizePropertyId(propertyId);
+  if (canonical) propertyId = canonical;
   const ident = await resolveIdentity(req, res);
   const planKey = planKeyFromIdentity(ident);
   const limit = PROPERTY_LIMITS[planKey] ?? PROPERTY_LIMITS.free;
@@ -292,10 +316,17 @@ export async function recordPropertySelection(req, res, propertyId, metadata = {
 
 export async function assertPropertyAccess(req, res, propertyId) {
   if (!propertyId) return null;
+  const canonical = canonicalizePropertyId(propertyId);
+  const desiredNumeric = normalizePropertyId(propertyId);
+  if (canonical) propertyId = canonical;
   const ident = await resolveIdentity(req, res);
   let record = await getPropertyRecord(ident);
   record = await bootstrapPropertyRecord(ident, record);
-  const exists = record.properties.some((p) => p.id === propertyId);
+  const matchIdx = record.properties.findIndex(
+    (p) =>
+      p.id === propertyId || (desiredNumeric && normalizePropertyId(p.id) === desiredNumeric)
+  );
+  const exists = matchIdx >= 0;
   if (!exists) {
     // Migration / first-run behaviour:
     // If this identity has no linked properties yet, treat the first successfully
@@ -316,6 +347,14 @@ export async function assertPropertyAccess(req, res, propertyId) {
     err.code = "PROPERTY_NOT_LINKED";
     err.status = 400;
     throw err;
+  }
+  if (matchIdx >= 0 && record.properties[matchIdx]?.id !== propertyId) {
+    record.properties[matchIdx] = {
+      ...record.properties[matchIdx],
+      id: propertyId,
+      updatedAt: new Date().toISOString(),
+    };
+    await savePropertyRecord(ident, record);
   }
   return { plan: planKeyFromIdentity(ident), record };
 }

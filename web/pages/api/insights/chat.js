@@ -11,7 +11,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const CONTEXT_TTL_SECONDS = 60 * 10;
 const MAX_HISTORY_MESSAGES = 12;
 const AUTH_FIX_URL = "/start";
-const PROPERTY_FIX_URL = "/?property=select";
+const PROPERTY_FIX_URL = "/";
 
 function readCookieValue(raw, name) {
   if (!raw || !name) return null;
