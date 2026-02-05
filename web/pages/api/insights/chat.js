@@ -359,6 +359,14 @@ async function callOpenAI({ question, contextPack, intent, history }) {
 
 async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+  const chatEnabled = process.env.AI_CHAT_ENABLED === "true";
+  if (!chatEnabled) {
+    return res.status(404).json({
+      ok: false,
+      error: "AI_CHAT_DISABLED",
+      message: "This feature is temporarily unavailable.",
+    });
+  }
 
   try {
     const session = await getServerSession(req, res, authOptions);

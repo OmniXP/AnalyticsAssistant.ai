@@ -733,6 +733,7 @@ function StatusDot({ status, label }) {
 
 /* ============================== Page ============================== */
 export default function Home() {
+  const chatEnabled = process.env.NEXT_PUBLIC_AI_CHAT_ENABLED === "true";
   // Base controls
   const [propertyId, setPropertyId] = useState("");
   const [startDate, setStartDate] = useState("2024-09-01");
@@ -1993,12 +1994,14 @@ export default function Home() {
         </button>
       )}
 
-      <ChatWidget
-        propertyId={propertyId}
-        startDate={startDate}
-        endDate={endDate}
-        filters={appliedFilters}
-      />
+      {chatEnabled ? (
+        <ChatWidget
+          propertyId={propertyId}
+          startDate={startDate}
+          endDate={endDate}
+          filters={appliedFilters}
+        />
+      ) : null}
 
       </main>
     </>
