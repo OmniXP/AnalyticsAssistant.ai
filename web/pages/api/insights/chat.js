@@ -425,7 +425,7 @@ async function handler(req, res) {
         ok: false,
         code: "PROPERTY_REQUIRED",
         message: "Select a default GA4 property in AnalyticsAssistant.ai before using chat.",
-        fixUrl: new URL("/onboard", APP_ORIGIN).toString(),
+        fixUrl: new URL("/onboarding/select-property", APP_ORIGIN).toString(),
       });
     }
 

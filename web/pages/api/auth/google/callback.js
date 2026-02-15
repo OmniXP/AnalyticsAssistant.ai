@@ -96,8 +96,13 @@ export default async function handler(req, res) {
     }
 
     // Redirect back to the app (use desiredRedirect from state, or default to /onboard?connected=true)
+    // Safety check: only honor same-origin paths to prevent open redirects
+    let redirectTo = desiredRedirect || "/onboard?connected=true";
+    if (redirectTo && !redirectTo.startsWith("/")) {
+      console.warn("[OAuth Callback] Invalid redirect path (not same-origin), defaulting to /onboard");
+      redirectTo = "/onboard?connected=true";
+    }
     // Note: Cookie is already set by ensureSid() above
-    const redirectTo = desiredRedirect || "/onboard?connected=true";
     res.writeHead(302, { Location: redirectTo });
     res.end();
   } catch (e) {

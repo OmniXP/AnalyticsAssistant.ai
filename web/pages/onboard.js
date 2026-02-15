@@ -59,29 +59,23 @@ export default function OnboardPage() {
   }
 
   if (connected) {
+    // For ChatGPT users, redirect to property selection instead of showing Return to ChatGPT
+    if (isChatGPTSource) {
+      const nextParam = router.query.next ? `&next=${encodeURIComponent(router.query.next)}` : "";
+      router.replace(`/onboarding/select-property?source=chatgpt${nextParam}`);
+      return (
+        <main className="min-h-screen flex flex-col items-center justify-center text-center px-4">
+          <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full mb-4" />
+          <p className="text-gray-600">Next: select your default GA4 property...</p>
+        </main>
+      );
+    }
     return (
       <main className="min-h-screen flex flex-col items-center justify-center text-center px-4">
         <div className="text-green-600 text-4xl mb-4">✅</div>
-        <h1 className="text-2xl font-bold mb-2">
-          {isChatGPTSource ? "GA4 connected for ChatGPT" : "GA4 Connected Successfully"}
-        </h1>
-        <p className="text-gray-600 mb-4">
-          {isChatGPTSource
-            ? "Nice — I’ll use this connection to pull fresh GA4 insights when you ask from ChatGPT."
-            : "Fetching your latest insights..."}
-        </p>
-        {isChatGPTSource ? (
-          <a
-            href={CHATGPT_GPT_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 inline-flex items-center px-6 py-3 rounded-lg bg-black text-white text-sm font-medium hover:opacity-90 transition"
-          >
-            Return to ChatGPT
-          </a>
-        ) : (
+        <h1 className="text-2xl font-bold mb-2">GA4 Connected Successfully</h1>
+        <p className="text-gray-600 mb-4">Fetching your latest insights...</p>
         <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
-        )}
       </main>
     );
   }
@@ -98,7 +92,11 @@ export default function OnboardPage() {
       </p>
 
       <ConnectGA4Button
-        redirectPath={isChatGPTSource ? "/onboard?source=chatgpt&connected=true" : "/onboard?connected=true"}
+        redirectPath={
+          isChatGPTSource
+            ? `/onboarding/select-property?source=chatgpt${router.query.next ? `&next=${encodeURIComponent(router.query.next)}` : ""}`
+            : "/onboard?connected=true"
+        }
       />
 
       <footer className="mt-10 text-sm text-gray-400">

@@ -27,10 +27,13 @@ async function handler(req, res) {
         propertyId = user.ga4PropertyId;
         console.log("[ga4] using_default_property", { email: req._chatgptEmail, propertyId });
       } else {
+        const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_URL || "https://app.analyticsassistant.ai";
+        const fixUrl = `${APP_ORIGIN}/onboarding/select-property?source=chatgpt`;
         return res.status(400).json({
           ok: false,
           error: "No GA4 property is linked to this account. Connect GA4 and set a default property.",
-          code: "PROPERTY_NOT_SET",
+          code: "PROPERTY_REQUIRED",
+          fixUrl,
         });
       }
     }

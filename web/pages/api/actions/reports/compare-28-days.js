@@ -7,12 +7,12 @@ const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_URL || "https://app.analyticsassi
 
 function buildConnectUrl(nextPath = "") {
   try {
-    const url = new URL("/onboard", APP_ORIGIN);
+    const url = new URL("/onboarding/select-property", APP_ORIGIN);
     url.searchParams.set("source", "chatgpt");
     if (nextPath) url.searchParams.set("next", nextPath);
     return url.toString();
   } catch {
-    return "https://app.analyticsassistant.ai/onboard?source=chatgpt";
+    return "https://app.analyticsassistant.ai/onboarding/select-property?source=chatgpt";
   }
 }
 
@@ -287,17 +287,16 @@ export default async function handler(req, res) {
     const hasDefaultProperty = !!numericPropertyId;
     if (!numericPropertyId) {
       const connectUrl = buildConnectUrl("/api/actions/reports/compare-28-days");
-      console.log("[actions] auth_required", {
+      console.log("[actions] property_required", {
         email: user.email || email || null,
-        hasUserGa4Tokens: false,
         hasDefaultProperty,
         connectUrl,
       });
-      return res.status(401).json({
+      return res.status(400).json({
         ok: false,
-        code: "DEFAULT_PROPERTY_REQUIRED",
+        code: "PROPERTY_REQUIRED",
         message: "Select a default GA4 property in AnalyticsAssistant.ai, then retry this report.",
-        connectUrl,
+        fixUrl: connectUrl,
       });
     }
 
