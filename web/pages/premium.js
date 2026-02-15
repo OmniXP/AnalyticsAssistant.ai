@@ -168,8 +168,9 @@ export default function PremiumPage({ signedIn, userEmail }) {
             </p>
           </div>
           <p className="aa-start__note">
-            Premium Annual is <strong>$24/mo</strong> (billed annually) and saves roughly 17% compared to Premium Monthly
-            at <strong>$29/mo</strong>. Pick what fits your cash flow—Stripe opens in a new tab.
+            Premium Annual is <strong>$19.99/mo</strong> (billed annually at <strong>$239.88</strong>) and saves about
+            $60 per year compared to Premium Monthly at <strong>$24.99/mo</strong>. Pick what fits your cash flow—Stripe
+            opens in a new tab.
           </p>
           <div className="aa-billing-hint">
             <span>Need to cancel or change seats? Use the Stripe billing portal anytime.</span>

@@ -48,9 +48,9 @@ const COST_ESTIMATES = {
 function calculateMonthlyRevenue(users) {
   const monthly = users.filter((u) => u.premium && u.plan === "monthly").length;
   const annual = users.filter((u) => u.premium && u.plan === "annual").length;
-  // $29/month, $24/month annual (paid annually)
-  const monthlyRevenue = monthly * 29;
-  const annualMonthlyEquivalent = (annual * 24 * 12) / 12; // Annual paid monthly
+  // $24.99/month, $19.99/month annual (paid annually)
+  const monthlyRevenue = monthly * 24.99;
+  const annualMonthlyEquivalent = (annual * 19.99 * 12) / 12; // Annual paid monthly
   return monthlyRevenue + annualMonthlyEquivalent;
 }
 
