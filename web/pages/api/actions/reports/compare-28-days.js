@@ -255,7 +255,7 @@ export default async function handler(req, res) {
         return res.status(401).json({
           ok: false,
           code: "AUTH_REQUIRED",
-          message: "Missing or invalid ChatGPT bearer token.",
+          message: "You'll connect GA4 and choose a default property in two quick steps, then retry this report.",
           connectUrl: buildConnectUrl("/api/actions/reports/compare-28-days"),
         });
       }
@@ -295,7 +295,7 @@ export default async function handler(req, res) {
       return res.status(400).json({
         ok: false,
         code: "PROPERTY_REQUIRED",
-        message: "Select a default GA4 property in AnalyticsAssistant.ai, then retry this report.",
+        message: "You'll connect GA4 and choose a default property in two quick steps, then retry this report.",
         fixUrl: connectUrl,
       });
     }
@@ -322,7 +322,7 @@ export default async function handler(req, res) {
       return res.status(401).json({
         ok: false,
         code: "AUTH_REQUIRED",
-        message: "Your Google Analytics 4 connection could not be authenticated. Reconnect GA4 in AnalyticsAssistant.ai, then retry.",
+        message: "You'll connect GA4 and choose a default property in two quick steps, then retry this report.",
         connectUrl,
       });
     }
@@ -430,7 +430,7 @@ export default async function handler(req, res) {
       return res.status(401).json({
         ok: false,
         code: "AUTH_REQUIRED",
-        message: "Your Google Analytics 4 connection could not be authenticated. Reconnect GA4 in AnalyticsAssistant.ai, then retry.",
+        message: "You'll connect GA4 and choose a default property in two quick steps, then retry this report.",
         connectUrl,
       });
     }

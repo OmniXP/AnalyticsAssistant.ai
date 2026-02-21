@@ -13,6 +13,14 @@ export default function OnboardPage() {
   const [checking, setChecking] = useState(true);
   const isChatGPTSource = router.query.source === "chatgpt";
 
+  // Redirect ChatGPT users to select-property (they should never see /onboard)
+  useEffect(() => {
+    if (isChatGPTSource) {
+      const nextParam = router.query.next ? `&next=${encodeURIComponent(router.query.next)}` : "";
+      router.replace(`/onboarding/select-property?source=chatgpt${nextParam}`);
+    }
+  }, [isChatGPTSource, router]);
+
   // Check if GA4 is already connected
   useEffect(() => {
     (async () => {
@@ -48,6 +56,16 @@ export default function OnboardPage() {
       }
     }
   }, [router.query.connected, router, isChatGPTSource]);
+
+  // Don't render anything for ChatGPT users (they're being redirected)
+  if (isChatGPTSource) {
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center text-center px-4">
+        <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full mb-4" />
+        <p className="text-gray-600">Redirecting...</p>
+      </main>
+    );
+  }
 
   if (checking) {
     return (
