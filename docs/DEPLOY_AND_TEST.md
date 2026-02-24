@@ -40,7 +40,7 @@ git push origin chatgpt-user
    CHATGPT_CLIENT_ID=F_TGwQULu5Zke7rNdNnD4zCkRXMvRyN7
    CHATGPT_CLIENT_SECRET=G7SgsYg9CanopPif4qKU7GZyPipBXVMhyremLV5zLXI
    CHATGPT_REDIRECT_URI_ALLOWLIST=https://chat.openai.com,https://chatgpt.com
-   GOOGLE_REDIRECT_URI=https://analyticsassistant.ai/api/auth/google/callback
+   GOOGLE_REDIRECT_URI=https://app.analyticsassistant.ai/api/auth/google/callback
    ```
 
    **Important:**

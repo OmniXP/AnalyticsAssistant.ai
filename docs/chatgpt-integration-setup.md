@@ -67,7 +67,7 @@ NEXT_PUBLIC_PREMIUM_URL=https://analyticsassistant.ai/premium
 # Google OAuth (for GA4)
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
-GOOGLE_REDIRECT_URI=https://analyticsassistant.ai/api/auth/google/callback
+GOOGLE_REDIRECT_URI=https://app.analyticsassistant.ai/api/auth/google/callback
 
 # OpenAI (for AI summaries)
 OPENAI_API_KEY=your_openai_api_key

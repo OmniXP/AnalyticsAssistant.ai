@@ -82,7 +82,7 @@ CHATGPT_REDIRECT_URI_ALLOWLIST=https://chat.openai.com,https://chatgpt.com
 **What it is:** The OAuth redirect URI for Google Analytics OAuth flow (used by your existing web app).
 
 **What to set it to:**
-- **Production:** `https://analyticsassistant.ai/api/auth/google/callback`
+- **Production:** `https://app.analyticsassistant.ai/api/auth/google/callback`
 - **Local testing:** `http://localhost:3000/api/auth/google/callback`
 
 **When to set it:** Now (if not already set)
@@ -91,7 +91,7 @@ CHATGPT_REDIRECT_URI_ALLOWLIST=https://chat.openai.com,https://chatgpt.com
 
 **Example:**
 ```bash
-GOOGLE_REDIRECT_URI=https://analyticsassistant.ai/api/auth/google/callback
+GOOGLE_REDIRECT_URI=https://app.analyticsassistant.ai/api/auth/google/callback
 ```
 
 ---
@@ -130,7 +130,7 @@ CHATGPT_CLIENT_SECRET=paste_generated_client_secret_here
 CHATGPT_REDIRECT_URI_ALLOWLIST=https://chat.openai.com,https://chatgpt.com
 
 # Google OAuth (for GA4)
-GOOGLE_REDIRECT_URI=https://analyticsassistant.ai/api/auth/google/callback
+GOOGLE_REDIRECT_URI=https://app.analyticsassistant.ai/api/auth/google/callback
 ```
 
 **Important:** Use the SAME `CHATGPT_CLIENT_ID` and `CHATGPT_CLIENT_SECRET` values in GPT Editor!

@@ -175,6 +175,25 @@ export function inferOrigin(req) {
   return `${proto}://${host}`;
 }
 
+function resolveRedirectUriForRequest(req) {
+  const origin = inferOrigin(req);
+  const originCallback = `${origin}/api/auth/google/callback`;
+  const configuredRedirect = (process.env.GOOGLE_REDIRECT_URI || "").trim();
+  if (!configuredRedirect) return originCallback;
+  try {
+    const configuredUrl = new URL(configuredRedirect);
+    const originUrl = new URL(origin);
+    // If the configured callback host differs from the request host, prefer the
+    // request origin callback to keep OAuth state and callback on the same host.
+    if (configuredUrl.origin !== originUrl.origin) {
+      return originCallback;
+    }
+    return configuredRedirect;
+  } catch {
+    return originCallback;
+  }
+}
+
 export async function putAuthState(stateId, dataObj, ttlSec = 600) {
   const val = JSON.stringify(dataObj || {});
   await kvSetRaw(`oauth_state:${stateId}`, val, ttlSec);
@@ -200,8 +219,7 @@ export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
   const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || "";
   if (!clientId) throw new Error("Missing GOOGLE_CLIENT_ID or GOOGLE_OAUTH_CLIENT_ID");
 
-  const origin = inferOrigin(req);
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
+  const redirectUri = resolveRedirectUriForRequest(req);
 
   const codeVerifier = base64url(randomBytes(32));
   const codeChallenge = await sha256Base64url(codeVerifier);
@@ -210,6 +228,7 @@ export async function buildGoogleAuthUrl(req, { desiredRedirect }) {
   // Persist verifier + where to go after success
   await putAuthState(stateId, {
     code_verifier: codeVerifier,
+    redirect_uri: redirectUri,
     desiredRedirect: desiredRedirect || process.env.POST_AUTH_REDIRECT || "/",
     createdAt: Date.now(),
   });

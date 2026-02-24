@@ -31,7 +31,7 @@
 ```bash
 GOOGLE_CLIENT_ID=346879915112-t8up8qd4kb2h5ovqt9vt8hdkdvbsip5v.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-r...Aa_P
-GOOGLE_REDIRECT_URI=https://analyticsassistant.ai/api/auth/google/callback
+GOOGLE_REDIRECT_URI=https://app.analyticsassistant.ai/api/auth/google/callback
 UPSTASH_KV_REST_URL=https://exact-mollusk-35555.upstash.io
 UPSTASH_KV_REST_TOKEN=AYrjAAIn...1NTU
 ```

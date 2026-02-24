@@ -39,10 +39,10 @@ export default async function handler(req, res) {
       return res.status(400).send("Invalid or expired OAuth state.");
     }
 
-    const { code_verifier } = authState;
+    const { code_verifier, redirect_uri } = authState;
 
     const origin = inferOrigin(req);
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
+    const redirectUri = redirect_uri || process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
     const tokens = await exchangeCodeForTokens(String(code), code_verifier, redirectUri);
 
     // Store GA4 tokens against connectionId

@@ -28,11 +28,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ ok: false, error: "Invalid or expired state" });
     }
 
-    const { code_verifier, desiredRedirect } = authState;
+    const { code_verifier, desiredRedirect, redirect_uri } = authState;
 
     // Exchange code for tokens using PKCE
     const origin = inferOrigin(req);
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
+    const redirectUri = redirect_uri || process.env.GOOGLE_REDIRECT_URI || `${origin}/api/auth/google/callback`;
     const tokens = await exchangeCodeForTokens(String(code), code_verifier, redirectUri);
 
     // Get existing session ID from cookie, or create a new one
