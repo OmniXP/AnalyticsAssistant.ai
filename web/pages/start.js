@@ -12,7 +12,9 @@ import { requestBillingPortalUrl } from "../lib/billing";
 import { trackEvent } from "../lib/analytics";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
-const CHATGPT_GPT_URL = process.env.NEXT_PUBLIC_CHATGPT_GPT_URL || "https://chat.openai.com";
+const CHATGPT_GPT_URL =
+  process.env.NEXT_PUBLIC_CHATGPT_GPT_URL ||
+  "https://chatgpt.com/g/g-693ca32862c08191b80569e2fe240da3-analyticsassistant-ai-for-ga4";
 
 function resolveCallbackUrl(pathname) {
   if (typeof window !== "undefined") {

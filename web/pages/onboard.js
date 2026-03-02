@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import ConnectGA4Button from "../components/ConnectGA4Button";
 
-const CHATGPT_GPT_URL = process.env.NEXT_PUBLIC_CHATGPT_GPT_URL || "https://chat.openai.com";
+const CHATGPT_GPT_URL =
+  process.env.NEXT_PUBLIC_CHATGPT_GPT_URL ||
+  "https://chatgpt.com/g/g-693ca32862c08191b80569e2fe240da3-analyticsassistant-ai-for-ga4";
 
 export default function OnboardPage() {
   const router = useRouter();
