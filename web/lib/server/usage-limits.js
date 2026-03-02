@@ -293,6 +293,21 @@ export async function recordPropertySelection(req, res, propertyId, metadata = {
     return { plan: planKey, record };
   }
 
+  // Free plan supports one active property. When a different property is
+  // selected, treat it as a replacement instead of a blocked "add".
+  if (planKey === "free" && limit === 1 && record.properties.length >= 1) {
+    record.properties = [
+      {
+        id: propertyId,
+        name: metadata?.name || "",
+        addedAt: record.properties[0]?.addedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    await savePropertyRecord(ident, record);
+    return { plan: planKey, record };
+  }
+
   if (record.properties.length >= limit) {
     const err = new Error(
       planKey === "free"
